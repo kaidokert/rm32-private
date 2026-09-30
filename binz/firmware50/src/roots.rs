@@ -12,20 +12,14 @@ use portable_atomic::Ordering;
 use stm32g0xx_hal::rcc::Rcc;
 use stm32g0xx_hal::stm32;
 
-use crate::bemf::FilterPolicy as _;
 use crate::bridge::Bridge;
-use crate::capture::{Decision, EdgeLog};
+use crate::capture::EdgeLog;
 use crate::chain::ChainLog;
 use crate::commutation::{self, Direction, Step};
 use crate::hw;
 use crate::protection::Reason;
 use crate::shared::{CompPrio, Guard, Motor, Priority, Root, SHARED as S};
 use crate::sixstep;
-
-/// Reverse blank (`bench-reverse-blank`): post-commutation mask length. It
-/// arms while the reference's six-slot average is at least 1500 half-µs
-/// (`commutation::REVERSE_BLANK_SUM_US`, E100).
-pub const REVERSE_BLANK_US: u32 = 280;
 
 /// Put the six gate pins into AF2 so TIM1 drives them.
 pub fn gates_to_timer() {
@@ -281,17 +275,6 @@ pub const COMP_IRQ_PRIORITY: u8 = CompPrio::NVIC;
 // test: a genuine lock is independent of the floor (E049's floor-paced
 // artefact tracked it exactly).
 
-/// Persistence depth for the in-ISR filter: the reference's 12 reads
-/// (`binz/LOW_DUTY_REPLICATION.md`, "persistence depth | 12 reads").
-///
-/// **Speed-scheduled since E083**, as the reference schedules it
-/// (`map(average_interval, 100, 500, 3, 12)` with the very-fast floor,
-/// `minz/core/src/am32_loop.rs:298-305`, in its half-µs units, adapted to this
-/// estimator's µs by `FromMicros`). 12 reads through 15%, 8 at 20%, 7 at 25%.
-/// Clamped at 12, so the audited loop bound and COMP's worst case are
-/// unchanged.
-pub use crate::run::policy::DET_FILTER;
-
 /// The ISR-owned estimate, for foreground reads.
 ///
 /// A single `u32` field read, which is atomic on this core, so it cannot tear
@@ -316,25 +299,116 @@ pub fn det_counts() -> (u32, u32, u32) {
         .unwrap_or((0, 0, 0))
 }
 
-/// The zero-crossing decision, made inside the interrupt.
+/// **The zero-crossing decision, AM32's detector as one unit** (goal B step 4).
 ///
-/// Returns true if the edge was accepted (and the line should stay masked until
-/// the next commutation), false if it was refused (and the line should stay
-/// live). Bounded: at most `DET_FILTER`'s 12 comparator reads, no division, no
-/// allocation, no loop other than that bounded one.
+/// The reference's comparator path, in its order:
 ///
-/// Generic over the decision log (`crate::capture`). Production's `NoLog`
-/// (`ON == false`) runs [`det_decide_plain`], the decision exactly as it was;
-/// the diagnostic image's recorder runs [`det_decide_logged`], its twin with
-/// the recording added. Two bodies, not one with dead branches: a closure
-/// that merely *captures* the log changed COMP's machine code (E121).
+/// 1. **The gate, first** (`Mcu/g071/Src/stm32g0xx_it.c:243-252`): if less than
+///    half the six-slot sector has passed since the last accepted crossing, the
+///    edge is early. If the comparator reads the *pre*-crossing level it was
+///    noise -- clear the flag and return; if it already reads the
+///    *post*-crossing level the flag is **left pending**, so the handler
+///    re-enters until the gate opens and then takes it. (This replaces the
+///    foreground level revisit.)
+/// 2. **Clear the flag and filter** (`main.c:960-967`): `filter_level` live
+///    reads; any pre-crossing read returns with the line still live.
+/// 3. **Accept** (`main.c:969-974`): mask the line, stamp, arm the commutation
+///    with the wait the previous commutation computed.
+///
+/// The gate and the depth are *read*, not computed: COM publishes the gate
+/// after each commutation's push into the six-slot ring, the foreground
+/// publishes the depth (the reference computes both outside this handler).
+/// Nothing is read or computed before the gate but the entry stamp, the
+/// sector start and the step. Bounded: at most 12 comparator reads.
 #[inline(always)]
-pub fn det_decide<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
-    if L::ON {
-        det_decide_logged::<L, C>(raw, fine0, at)
-    } else {
-        det_decide_plain::<C>(raw, fine0, at)
+pub fn det_decide<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
+    let count = raw.wrapping_sub(S.det().sector_start_raw.load(Ordering::Relaxed) as u16) as u32;
+    let step = Step::new_clamped(S.det().step.load(Ordering::Relaxed) as u8);
+    let rising = edge_is_rising(step);
+    if count <= S.det().gate_us.load(Ordering::Relaxed) {
+        if hw::comp::level() != rising {
+            hw::comp::clear_pending();
+        }
+        if C::ON {
+            crate::chain::note_refusal(true);
+            if step.get() == 3 {
+                C::refusal(at, count as u16, fine0, 0, true, 3);
+            }
+        }
+        return false;
     }
+    hw::comp::clear_pending();
+    let depth = S.det().depth.load(Ordering::Relaxed);
+    let mut i = 0u32;
+    while i < depth && i < 12 {
+        if hw::comp::level() != rising {
+            if C::ON {
+                crate::chain::note_refusal(false);
+                if step.get() == 3 {
+                    C::refusal(at, count as u16, fine0, (i as u16 & 15) << 12, false, 3);
+                }
+            }
+            return false;
+        }
+        i += 1;
+    }
+    comp_exti_mask();
+    S.det().sector_start_raw.store(u32::from(raw), Ordering::Relaxed);
+    let mut beat: Option<(u16, u16, u16, u32, u16, u8, bool)> = None;
+    if S.com().active.load(Ordering::Relaxed) {
+        let wait = S.det().next_wait.load(Ordering::Relaxed);
+        let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
+        let left = wait.saturating_sub(spent);
+        arm_marked::<C>(left.max(1));
+        note_margin(wait, left);
+        beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
+        if left == 0 {
+            let n = S.det().late_arms.load(Ordering::Relaxed);
+            S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
+            if STATS && n == 0 {
+                S.det()
+                    .ci_at_late
+                    .store(S.det().accept_avg.load(Ordering::Relaxed), Ordering::Relaxed);
+                S.det().spent_at_late.store(spent, Ordering::Relaxed);
+            }
+        }
+        if STATS && spent > S.det().spent_max.load(Ordering::Relaxed) {
+            S.det().spent_max.store(spent, Ordering::Relaxed);
+        }
+    }
+    S.det().accept_count.store(count, Ordering::Relaxed);
+    // **The guard tick (NVIC 0x00) preempts this root**, and it feeds the
+    // tracking watch from (`accept_raw`, `accept_step`, `accept_seq`). The three
+    // are written in one critical section -- the one `accept_seq`'s increment
+    // takes on this core anyway -- so the tick never sees a new stamp or sector
+    // under an old sequence number. Written separately, a tick landing between
+    // them fed one crossing twice (ENV-67/68: SectorOrder with a 0 us gap).
+    cortex_m::interrupt::free(|_| {
+        S.det().accept_raw.store(u32::from(raw), Ordering::Relaxed);
+        S.det().accept_step.store(u32::from(step.get()), Ordering::Relaxed);
+        S.det().accept_seq.store(
+            S.det().accept_seq.load(Ordering::Relaxed).wrapping_add(1),
+            Ordering::Relaxed,
+        );
+    });
+    if C::ON {
+        if let Some((crossing_us, crossing_fine, arm_fine, wait_us, spent_fine, sector, late)) = beat {
+            C::accept(
+                at,
+                &crate::chain::Arm {
+                    crossing_us,
+                    crossing_fine,
+                    arm_fine,
+                    wait_us,
+                    spent_fine,
+                    step: sector,
+                    late,
+                    stage: stage_code(),
+                },
+            );
+        }
+    }
+    true
 }
 
 /// What the COMP root can say about the run's stage from the flags it already
@@ -349,6 +423,12 @@ fn stage_code() -> u8 {
         | (u8::from(S.det().active.load(Ordering::Relaxed)) << 1)
         | (u8::from(S.guard().tracking.load(Ordering::Relaxed)) << 2)
 }
+
+/// **Report-only counters in the motor roots** (goal B, step 1): compiled in only
+/// with the diagnostic `isr-stats` feature, so production's COMP and COM carry no
+/// instrument AM32 lacks. Counters that feed a stop (`late_arms`, `blank_latched`,
+/// `overrun`) are protections and stay unconditional.
+pub const STATS: bool = cfg!(feature = "isr-stats");
 
 /// One acceptance's chain row: coarse µs for pairing, fine ticks for every
 /// measured delta (E180). `None` in production, where `C::ON` is false.
@@ -420,6 +500,10 @@ fn arm_marked<C: ChainLog>(left: u32) {
 /// quantity E315 needs.
 #[inline(always)]
 fn note_margin(wait: u32, left: u32) {
+    if !STATS {
+        let _ = (wait, left);
+        return;
+    }
     // The accepted average interval, stored by the estimator's borrow just
     // above: the causal variable, and level-invariant (E210 SS1).
     let ci_p1 = S.det().accept_avg.load(Ordering::Relaxed).saturating_add(1);
@@ -449,267 +533,6 @@ fn note_margin(wait: u32, left: u32) {
     }
     #[cfg(not(feature = "margin-hist"))]
     let _ = wait;
-}
-
-/// Production's decision. Keep in step with [`det_decide_logged`].
-#[inline(always)]
-pub fn det_decide_plain<C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
-    let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
-    let count = raw.wrapping_sub(start) as u32;
-    // The chain row is filled inside the borrow and pushed after it, because
-    // the root token is borrowed by the estimator's closure (E154).
-    // (crossing µs, crossing fine, arm fine, wait µs, spent fine, sector, late)
-    let mut beat: Option<(u16, u16, u16, u32, u16, u8, bool)> = None;
-    // ENV-34, chain images only: a refused decision in step 3 (count, reads, too_early).
-    let mut refused: Option<(u16, u16, bool)> = None;
-
-    // The estimator's borrow returns the accepted crossing's (step, average)
-    // so the watch is fed after it ends: the watch borrow needs the token.
-    let accepted = S.det().zc.root(at, |zc| {
-        let zc = zc.as_mut()?;
-
-        // A crossing lost beyond any plausible interval: re-base on this edge and
-        // wait for the next, rather than feeding a meaningless count in.
-        let (_, ci_max) = zc.bounds();
-        if count > ci_max {
-            S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
-            S.det().rebase.fetch_add(1, Ordering::Relaxed);
-            return None;
-        }
-
-        let step = Step::new_clamped(S.det().step.load(Ordering::Relaxed) as u8);
-        let advance = S.det().advance.load(Ordering::Relaxed);
-        // Persistence reads the **live** comparator, microseconds after the edge --
-        // exactly what AM32's handler does, and what the foreground could never do.
-        // ENV-58 (A5): everything before these reads is the tag's, so the edge-to-read
-        // latency is unchanged; only the order after the reads moves.
-        let (mut reads, mut n) = (0u16, 0u16);
-        let judged = crate::bemf::judge(
-            count,
-            zc.blanking(),
-            edge_is_rising(step),
-            DET_FILTER.level(zc.average_interval()),
-            || {
-                let l = hw::comp::level();
-                if C::ON {
-                    reads |= u16::from(l) << n.min(11);
-                    n += 1;
-                }
-                l
-            },
-        );
-        let outcome = if judged == crate::bemf::Judgement::Pass {
-            crate::bemf::Outcome::Accepted {
-                wait: 0,
-                average_interval: 0,
-                advance: 0,
-            }
-        } else {
-            zc.note_refusal(judged);
-            if judged == crate::bemf::Judgement::TooEarly {
-                crate::bemf::Outcome::TooEarly
-            } else {
-                crate::bemf::Outcome::Unstable
-            }
-        };
-        match outcome {
-            crate::bemf::Outcome::Accepted { .. } => {
-                S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
-                S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
-                // **ENV-58 (A5): arm first, with the wait computed at the previous
-                // crossing** (AM32's `SET_AND_ENABLE_COM_INT(waitTime + 1)`), then do
-                // the arithmetic. The wait still runs from the edge: subtract what
-                // this handler has spent since its entry stamp `raw` (E083).
-                if S.com().active.load(Ordering::Relaxed) {
-                    let wait = S.det().next_wait.load(Ordering::Relaxed);
-                    let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
-                    let left = wait.saturating_sub(spent);
-                    arm_marked::<C>(left.max(1));
-                    note_margin(wait, left);
-                    beat = beat_row::<C>(raw, fine0, wait, step.get(), left == 0);
-                    if left == 0 {
-                        let n = S.det().late_arms.load(Ordering::Relaxed);
-                        S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
-                        if n == 0 {
-                            S.det().ci_at_late.store(zc.average_interval(), Ordering::Relaxed);
-                            S.det().spent_at_late.store(spent, Ordering::Relaxed);
-                        }
-                    }
-                    if spent > S.det().spent_max.load(Ordering::Relaxed) {
-                        S.det().spent_max.store(spent, Ordering::Relaxed);
-                    }
-                }
-                // **ENV-61 (A6): nothing is computed after the arm.** AM32's
-                // `interruptRoutine` ends at the arm; the interval is handed to the
-                // commutation root, which blends it and computes the next wait
-                // (`PeriodElapsedCallback`). `advance` is read there.
-                let _ = advance;
-                S.det().accept_count.store(count, Ordering::Relaxed);
-                S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
-                Some((step.get(), zc.average_interval()))
-            }
-            other => {
-                if C::ON {
-                    let early = matches!(other, crate::bemf::Outcome::TooEarly);
-                    match other {
-                        crate::bemf::Outcome::TooEarly => crate::chain::note_refusal(true),
-                        crate::bemf::Outcome::Unstable => crate::chain::note_refusal(false),
-                        _ => {}
-                    }
-                    if step.get() == 3 {
-                        refused = Some((count as u16, reads | ((n & 15) << 12), early));
-                    }
-                }
-                None
-            }
-        }
-    });
-    if C::ON {
-        if let Some((c, r, e)) = refused {
-            C::refusal(at, c, fine0, r, e, 3);
-        }
-    }
-    if C::ON {
-        if let Some((crossing_us, crossing_fine, arm_fine, wait_us, spent_fine, sector, late)) = beat {
-            C::accept(
-                at,
-                &crate::chain::Arm {
-                    crossing_us,
-                    crossing_fine,
-                    arm_fine,
-                    wait_us,
-                    spent_fine,
-                    step: sector,
-                    late,
-                    stage: stage_code(),
-                },
-            );
-        }
-    }
-    match accepted {
-        Some((step, average)) => {
-            // The accepted-event envelope (E076).
-            guard_event(at, step, average);
-            true
-        }
-        None => false,
-    }
-}
-
-/// [`det_decide_plain`]'s acceptance arm, for the diagnostic twin (the
-/// production body keeps it inline: factoring it out moved COMP's code, E121).
-#[inline(always)]
-fn accept<C: ChainLog>(
-    raw: u16,
-    fine0: u16,
-    wait: u32,
-    avg: u32,
-    blank: u32,
-) -> Option<(u16, u16, u16, u32, u16, bool)> {
-    let mut beat = None;
-    S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
-    S.det().accept_raw.store(raw as u32, Ordering::Relaxed);
-    S.det().accept_avg.store(avg, Ordering::Relaxed);
-    S.det().accept_blank.store(blank, Ordering::Relaxed);
-    S.det().accept_seq.fetch_add(1, Ordering::Relaxed);
-    if S.com().active.load(Ordering::Relaxed) {
-        let spent = (hw::clock::raw()).wrapping_sub(raw) as u32;
-        let left = wait.saturating_sub(spent);
-        com_arm(left.max(1), 1);
-        // Gated like `beat_row`'s read (E269): `edge-capture` reaches this
-        // path and never calls `hw::fine::init()`, so this was a live read of
-        // an unclocked peripheral inside the prio-0 COMP root of the very
-        // image whose purpose is measuring that root's cost.
-        let fine_now = if C::ON { hw::fine::raw() as u16 } else { 0 };
-        beat = Some((raw, fine0, fine_now, wait, fine_now.wrapping_sub(fine0), left == 0));
-        if left == 0 {
-            let n = S.det().late_arms.load(Ordering::Relaxed);
-            S.det().late_arms.store(n.wrapping_add(1), Ordering::Relaxed);
-            // **The twin site (E314).** `late_arms` is incremented in TWO
-            // places -- here and in `det_decide_plain` -- and an instrument
-            // that covers one of them is the "present but inert" failure this
-            // campaign has now hit four times. Both capture, first-latch-only.
-            if n == 0 {
-                S.det().ci_at_late.store(avg, Ordering::Relaxed);
-                S.det().spent_at_late.store(spent, Ordering::Relaxed);
-            }
-        }
-        note_margin(wait, left);
-        if spent > S.det().spent_max.load(Ordering::Relaxed) {
-            S.det().spent_max.store(spent, Ordering::Relaxed);
-        }
-    }
-    beat
-}
-
-/// The diagnostic image's decision: [`det_decide_plain`] with every offer's
-/// inputs, live reads and outcome recorded. Keep in step with it.
-#[inline(always)]
-pub fn det_decide_logged<L: EdgeLog, C: ChainLog>(raw: u16, fine0: u16, at: &mut Root<CompPrio>) -> bool {
-    let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
-    let count = raw.wrapping_sub(start) as u32;
-    let rec = L::arm(at);
-    let mut log: Option<Decision> = None;
-    // Both recorders fill inside the estimator's borrow and push after it: the
-    // closure holds the root token (E154).
-    let mut beat = None;
-    let mut sector = 0u8;
-    let accepted = S.det().zc.root(at, |zc| {
-        let zc = zc.as_mut()?;
-        let (_, ci_max) = zc.bounds();
-        if count > ci_max {
-            S.det().sector_start_raw.store(raw as u32, Ordering::Relaxed);
-            S.det().rebase.fetch_add(1, Ordering::Relaxed);
-            log = rec.then(|| Decision::rebase(count));
-            return None;
-        }
-        let step = Step::new_clamped(S.det().step.load(Ordering::Relaxed) as u8);
-        let advance = S.det().advance.load(Ordering::Relaxed);
-        let rising = edge_is_rising(step);
-        let (mut reads, mut n) = (0u16, 0u16);
-        let outcome = zc.offer(count, rising, advance, &DET_FILTER, || {
-            let l = hw::comp::level();
-            reads |= u16::from(l) << (n & 15);
-            n += 1;
-            l
-        });
-        log = rec.then(|| Decision::of(count, rising, advance, reads, n, &outcome));
-        match outcome {
-            crate::bemf::Outcome::Accepted { wait, .. } => {
-                beat = accept::<C>(raw, fine0, wait, zc.average_interval(), zc.blanking());
-                sector = step.get();
-                Some((step.get(), zc.average_interval()))
-            }
-            _ => None,
-        }
-    });
-    if let Some(d) = log {
-        L::push(at, d);
-    }
-    if C::ON {
-        if let Some((crossing_us, crossing_fine, arm_fine, wait_us, spent_fine, late)) = beat {
-            C::accept(
-                at,
-                &crate::chain::Arm {
-                    crossing_us,
-                    crossing_fine,
-                    arm_fine,
-                    wait_us,
-                    spent_fine,
-                    step: sector,
-                    late,
-                    stage: stage_code(),
-                },
-            );
-        }
-    }
-    match accepted {
-        Some((step, average)) => {
-            guard_event(at, step, average);
-            true
-        }
-        None => false,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +728,9 @@ pub fn guard_arm_tracking() {
         let _ = S.guard().watch.lock(|w| {
             *w = crate::tracking::EventWatch::new(now, crate::protection::EVENT_MIN_US, crate::tracking::EVENT_MAX_US);
         });
+        S.guard()
+            .seq_seen
+            .store(S.det().accept_seq.load(Ordering::Relaxed), Ordering::Relaxed);
         S.guard().tracking.store(true, Ordering::Relaxed);
     });
 }
@@ -915,24 +741,6 @@ pub fn guard_disarm() {
     S.guard().tracking.store(false, Ordering::Relaxed);
     hw::nvic::mask(stm32::Interrupt::TIM6_DAC_LPTIM1);
     hw::nvic::unpend(stm32::Interrupt::TIM6_DAC_LPTIM1);
-}
-
-/// Feed one accepted crossing to the tracking watch, and tighten its deadline
-/// to three controller periods (reference `accepted(step, reference_half_us)`).
-/// Called from the COMP root, below the watch's ceiling (the guard), so the
-/// borrow masks interrupts and keeps the guard out.
-#[inline(always)]
-pub fn guard_event(at: &mut Root<CompPrio>, step: u8, average_us: u32) {
-    if !S.guard().tracking.load(Ordering::Relaxed) {
-        return;
-    }
-    S.guard().watch.masked(at, |w| {
-        let now = guard_now();
-        let _ = w.tighten_max_interval(crate::tracking::speed_event_limit_us(average_us.saturating_mul(2)));
-        if w.event(now, step).is_some() {
-            guard_trip(Reason::Tracking);
-        }
-    });
 }
 
 /// The guard root.
@@ -989,8 +797,45 @@ pub unsafe fn guard_root() {
         guard_trip(Reason::CampaignDeadline);
         return;
     }
-    if S.guard().tracking.load(Ordering::Relaxed) && S.guard().watch.root(&mut at, |w| w.poll(now).is_some()) {
-        guard_trip(Reason::Tracking);
+    if S.guard().tracking.load(Ordering::Relaxed) {
+        // Goal B step 2: the tracking watch runs here, not in COMP. Every
+        // crossing COMP accepted since the last tick is fed as one batch: its
+        // count, the newest one's instant and sector, and the average COM
+        // published for it. This root is the highest priority (0x00) and COMP
+        // publishes the tuple in one critical section, so the loads cannot tear;
+        // the second read of `accept_seq` is kept as a cheap consistency check.
+        let s1 = S.det().accept_seq.load(Ordering::Relaxed);
+        let n = s1.wrapping_sub(S.guard().seq_seen.load(Ordering::Relaxed));
+        let mut poll_at = now;
+        let mut batch = None;
+        if n != 0 {
+            let raw_a = S.det().accept_raw.load(Ordering::Relaxed) as u16;
+            let sector = S.det().accept_step.load(Ordering::Relaxed) as u8;
+            let average = S.det().accept_avg.load(Ordering::Relaxed);
+            if S.det().accept_seq.load(Ordering::Relaxed) == s1 {
+                S.guard().seq_seen.store(s1, Ordering::Relaxed);
+                // Signed: the newest crossing may postdate this tick's clock
+                // read, and then it must not age the watch backwards
+                // (the cross-ISR timestamp race).
+                let at_event = now.wrapping_add(i32::from(raw_a.wrapping_sub(raw) as i16) as u32);
+                if at_event.wrapping_sub(now) < 0x8000_0000 {
+                    poll_at = at_event;
+                }
+                batch = Some((at_event, sector, average, n));
+            }
+        }
+        let fault = S.guard().watch.root(&mut at, |w| {
+            if let Some((at_event, sector, average, n)) = batch {
+                let _ = w.tighten_max_interval(crate::tracking::speed_event_limit_us(average.saturating_mul(2)));
+                if w.events(at_event, sector, n).is_some() {
+                    return true;
+                }
+            }
+            w.poll(poll_at).is_some()
+        });
+        if fault {
+            guard_trip(Reason::Tracking);
+        }
     }
 }
 
@@ -1203,113 +1048,83 @@ pub unsafe fn com_root<C: ChainLog>() {
     let preempted = count_preempt::<C>();
     let now_raw = hw::clock::raw();
     let late = now_raw.wrapping_sub(S.com().sched_raw.load(Ordering::Relaxed) as u16) as u32;
-    if late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
+    if STATS && late < 0x8000 && late > S.com().late_max.load(Ordering::Relaxed) {
         S.com().late_max.store(late, Ordering::Relaxed);
     }
     // The chain's service row (E154), pushed at the end; see `crate::chain`.
     let phase = S.com().phase.load(Ordering::Relaxed);
     let mut bridge = 0u16;
-    match phase {
-        1 => {
-            let step = Step::new_clamped(S.com().step.load(Ordering::Relaxed) as u8).next();
-            S.com().step.store(step.get() as u32, Ordering::Relaxed);
-            S.det().step.store(step.get() as u32, Ordering::Relaxed);
-            let plan = S.com().plans.root(&mut at, |t| t[((step.get() - 1) & 7) as usize]);
-            if let Some(pl) = plan {
-                hw::pwm::apply_plan(&pl);
-            }
-            if C::ON {
-                bridge = hw::clock::raw();
-            }
-            comp2_select_floating(step);
-            S.com().count.fetch_add(1, Ordering::Relaxed);
-            // **ENV-61 (A6), AM32's `PeriodElapsedCallback`:** having commutated, fold
-            // the crossing that scheduled this commutation into the estimate, compute
-            // the next wait, and publish what this root and the next arm read. Only
-            // for a new acceptance (handover and rescue commutations do not blend).
-            let seq = S.det().accept_seq.load(Ordering::Relaxed);
-            if seq != S.com().committed_seq.load(Ordering::Relaxed) {
-                S.com().committed_seq.store(seq, Ordering::Relaxed);
-                let count = S.det().accept_count.load(Ordering::Relaxed);
-                let level = S.det().advance.load(Ordering::Relaxed);
-                let commit = |zc: &mut Option<crate::bemf::ZeroCross>| {
-                    if let Some(zc) = zc.as_mut() {
-                        if let crate::bemf::Outcome::Accepted { wait, .. } = zc.commit(count, level) {
-                            S.det().next_wait.store(wait, Ordering::Relaxed);
-                        }
-                        S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
-                        S.det().accept_blank.store(zc.blanking(), Ordering::Relaxed);
+    if phase == 1 {
+        let step = Step::new_clamped(S.com().step.load(Ordering::Relaxed) as u8).next();
+        S.com().step.store(step.get() as u32, Ordering::Relaxed);
+        S.det().step.store(step.get() as u32, Ordering::Relaxed);
+        let plan = S.com().plans.root(&mut at, |t| t[((step.get() - 1) & 7) as usize]);
+        if let Some(pl) = plan {
+            hw::pwm::apply_plan(&pl);
+        }
+        if C::ON {
+            bridge = hw::clock::raw();
+        }
+        comp2_select_floating(step);
+        S.com().count.fetch_add(1, Ordering::Relaxed);
+        // **ENV-61 (A6), AM32's `PeriodElapsedCallback`:** having commutated, fold
+        // the crossing that scheduled this commutation into the estimate, compute
+        // the next wait, and publish what this root and the next arm read. Only
+        // for a new acceptance (handover and rescue commutations do not blend).
+        let seq = S.det().accept_seq.load(Ordering::Relaxed);
+        if seq != S.com().committed_seq.load(Ordering::Relaxed) {
+            S.com().committed_seq.store(seq, Ordering::Relaxed);
+            let count = S.det().accept_count.load(Ordering::Relaxed);
+            let level = S.det().advance.load(Ordering::Relaxed);
+            let commit = |zc: &mut Option<crate::bemf::ZeroCross>| {
+                if let Some(zc) = zc.as_mut() {
+                    if let crate::bemf::Outcome::Accepted { wait, .. } = zc.commit(count, level) {
+                        S.det().next_wait.store(wait, Ordering::Relaxed);
                     }
-                };
-                // COMP and COM share one priority by default, so they cannot interleave
-                // and COM borrows at its root. Under `com-top` COM sits above COMP and
-                // takes the critical section instead.
-                #[cfg(not(feature = "com-top"))]
-                S.det().zc.root(&mut at, commit);
-                #[cfg(feature = "com-top")]
-                let _ = S.det().zc.lock(commit);
-            }
-            // The blank decision uses the ring as of the previous commutation,
-            // then this commutation stores its interval -- the reference's
-            // order (`commutate` pushes; `observe_bands` recomputes the
-            // average after the COM, `core_bench.rs:2105-2137`).
-            //
-            // **Read from the published pair, not from the estimator** (step 6a).
-            // ENV-61 (A6): this root now commits the accepted interval just above
-            // and publishes `accept_avg`/`accept_blank` itself, so what this reads is
-            // the estimate belonging to the crossing that scheduled this
-            // commutation -- the same value the borrow returned, by
-            // construction, and now without `det.zc` being touched by two
-            // roots. That overlap was the reason raising COM above COMP would
-            // have been undefined behaviour rather than a scheduling change
-            // (E153), and removing it is what makes the step-6b A/B possible.
-            let average = S.det().accept_avg.load(Ordering::Relaxed);
-            let blanking = S.det().accept_blank.load(Ordering::Relaxed);
-            let blank = S.com().six.root(&mut at, |six| {
-                let blank = six.reverse_blank_due();
-                six.push(step.get(), average);
-                blank
-            });
-            // The reverse blank, or else the blanking floor (E134): the line
-            // stays masked for whatever is left of the half-cycle window, since
-            // the gate refuses every edge inside it anyway. Phase 2 arms the
-            // line when the one-shot fires.
-            let hold = if blank {
-                REVERSE_BLANK_US
-            } else {
-                let since = now_raw.wrapping_sub(S.det().accept_raw.load(Ordering::Relaxed) as u16) as u32;
-                crate::commutation::blank_remaining(blanking, since)
+                    S.det().accept_avg.store(zc.average_interval(), Ordering::Relaxed);
+                }
             };
-            if blank {
-                comp_exti_mask();
-                S.com().blank_arms.fetch_add(1, Ordering::Relaxed);
-                com_arm(hold, 2);
-            } else if hold >= crate::commutation::BLANK_ARM_MIN_US {
-                // Prime the edge while the line is masked (see this fn's docs).
-                comp_exti_prime(step);
-                S.com().blank_arms.fetch_add(1, Ordering::Relaxed);
-                com_arm(hold, 3);
-            } else {
-                S.com().phase.store(0, Ordering::Relaxed);
-                comp_exti_arm(step);
-            }
+            // COMP and COM share one priority by default, so they cannot interleave
+            // and COM borrows at its root. Under `com-top` COM sits above COMP and
+            // takes the critical section instead.
+            #[cfg(not(feature = "com-top"))]
+            S.det().zc.root(&mut at, commit);
+            #[cfg(feature = "com-top")]
+            let _ = S.det().zc.lock(commit);
         }
-        2 => {
-            S.com().phase.store(0, Ordering::Relaxed);
-            comp_exti_arm(Step::new_clamped(S.com().step.load(Ordering::Relaxed) as u8));
-        }
-        // The blanking floor (E134). The edge was primed and the pending flags
-        // cleared at the commutation, so anything latched since is real: open
-        // the line and keep it.
-        3 => {
-            S.com().phase.store(0, Ordering::Relaxed);
-            // Count the edges the blank latched (see this fn's docs).
-            if hw::comp::pending() {
-                S.com().blank_latched.fetch_add(1, Ordering::Relaxed);
-            }
-            comp_resume_powered();
-        }
-        _ => {}
+        // The blank decision uses the ring as of the previous commutation,
+        // then this commutation stores its interval -- the reference's
+        // order (`commutate` pushes; `observe_bands` recomputes the
+        // average after the COM, `core_bench.rs:2105-2137`).
+        //
+        // **Read from the published pair, not from the estimator** (step 6a).
+        // ENV-61 (A6): this root now commits the accepted interval just above
+        // and publishes `accept_avg` itself, so what this reads is
+        // the estimate belonging to the crossing that scheduled this
+        // commutation -- the same value the borrow returned, by
+        // construction, and now without `det.zc` being touched by two
+        // roots. That overlap was the reason raising COM above COMP would
+        // have been undefined behaviour rather than a scheduling change
+        // (E153), and removing it is what makes the step-6b A/B possible.
+        let average = S.det().accept_avg.load(Ordering::Relaxed);
+        let sum = S.com().six.root(&mut at, |six| {
+            six.push(step.get(), average);
+            six.sum()
+        });
+        // **Goal B step 4: AM32's gate, published** -- `average_interval >> 1` of
+        // the six-slot ring in half-µs (`stm32g0xx_it.c:244`; `e_com_time = (sum_h
+        // + 4) >> 1`, `average_interval = e_com_time / 3`, `main.c:2328,2452`),
+        // which in µs is `(sum_us + 2) / 12`, here without a division:
+        // 5462 / 65536 = 1 / 11.9985.
+        S.det().gate_us.store(((sum + 2) * 5462) >> 16, Ordering::Relaxed);
+        S.det().six_sum.store(sum, Ordering::Relaxed);
+        // **AM32 re-enables the line as soon as it has commutated**
+        // (`changeCompInput` then `enableCompInterrupts`, `main.c:904,937-939`):
+        // no blanking floor, no reverse blank, and the flags are not cleared --
+        // an edge latched during the wait fires now and meets the gate.
+        S.com().phase.store(0, Ordering::Relaxed);
+        hw::comp::select_edge(edge_is_rising(step));
+        comp_resume_powered();
     }
     log_service::<C>(&mut at, now_raw, bridge, late, phase, preempted);
 }
@@ -1360,13 +1175,11 @@ fn log_service<C: ChainLog>(at: &mut Root<Motor>, now_raw: u16, bridge: u16, lat
 /// the contract and the configuration cannot drift apart.
 #[inline(always)]
 pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
-    // Mask and ack first, always. This is the storm guard, and it keeps the
-    // documented G071 early-return bug class closed (`rm32/CLAUDE.md`): whatever
-    // path is taken below, the pending bit is already clear.
-    // NVIC first, then IMR (binz Entry 094, E103): an IMR mask alone does not
-    // stop a latched edge from dispatching on the G071 (E102 measured 639).
-    hw::comp::line_disable();
-    hw::comp::clear_pending();
+    let _ = L::ON;
+    // Goal B step 4: the entry stamp and nothing else before the closed-loop
+    // decision. AM32's handler does not mask on entry; the closed-loop path clears
+    // or keeps the flag itself (`det_decide`). The driven and open-loop paths below
+    // keep their mask-and-ack at entry (binz Entry 094, E102/E103: NVIC first).
     let raw = hw::clock::raw();
     // The fine stamp for the chain's own measurements (E180): 125 ns ticks
     // from the free-running TIM2, taken beside the coarse one so both name the
@@ -1380,67 +1193,31 @@ pub unsafe fn comp_root<L: EdgeLog, C: ChainLog>() {
     let mut at = unsafe { Root::<CompPrio>::enter() };
 
     if S.det().active.load(Ordering::Relaxed) {
-        // Storm cutoff (reference `hit_limit` before dispatch). On a trip the
-        // line stays masked -- it was masked at entry -- and the foreground
-        // removes the bridge.
-        // binz's startup policy (E107): during the handover window the count
-        // is telemetry; after it, the unchanged 64/ms cutoff.
-        let within = S.det().rate.root(&mut at, |rate| {
-            if S.det().cap_armed.load(Ordering::Relaxed) {
-                rate.hit(raw)
-            } else {
-                rate.observe(raw);
-                true
-            }
-        });
-        if !within {
-            S.comp().storm.store(true, Ordering::Relaxed);
-            S.comp()
-                .storm_step
-                .store(S.det().step.load(Ordering::Relaxed), Ordering::Relaxed);
-            return;
-        }
-        // Closed loop: decide here, microseconds after the edge.
-        // Mark the decision so COM can count its own preemptions of it.
-        // Gated on the **chain recorder**, not on the `com-top` feature: both
-        // sides of the A/B must carry the same instrumentation or the
-        // comparison measures the instrument as well as the priority (the
-        // feature-gated first version made the two images' COMP roots differ
-        // by more than the priority byte, which `isr_diff.py` caught, E167).
-        // Production runs `NoChain`, so both stores fold away there.
         if C::ON {
             S.det().in_decide.store(true, Ordering::Relaxed);
         }
-        let accepted = det_decide::<L, C>(raw, fine0, &mut at);
+        let _ = det_decide::<C>(raw, fine0, &mut at);
         if C::ON {
             S.det().in_decide.store(false, Ordering::Relaxed);
         }
-        // binz's per-call handler budget (E107), always enforced. On an
-        // overrun the line stays masked and the foreground stops the run.
+        // The storm limiter, report-only (goal B ruling), after the decision:
+        // nothing but the stamp precedes the gate.
+        S.det().rate.root(&mut at, |rate| rate.observe(raw));
+        // binz's per-call handler budget (E107), always enforced: on an overrun
+        // the line is masked and the foreground stops the run.
         let elapsed = ((hw::clock::raw()).wrapping_sub(raw) as u32)
             .wrapping_add(S.comp().overrun_inject_us.load(Ordering::Relaxed));
-        if elapsed > S.comp().call_max_us.load(Ordering::Relaxed) {
+        if STATS && elapsed > S.comp().call_max_us.load(Ordering::Relaxed) {
             S.comp().call_max_us.store(elapsed, Ordering::Relaxed);
         }
         if crate::rate::handler_overrun(elapsed) {
+            comp_exti_mask();
             S.comp().overrun.store(true, Ordering::Relaxed);
-            return;
         }
-        if !accepted {
-            // Refused. **Leave the line live** so the real crossing, if it has
-            // not happened yet, still fires this sector. This is the reference's
-            // behaviour and the point of the change: under the foreground
-            // design every refusal masked the line until the foreground next
-            // polled, and the crossing could pass inside that dead window.
-            //
-            // The pending flags were cleared above, so re-enabling cannot
-            // re-fire on the same event. binz Entry 094 order (E103).
-            comp_resume_powered();
-        }
-        // Accepted: stay masked until the foreground commutates and re-arms for
-        // the next sector -- one crossing per sector, as the reference serves.
         return;
     }
+    hw::comp::line_disable();
+    hw::comp::clear_pending();
     if S.drv().active.load(Ordering::Relaxed) {
         S.drv().rate.root(&mut at, |r| r.observe(raw));
         if !drv_decide(raw) {
@@ -1515,17 +1292,6 @@ pub fn comp_resume_powered() -> bool {
             false
         }
     })
-}
-
-/// Select this sector's edge and clear both pending flags, leaving the line
-/// masked (E134). The reference's order without the final unmask: the blanking
-/// floor's one-shot does that, and any flag set in between is a real
-/// transition on the already-selected phase and edge.
-pub fn comp_exti_prime(step: Step) {
-    hw::comp::line_disable();
-    hw::comp::select_edge(edge_is_rising(step));
-    hw::comp::clear_pending();
-    hw::nvic::unpend(stm32::Interrupt::ADC_COMP);
 }
 
 /// Mask the comparator line and drop any pending edge.

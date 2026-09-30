@@ -27,9 +27,9 @@ use super::hal::{self, Gates, Hal, Inject};
 use super::measure::Baseline;
 use super::policy::{
     Advance, Bemf, CATCH_DUTY_TENTHS, CATCH_EHZ, CurrentLimit, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE,
-    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS, REVISIT_RESCUE_MAX,
-    SIXSTEP_DUTY_CAP, SagLimit, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window,
-    sector_interval_us, sixstep_ccr_of,
+    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS, SIXSTEP_DUTY_CAP,
+    SagLimit, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window, sector_interval_us,
+    sixstep_ccr_of,
 };
 
 /// ENV-42: the host's 4750 mA worst-block gate in raw residual codes (4000 mA = RAW_LIMIT).
@@ -927,10 +927,6 @@ pub struct Locked {
     ctx: Ctx,
     gates: Gates<hal::Locked>,
     sector_start: u32,
-    revisit_step: u8,
-    revisit_inflight: bool,
-    /// Rescue attempts spent in this sector (E140), reset by an accept.
-    rescues: u8,
     last_com_count: u32,
 }
 
@@ -980,9 +976,6 @@ impl Handover {
             ctx,
             gates,
             sector_start: sd.edge_us,
-            revisit_step: 0,
-            revisit_inflight: false,
-            rescues: 0,
             last_com_count: 0,
         }
     }
@@ -1044,12 +1037,10 @@ impl Locked {
         if let Some(raw) = hal.det_poll() {
             self.consume(hal, raw);
         }
-        self.revisit(hal);
+        hal.publish_filter_depth();
         let cc = hal.com_count();
         if cc != self.last_com_count {
             self.last_com_count = cc;
-            // A retry not accepted before this commutation failed.
-            self.revisit_inflight = false;
         }
         let c = &mut self.ctx;
         if duty != c.applied_duty && !c.hold_plans {
@@ -1097,12 +1088,6 @@ impl Locked {
         // sectors/stamps are not recoverable from a latest-value mailbox.
         let bin = (c.step.get() as usize - 1) & 7;
         c.stats.acc_by_step[bin] = c.stats.acc_by_step[bin].saturating_add(1);
-        if self.revisit_inflight {
-            c.stats.revisit_accepts[bin] = c.stats.revisit_accepts[bin].saturating_add(1);
-        }
-        self.revisit_inflight = false;
-        self.revisit_step = 0;
-        self.rescues = 0;
         // Shift-only thresholds, no division on a motor path.
         let half = ci_before >> 1;
         let t = if count <= half + (ci_before >> 2) {
@@ -1118,56 +1103,6 @@ impl Locked {
         };
         c.stats.acc_by_phase[t] = c.stats.acc_by_phase[t].saturating_add(1);
         c.last_ci = hal.det_average().unwrap_or(c.last_ci);
-    }
-
-    /// The level revisit: retry a crossing the half-cycle gate refused and the
-    /// comparator now simply holds. Once per sector, plus up to
-    /// `REVISIT_RESCUE_MAX` rescues when the sector is overdue (E140).
-    ///
-    /// The rescue is what E138 asked for. Without it the single attempt is
-    /// spent on the first pass of the sector and `revisit_step` blocks every
-    /// later one until an accepted crossing clears it -- so the one sector
-    /// that most needs another look, the one whose crossing was swallowed,
-    /// never gets one. Each rescue needs another half-interval of overdue, so
-    /// the count is bounded and the poll cannot hammer.
-    fn revisit(&mut self, hal: &mut impl Hal) {
-        let step = self.ctx.step;
-        let fresh = self.revisit_step != step.get();
-        let overdue = !fresh && self.rescue_due(hal);
-        if hal.com_idle() && (fresh || overdue) && hal.revisit(step) {
-            self.revisit_step = step.get();
-            self.revisit_inflight = true;
-            if overdue {
-                self.rescues = self.rescues.saturating_add(1);
-            }
-            let bin = (step.get() as usize - 1) & 7;
-            self.ctx.stats.revisit_attempts[bin] = self.ctx.stats.revisit_attempts[bin].saturating_add(1);
-        }
-    }
-
-    /// Is this sector overdue by another half-interval, with a rescue left?
-    fn rescue_due(&mut self, hal: &mut impl Hal) -> bool {
-        if self.rescues >= REVISIT_RESCUE_MAX {
-            return false;
-        }
-        let ci = self.ctx.last_ci;
-        if ci == 0 {
-            return false;
-        }
-        let elapsed = hal.now().wrapping_sub(self.sector_start);
-        // The first rescue at 1.5 intervals, then one per further half. ENV-33 lever
-        // (`early-rescue`): at 1.125 intervals, then one per further eighth. At 72.5 % the
-        // late step-3 accepts cluster at 98-99 us = 1.5 x ci: a crossing that had happened
-        // but whose one revisit was spent on a transient waited for this deadline (ENV-32
-        // review). A rescue still pends only when the comparator already reads the
-        // post-crossing level (`revisit::admit`), so an earlier deadline cannot accept before
-        // the crossing.
-        let step = if cfg!(feature = "early-rescue") {
-            ci >> 3
-        } else {
-            ci >> 1
-        };
-        elapsed > ci + step + step * u32::from(self.rescues)
     }
 }
 
@@ -1273,9 +1208,6 @@ mod accepted_tests {
             ctx,
             gates: Gates::idle().pass(),
             sector_start: 1000,
-            revisit_step: 0,
-            revisit_inflight: false,
-            rescues: 0,
             last_com_count: 0,
         };
         for (raw, count) in [(1100, 1), (1400, 3), (1700, 3)] {

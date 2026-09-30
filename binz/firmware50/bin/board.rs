@@ -531,7 +531,19 @@ impl Hal for Board {
         // handover commutation reads the same values the old borrow would have
         // (step 6a).
         det.accept_avg.store(zc.average_interval(), Ordering::Relaxed);
-        det.accept_blank.store(zc.blanking(), Ordering::Relaxed);
+        // Goal B step 4: AM32's gate and depth from the seeded six-slot ring (all six
+        // slots at `seed_us`), exactly as COM and the foreground will compute them.
+        let sum = seed_us * 6;
+        det.six_sum.store(sum, Ordering::Relaxed);
+        det.gate_us.store(((sum + 2) * 5462) >> 16, Ordering::Relaxed);
+        det.depth.store(
+            u32::from(firmware50::bemf::am32_filter_level(
+                sum.div_ceil(3), // (sum + 2) / 3
+                zc.average_interval() * 2,
+                0,
+            )),
+            Ordering::Relaxed,
+        );
         // ENV-58 (A5): the first acceptance arms with a wait computed from the seed.
         det.next_wait.store(
             firmware50::commutation::wait_time(zc.average_interval(), advance),
@@ -666,36 +678,19 @@ impl Hal for Board {
         S.com().count.load(Ordering::Relaxed)
     }
 
-    /// Transcribed from the qualified image's `bench-running-level-revisit`
-    /// poll: sample the inputs and pend inside one critical section.
-    fn revisit(&mut self, step: Step) -> bool {
-        cortex_m::interrupt::free(|_| {
-            if !firmware50::revisit::sector_ready(
-                step.get(),
-                S.det().step.load(Ordering::Relaxed),
-                S.com().phase.load(Ordering::Relaxed),
-            ) {
-                return false;
-            }
-            let now_raw = hw::clock::raw();
-            let start = S.det().sector_start_raw.load(Ordering::Relaxed) as u16;
-            let v = firmware50::revisit::Inputs {
-                closed_loop: S.det().active.load(Ordering::Relaxed),
-                line_live: hw::comp::line_live(),
-                pending: hw::comp::pending(),
-                average_us: roots::det_average_interval().unwrap_or(0),
-                elapsed_us: u32::from(now_raw.wrapping_sub(start)),
-                post_level: hw::comp::level() == roots::edge_is_rising(step),
-                already_retried: false,
-            };
-            let ok = firmware50::revisit::admit(v);
-            if ok {
-                #[cfg(feature = "chain-origin")]
-                firmware50::chain::REVISIT_REQ.store(true, Ordering::Relaxed);
-                hw::comp::pend();
-            }
-            ok
-        })
+    /// **Goal B step 4: AM32's `filter_level`, from the main loop** (`main.c:2631-
+    /// 2638`), published for COMP. `average_interval` is the six-slot average in
+    /// half-µs (`(sum_us + 2) / 3`, `main.c:2328,2452`); `commutation_interval`
+    /// is the blended estimate in half-µs; `zero_crosses` counts commutations
+    /// since handover.
+    fn publish_filter_depth(&mut self) {
+        let sum = S.det().six_sum.load(Ordering::Relaxed);
+        let ci_half = S.det().accept_avg.load(Ordering::Relaxed).saturating_mul(2);
+        // AM32's `zero_crosses`: commutations since the loop closed. The handover
+        // zeroes `com.count` (`com_handover`), after `det_install` ran.
+        let zc = S.com().count.load(Ordering::Relaxed);
+        let level = firmware50::bemf::am32_filter_level(sum.div_ceil(3), ci_half, zc);
+        S.det().depth.store(u32::from(level), Ordering::Relaxed);
     }
 
     fn publish_plans(&mut self, duty: u16, period: u32, cap: u16) {
@@ -783,7 +778,12 @@ impl Hal for Board {
 
     fn roots_record(&mut self) -> Roots {
         let (zc_accepted, too_early, unstable) = roots::det_counts();
-        let (det_peak, storm) = S.det().rate.lock(|r| (r.peak(), r.failed())).unwrap_or((0, false));
+        // Goal B: the storm limiter is report-only; `storm` = the closed-loop peak exceeded 64/ms.
+        let (det_peak, storm) = S
+            .det()
+            .rate
+            .lock(|r| (r.peak(), r.peak() > firmware50::rate::LIMIT))
+            .unwrap_or((0, false));
         Roots {
             zc_accepted,
             too_early,

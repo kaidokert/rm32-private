@@ -116,6 +116,68 @@ impl<const REPORT_FAST: bool> EventWatch<REPORT_FAST> {
         true
     }
 
+    /// **`n` accepted events, the newest at `now` in sector `sector`** (goal B
+    /// step 2: the guard tick feeds the watch, and at high speed more than one
+    /// crossing lands between ticks). The order check becomes "the newest sector
+    /// is the last one seen plus `n`"; the short-interval report compares the
+    /// whole gap against `n` minimum intervals and records a minimum only for
+    /// `n == 1`. `n == 1` is exactly [`Self::event`]. No division: `n` is reduced
+    /// modulo 6 by bounded subtraction, and a batch of 18 or more crossings
+    /// between two ticks (impossible while the tick-gap stop holds)
+    /// re-establishes phase instead of judging order.
+    pub fn events(&mut self, now: u32, sector: u8, n: u32) -> Option<Fault> {
+        if n == 0 {
+            return self.poll(now);
+        }
+        if n == 1 {
+            return self.event(now, sector);
+        }
+        if self.poll(now).is_some() {
+            return self.fault;
+        }
+        let mut k = n;
+        if k >= 12 {
+            k -= 12;
+        }
+        if k >= 6 {
+            k -= 6;
+        }
+        let in_order = match self.sector {
+            None => true,
+            Some(_) if k >= 6 => true,
+            Some(prev) => {
+                let s = u32::from(prev) + k;
+                u32::from(sector) == if s > 6 { s - 6 } else { s }
+            }
+        };
+        if !(1..=6).contains(&sector) || !in_order {
+            self.fault = Some(Fault::SectorOrder);
+        } else {
+            let gap = now.wrapping_sub(self.last);
+            // A plain 32-bit multiply: `n` is below 18 here (reduced above only
+            // for the order check, but a batch that large is past the tick-gap
+            // stop) and `min_interval` is a µs constant, so no overflow and no
+            // 64-bit helper (`saturating_mul` pulls `__aeabi_lmul`, which the
+            // ISR math audit refuses).
+            let span = if n >= 64 {
+                u32::MAX
+            } else {
+                self.min_interval.wrapping_mul(n)
+            };
+            if self.sector.is_some() && gap < span {
+                if REPORT_FAST {
+                    self.fast_count = self.fast_count.saturating_add(n);
+                } else {
+                    self.fault = Some(Fault::TooFast);
+                    return self.fault;
+                }
+            }
+            self.last = now;
+            self.sector = Some(sector);
+        }
+        self.fault
+    }
+
     /// One accepted event in logical sector `sector` (1..=6). The first event
     /// establishes phase only.
     pub fn event(&mut self, now: u32, sector: u8) -> Option<Fault> {
@@ -154,6 +216,48 @@ mod tests {
 
     type Watch = EventWatch<false>;
     type Report = EventWatch<true>;
+
+    /// Goal B step 2: a batch of `n` crossings between two guard ticks.
+    #[test]
+    fn batched_events_judge_order_by_count() {
+        let mut w = Report::new(0, 238, EVENT_MAX_US);
+        assert_eq!(w.events(100, 3, 1), None, "first event sets phase");
+        assert_eq!(w.events(200, 5, 2), None, "3 + 2 = 5");
+        assert_eq!(w.events(300, 2, 3), None, "5 + 3 wraps to 2");
+        assert_eq!(w.events(350, 2, 0), None, "no new crossing is a poll");
+        let mut bad = Report::new(0, 238, EVENT_MAX_US);
+        assert_eq!(bad.events(100, 3, 1), None);
+        assert_eq!(
+            bad.events(200, 4, 2),
+            Some(Fault::SectorOrder),
+            "two crossings but one sector"
+        );
+        let mut wrap = Report::new(0, 238, EVENT_MAX_US);
+        assert_eq!(wrap.events(100, 1, 1), None);
+        assert_eq!(wrap.events(200, 2, 7), None, "seven crossings advance one sector mod 6");
+    }
+
+    #[test]
+    fn batched_short_gaps_are_reported_not_latched() {
+        let mut w = Report::new(0, 238, EVENT_MAX_US);
+        assert_eq!(w.events(100, 1, 1), None);
+        assert_eq!(w.events(200, 3, 2), None, "100 us for two crossings is short");
+        assert_eq!(w.fast_events().0, 2);
+        let mut strict = Watch::new(0, 238, EVENT_MAX_US);
+        assert_eq!(strict.events(100, 1, 1), None);
+        assert_eq!(strict.events(200, 3, 2), Some(Fault::TooFast));
+    }
+
+    #[test]
+    fn a_batch_still_goes_stale() {
+        let mut w = Report::new(0, 238, 300);
+        assert_eq!(w.events(100, 1, 1), None);
+        assert_eq!(
+            w.events(500, 3, 2),
+            Some(Fault::Stale),
+            "the batch arrived after the deadline"
+        );
+    }
 
     #[test]
     fn a_steady_ordered_stream_is_healthy() {
