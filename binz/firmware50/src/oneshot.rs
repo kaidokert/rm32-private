@@ -78,9 +78,19 @@ mod foreground_write_tests;
 /// Closed-loop blanking takes precedence over the driven acquisition owner.
 #[inline(always)]
 pub const fn comparator_resume_allowed(
-    guard: u32, detector: bool, driven: bool, stopped: bool, active: bool, phase: u32,
+    guard: u32,
+    detector: bool,
+    driven: bool,
+    stopped: bool,
+    active: bool,
+    phase: u32,
 ) -> bool {
-    guard == 0 && if detector { arm_allowed(stopped, active) && phase == 0 } else { driven }
+    guard == 0
+        && if detector {
+            arm_allowed(stopped, active) && phase == 0
+        } else {
+            driven
+        }
 }
 
 #[cfg(test)]

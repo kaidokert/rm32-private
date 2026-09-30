@@ -55,7 +55,6 @@ pub mod ramp;
 pub mod rate;
 pub mod report;
 pub mod restart;
-pub mod revisit;
 /// The motor ISR roots' logic and wiring (target-only).
 #[cfg(target_os = "none")]
 pub mod roots;

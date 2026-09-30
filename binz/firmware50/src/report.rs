@@ -680,6 +680,9 @@ impl RunReport {
         out.kv("window_us", crate::run::policy::TAIL_WINDOW_US);
         out.say("\r\n");
         out.say("BEMFRCOMP ");
+        // Goal B step 1: 0 = the report-only counters below (spent, ci_min, thin,
+        // hold_unstable, rebase, late snapshot) were compiled out and read zero.
+        out.kv("isr_stats", u32::from(cfg!(feature = "isr-stats")));
         out.kv("spent_max_us", self.roots.spent_max_us);
         out.kv("late_arms", self.roots.late_arms);
         out.kv("ci_at_late", self.roots.ci_at_late);

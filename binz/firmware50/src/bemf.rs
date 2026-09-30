@@ -132,6 +132,42 @@ impl FilterPolicy for MappedFilter {
     }
 }
 
+/// **AM32's `filter_level`, exactly as its main loop computes it** (goal B step 4,
+/// `main.c:2631-2638`):
+///
+/// ```c
+/// if (zero_crosses < 100 && commutation_interval > 500) {
+///   filter_level = 12;
+/// } else {
+///   filter_level = map(average_interval, 100, 500, 3, 12);
+/// }
+/// if (commutation_interval < 50) {
+///   filter_level = 2;
+/// }
+/// ```
+///
+/// Units are the reference's half-µs: `average_half_us` is `average_interval`
+/// (the six-slot average, `e_com_time / 3`), `ci_half_us` is
+/// `commutation_interval` (the blended interval). The map is the reference's
+/// (no `deep-filter` floor). Foreground only: it divides.
+#[must_use]
+pub fn am32_filter_level(average_half_us: u32, ci_half_us: u32, zero_crosses: u32) -> u8 {
+    let mut level = if zero_crosses < 100 && ci_half_us > 500 {
+        12
+    } else if average_half_us <= 100 {
+        3
+    } else if average_half_us >= 500 {
+        12
+    } else {
+        // AM32 `map(x, 100, 500, 3, 12)`: (x - 100) * 9 / 400 + 3, integer.
+        (3 + (average_half_us - 100) * 9 / 400) as u8
+    };
+    if ci_half_us < 50 {
+        level = 2;
+    }
+    level
+}
+
 /// Adapts a half-microsecond policy to an estimator that works in whole
 /// microseconds (E083).
 ///
@@ -578,6 +614,31 @@ pub fn judge<R: FnMut() -> bool>(count: u32, gate: u32, rising: bool, depth: u8,
         i += 1;
     }
     Judgement::Pass
+}
+
+#[cfg(test)]
+mod am32_filter_tests {
+    use super::am32_filter_level;
+
+    #[test]
+    fn matches_the_reference_map() {
+        // Past startup, mid speed: map(average_interval, 100, 500, 3, 12).
+        assert_eq!(am32_filter_level(100, 120, 1000), 3);
+        assert_eq!(am32_filter_level(120, 120, 1000), 3);
+        assert_eq!(am32_filter_level(145, 145, 1000), 4);
+        assert_eq!(am32_filter_level(300, 300, 1000), 7);
+        assert_eq!(am32_filter_level(499, 499, 1000), 11);
+        assert_eq!(am32_filter_level(500, 500, 1000), 12);
+        assert_eq!(am32_filter_level(4000, 4000, 1000), 12);
+    }
+
+    #[test]
+    fn startup_is_twelve_and_very_fast_is_two() {
+        assert_eq!(am32_filter_level(600, 600, 10), 12, "zero_crosses < 100 && ci > 500");
+        assert_eq!(am32_filter_level(120, 120, 10), 3, "a fast start takes the map");
+        assert_eq!(am32_filter_level(90, 49, 1000), 2, "commutation_interval < 50 wins");
+        assert_eq!(am32_filter_level(600, 49, 10), 2, "and wins over the startup rule");
+    }
 }
 
 #[cfg(test)]
