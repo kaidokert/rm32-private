@@ -1,0 +1,229 @@
+# firmware50 — standalone typed G071/DRV8304 ESC firmware.
+# Reproduces the qualified sensorless behavior to ~10% throttle.
+# Independent: its own [workspace] table makes it a workspace ROOT, so the
+# parent rm32 workspace never claims it and no root manifest edit is needed.
+# Built explicitly:  cargo build --manifest-path binz/firmware50/Cargo.toml --release
+[package]
+name = "firmware50"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone typed G071/DRV8304 ESC firmware; qualified-behavior reproduction to 10%"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+# A path dependency living inside a workspace root's directory is otherwise
+# pulled in as an implicit member, which would apply this crate's profiles to
+# it and force its dev-dependencies (rtic, defmt-rtt, panic-probe) to resolve.
+exclude = ["ref"]
+
+[[bin]]
+name = "shell-pwm"
+path = "bin/shell-pwm.rs"
+test = false
+bench = false
+
+# Diagnostic: shell-pwm with the COMP root's decisions recorded, for the
+# replay test (E121). Its COMP handler is slower; never a production image.
+# **RETIRED on the A6 split (ENV-65):** its twin `det_decide_logged` still
+# blends in COMP and never publishes `accept_count`, so COM phase 1 would
+# commit a second time with a zero count. Re-enable only after the twin is
+# rebuilt on A6's shape (judge + arm in COMP, commit in COM).
+# [[bin]]
+# name = "edge-capture"
+# path = "bin/edge-capture.rs"
+# test = false
+# bench = false
+
+# Diagnostic: shell-pwm with the commutation timing chain recorded in both
+# motor roots (E154). Both handlers are slower; never a production image.
+[[bin]]
+name = "char-capture"
+path = "bin/char-capture.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "chain-capture"
+path = "bin/chain-capture.rs"
+test = false
+bench = false
+
+# Diagnostic: shell-pwm with the sharp-sag guard's own inputs recorded per
+# judged block in a pre-trip ring (campaign 9 step 3). Foreground
+# instrumentation; the four ISR roots are production's.
+[[bin]]
+name = "idle-scan"
+path = "bin/idle-scan.rs"
+
+[[bin]]
+name = "sag-capture"
+path = "bin/sag-capture.rs"
+test = false
+bench = false
+
+[lib]
+test = true
+bench = false
+
+# **The COM-above-COMP A/B** (campaign 8 step 6b). COMP and its own values move
+# to NVIC 0x80, below the COM root's 0x40, so a commutation preempts a
+# zero-crossing decision. That this is what the reference does above 48% duty
+# comes from the operator's goal statement, not from anything verified in this
+# tree, and the tree's own arithmetic puts the crossing near 75% duty (E167,
+# E170). Sound
+# only because step 6a left no value touched by both roots; the compiler
+# enforces that through `shared::CompPrio`. Never a production image: the
+# qualified arrangement is peers at 0x40, which is the default.
+# **RETIRED on the A6 split (ENV-65):** COM commits through `Seam::lock`, which
+# returns None in handler mode, so a com-top build never commits; and COMP
+# publishes accept_count after the arm, a window COM could preempt. See
+# `compile_error!` in shared.rs.
+[features]
+com-top = []
+# Drops the advance level at/above 35% duty from 22 to 20, for the A/B E300
+# predeclared against the arm path. Default OFF, so the default build's
+# `AdvancePolicy` is unchanged. See `run::policy::ADVANCE_HIGH`.
+advance-low = []
+# Flattens the advance schedule to the REFERENCE value 16 at both ends (E330):
+# commutation.rs's DefaultAdvance is FixedAdvance<16> and AM32 main.c:656 sets
+# temp_advance = 16, so 20/22 is this campaign's divergence upward. At a flat
+# 16, wait = ci/4 >= 10 for every ci at or above SECTOR_FLOOR_US, so no descent
+# the estimator's clamp permits can reach left == 0. Takes precedence over
+# `advance-low`.
+advance-ref = []
+# ENV-7 A/B: a flat 18 at both ends, between the reference 16 and the 20 carrier.
+# wait = ci*14/64, so the always-clear line against the 10 us arm cost moves from
+# ci 40 (at 16) to ci 46. `advance-ref` takes precedence over it; it takes
+# precedence over `advance-low`.
+advance-18 = []
+# REJECTED in ENV-18 (worst block higher in 3/3 pairs at 700, two firmware foldbacks);
+# kept only so image B363FF11 reproduces.
+# ENV-18 A/B: a flat 14 at both ends, BELOW the reference 16 -- tested as a current-per-
+# speed lever (wait = ci*18/64, longer than the reference's ci/4). `advance-ref` takes
+# precedence over it; it takes precedence over `advance-18` and `advance-low`.
+advance-14 = []
+# Swaps the real sag ring into the PRODUCTION controller, changing nothing else
+# -- same serve loop, same policies, same guards. For capturing the rung-550
+# trip sequence, which no existing capture has. See run::ProductionSagLog.
+sag-ring = []
+# The per-arm arm-margin histograms in `roots::note_margin` (E315): eight
+# buckets on the requested `wait`, eight on `wait - spent`. Default OFF, so
+# production is unchanged and the `.bss` arrays cost nothing but space. What it
+# measures is `P(wait <= 9)` -- the one unmeasured term in E315's closed model
+# `P(latch/arm) = P(wait <= 9) x P(spent >= 9)`, whose other factor is already
+# measured at 0.0297 over 20 478 archived chain arms.
+margin-hist = ["isr-stats"]
+# ENV-23: DIAGNOSTIC ONLY. Raises SIXSTEP_DUTY_CAP from the qualified top (700) to the
+# mapped edge (725) so an image can run the edge. Never in a qualifying image.
+edge-probe = []
+# ENV-93 operator direction: exploration image, cap 950, single runs to find the edge (never qualifies).
+explore-cap = []
+# ENV-41 diagnostic: 90 s campaign window (restart above 70 % fits). Off in production.
+window-90 = []
+# ENV-95: restart twin above ~80 % (the 843 ramp leaves 43 s of a 90 s window; a segment needs 45.5 s).
+window-100 = []
+# ENV-98: restart twin at 100 % (the full-duty ramp pushes the first stop past what 100 s fits).
+window-110 = []
+# ENV-42 diagnostic: freeze the sag ring on the first hold block >= 4750 mA (recorder only).
+freeze-gate = []
+# ENV-43 diagnostic: worst_hold_ma measured from hold + 5 s (reporting only).
+late-worst = []
+# Goal B step 1: DIAGNOSTIC ONLY. Compiles the report-only counters back into the
+# COMP and COM roots (margin/thin/ci_min, spent_max, call_max, refusal counts,
+# rebase, late snapshot, COM late_max, blank_arms). Production reports them as
+# absent (`isr_stats=0`), and checkers must refuse to gate on them there.
+isr-stats = []
+# ENV-78 DIAGNOSTIC: ADC hardware 4x oversampling, shunts at 160.5 cycles (one PWM period per
+# shunt word). Changes the protections' INPUT (current and bus words); never production until
+# an A/B and review say so.
+adc-ovs4 = []
+# ENV-81 candidate: each shunt converted twice per trigger (8-rank sequence), shunt word = mean of the
+# two. Same window, same allowance; the protections' current INPUT gets a lower-variance estimator.
+dual-shunt = []
+# ENV-84 A/B lever: post-transfer ramp at 0.1 % per 50 ms instead of 1 % per 0.5 s (same rate).
+ramp-fine = []
+# ENV-88 DIAGNOSTIC: the block ring's aux column records the half-block sum instead of the duty.
+blk-half = []
+# ENV-89 DIAGNOSTIC: TIM6 (ADC trigger + guard tick) period 104 us instead of 101 us.
+scan-104 = []
+# ENV-26: DIAGNOSTIC ONLY. The level revisit tags the COMP dispatch it pends, so a
+# chain image can mark revisit-originated accepts (flag bit 6).
+chain-origin = []
+# ENV-29 A/B lever: run carrier 48 -> 24 kHz (AM32's NOMINAL_PWM), duty::RUN_PERIOD_TICKS.
+carrier-24k = []
+# ENV-30 A/B lever: COMP2 hysteresis 1 during the closed loop only (run::policy::CLOSED_COMP_HYST).
+closed-hyst-1 = []
+# ENV-32 A/B lever: cap a single outlier interval before the estimator blend (bemf.rs).
+outlier-clamp = []
+# ENV-33 A/B lever: first revisit rescue at 1.125 x ci (then every ci/8) instead of 1.5 x ci.
+early-rescue = []
+# ENV-37 A/B lever: post-commutation blank one-shot armed for holds >= 12 us (was 16).
+blank-min-12 = []
+# Raises the persistence filter's floor from the reference's 3 reads to 5
+# (E324). The map floors at 3 for every interval at or below 73 us, and that
+# boundary sits between rung 525 (depth 4, 0 events in 703 s) and rung 550
+# (depth 3, 10 events in 876 s): pooled, 15.8x with exact p = 1.0e-07, against
+# a smooth duty trend that accounts for only 2.4-4.0x. E322 decoupled the step
+# from the `wait` boundary it had been confounded with. Default OFF.
+deep-filter = []
+# REFUTED (E328) -- do not enable; see bemf.rs. Widens the gate 32/64 -> 40/64,
+# refusing the 0.500..0.625 band of early edges that feeds the estimator's
+# descent. Costs a multiply and a shift rather than the two extra comparator
+# reads a deeper filter spends on the pre-arm path.
+wide-blank = []
+# Filter floor 6 instead of 5 (E325), to test whether E324's 91x hold
+# improvement at floor 5 is the start of a monotone trend or its optimum.
+# Takes precedence over `deep-filter`.
+deep-filter-6 = []
+
+[dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+
+# Peripheral access goes through the HAL wherever the HAL exposes what is
+# needed. The one documented exception is TIM1 PWM: this HAL's PWM macro
+# substitutes `cc1ne` for `cc1e`, so it enables only the complementary
+# outputs and the main OC1-3 never pulse. TIM1 is therefore configured through
+# the PAC underneath the HAL (`stm32g0xx_hal::stm32`), which is also what the
+# qualified binz image does.
+#
+# Vendored under the gitignored `ref/` so the build is offline and pinned.
+stm32g0xx-hal = { path = "ref/stm32g0xx-hal", features = ["stm32g071", "rt"] }
+
+# The PAC's `atomics` feature routes through portable-atomic, and thumbv6m has
+# no atomic read-modify-write instructions, so portable-atomic needs a backend
+# for this target. `unsafe-assume-single-core` (E131), not `critical-section`:
+# the `critical-section` backend cannot assume one core, so it wraps *every*
+# atomic access, plain 32-bit loads and stores included, in a critical section
+# (26 in the COMP root, 252 of its 1176 modelled cycles; 220 of the guard's
+# 421). With `unsafe-assume-single-core` loads and stores are plain `ldr`/`str`
+# and only read-modify-writes disable interrupts around themselves. Its safety
+# condition -- one core, privileged mode -- holds for the G071: a single
+# Cortex-M0+ running this firmware in thread/handler mode with no RTOS.
+# cortex-m's `critical-section-single-core` stays: `interrupt::free` and the
+# `Seam` locks still use it.
+#
+# The backend is chosen for the firmware target only (see the target table
+# below): portable-atomic refuses `unsafe-assume-single-core` on the host,
+# where the host tests use its native atomics.
+portable-atomic = { version = "1", default-features = false }
+# No panic-halt: `bin/shell-pwm.rs` owns a safing #[panic_handler] that
+# de-energizes the bridge before halting. A second handler would not link, and
+# a halt-only handler would leave the gates wherever the fault left them.
+
+# The firmware's portable-atomic backend (E131): one core, privileged mode.
+[target.'cfg(target_os = "none")'.dependencies]
+portable-atomic = { version = "1", default-features = false, features = ["unsafe-assume-single-core"] }
+
+# Production profile for the M0: small, thin-LTO, single codegen unit, abort.
+# debug=true keeps line info so the ISR-root disassembly audit stays readable.
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+debug = true
+
+[profile.dev]
+panic = "abort"

@@ -1,0 +1,4 @@
+# The width this crate was written at. It had no rustfmt.toml, so a bare
+# `cargo fmt` reformatted every file at the 100-column default (E154); the
+# setting is pinned here so that cannot happen again.
+max_width = 120

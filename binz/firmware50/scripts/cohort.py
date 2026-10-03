@@ -1,0 +1,655 @@
+#!/usr/bin/env python3
+"""Behavior reference for the refactor goal (notebook E109+): the E101-E108
+25% cohort, and the per-run / per-rung gates the fixture enforces.
+
+Cohort: every reason-2 25% capture from E101, E104, E107 and E108 (the images
+of the frozen behavior). For each of the four quantities the goal names --
+accepted count, rate identity, coast eHz and current proxy -- the spread is
+the cohort's [min, max]; a new 25% run "holds behavior" when all four sit
+inside it (``check``).
+
+Gates (shared with ``bemf_run.py``):
+
+* run gates 1-3: stop reason 2 (deadline), hold >= 30 s at target, forced 0,
+  **one** rate identity -- the non-circular one (E172 replaced the pair of
+  tests, of which the first measured only truncation) --
+  accepted rate within 1% of the loop's expectation AND of 6 x coast eHz,
+  `unstable` non-zero and the blanking gate witnessed (``too_early`` non-zero,
+  or ``blank_arms`` non-zero once E134 enforces the gate with the line masked),
+  coast eHz within 5% of the oracle,
+  and **coast crossings > 0**. A coast's crossings are the comparator
+  transitions the bridge-off witness counted (``COASTTIMING trans``);
+  ``BEMFCOAST crossings`` is an ADC count on pins no longer scanned (E041)
+  and is always 0, so it cannot be the witness.
+* rung oracle comparison: the rung's mean coast eHz and mean current proxy
+  within 20% of the oracle's at that duty.
+
+Usage:
+    python scripts/cohort.py                 # print the cohort spread
+    python scripts/cohort.py --check FILE    # one 25% capture against it
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import re
+import statistics
+import sys
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+CAPS = REPO / "captures"
+
+COHORT_GLOBS = ["e101-qual25_*.txt", "e104-qual25_*.txt", "e107-qual25_*.txt", "e108-qual25_*.txt"]
+
+# The oracle's figures per duty (tenths): eHz and current proxy mA. Same table
+# as bemf_run.py's ORACLE (DUTY_50_CAMPAIGN.md rung table).
+# Campaign 6 (E137) adds the 27.5-37.5% rungs. 300/350 are measured rows of
+# the same table; the half-rungs 275/325/375 are linear interpolations of its
+# neighbours and are marked here so no entry claims to be measured.
+ORACLE = {100: (401, 45), 150: (704, 58), 200: (941, 167), 250: (1186, 326),
+          275: (1279, 423), 288: (1327, 473), 300: (1371, 519), 325: (1468, 630),
+          338: (1519, 691), 350: (1564, 740), 375: (1650, 843), 400: (1736, 945),
+          425: (1815, 1091), 450: (1893, 1237), 475: (1995, 1420), 500: (2096, 1603)}
+ORACLE_INTERPOLATED = (275, 288, 325, 338, 375, 425, 475)
+
+
+def fields(line: str) -> dict[str, str]:
+    out = {}
+    for tok in line.split()[1:]:
+        if "=" in tok:
+            k, v = tok.split("=", 1)
+            out[k] = v
+    return out
+
+
+# Key names emitted by more than one report line, so a flat `\bkey=` regex over
+# a whole capture resolves them by **emission order** rather than by meaning.
+#
+# `zc_per_s` is the one that bites: BEMFGATE's is over the whole closed window
+# (84 776 ms in e286-250_01) and BEMFRATE's over the hold alone (77 276 ms),
+# reading 6942 against 7156 -- a 3% difference, and the gated rate identity
+# `zc_permille_of_6x_coast` is computed from **BEMFRATE's**. `reason` is worse
+# in principle: three lines emit it (BEMFDONE, BEMFCOAST, BEMFGUARD) and it is
+# the field `_is_firmware_latch` classifies every run by.
+#
+# `parse` below is line-scoped and takes each from its own line, which is why
+# the ledger is correct. This census exists so that a reader which is *not*
+# line-scoped can be found, and so a ninth collision cannot arrive unnoticed.
+AMBIGUOUS_KEYS = frozenset({
+    "accepts",      # BEMFDRIVEN, BEMFTAIL
+    "duty_tenths",  # BEMFCURRENT, BEMFREF
+    "hold_ma",      # BEMFCURRENT, BEMFREF
+    "hold_ms",      # BEMFGATE, BEMFRATE, BEMFREF
+    "reason",       # BEMFDONE, BEMFCOAST, BEMFGUARD
+    "unstable",     # BEMFDONE, BEMFDRIVEN
+    "verdict",      # BEMFREF, PREFLIGHT
+    "zc_per_s",     # BEMFGATE, BEMFRATE
+})
+
+
+def ambiguous_keys(path: pathlib.Path) -> dict[str, list[str]]:
+    """Which key names this capture emits on more than one line.
+
+    Returns `{key: [line names]}`. Compare against [`AMBIGUOUS_KEYS`]: a key
+    here but not there is a **new** collision, and any flat-regex reader of it
+    is now resolving by emission order.
+    """
+    owner: dict[str, set[str]] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        m = re.match(r"([A-Z]{3,})\b", line)
+        if not m:
+            continue
+        for k in fields(line):
+            owner.setdefault(k, set()).add(m.group(1))
+    return {k: sorted(v) for k, v in sorted(owner.items()) if len(v) > 1}
+
+
+def coast_ehz(iv: list[int]) -> int:
+    """The rotor's speed **at the bridge-off instant**, from the coast.
+
+    The firmware reports eight half-periods after the bridge floats, and the
+    rotor decelerates across them, so any average of them under-reads the
+    speed the loop was actually holding. Campaign 6 (notebook E143) measured
+    that bias over 360 captures: the median of the pair sums, which this
+    function used through campaign 6, puts the rate-identity ratio's centre at
+    **1006.7** with a standard deviation of 2.6 -- three thousandths from the
+    gate's own edge, so **37 of 360 runs (10%) fell outside a 1% band that
+    nothing was wrong with**. Two of this campaign's "failures" were that
+    artefact (E140's 35% cohort, E142's 15% run 02).
+
+    So: drop the first half-period, which can be the demagnetisation transient
+    rather than the rotor (E113: 461 µs against 423-445 for the rest), fit a
+    least-squares line through the remaining pair sums against pair index, and
+    read it back at the instant before the first retained pair. The same 360
+    captures then centre at **1002.7**, standard deviation 2.9, with **4**
+    outside the band.
+
+    The band is unchanged at +-1%; only the bias is removed. Every campaign-6
+    result was judged on the biased figure, which reads high, so each one was
+    held to a stricter test than this and none of them is weakened."""
+    def pair_sums(h: list[int]) -> list[int]:
+        return [h[i] + h[i + 1] for i in range(len(h) - 1) if h[i] + h[i + 1] > 0]
+
+    # **Truncate at the first unfilled slot before pairing** (E281). The
+    # firmware's buffer is fixed-length and zero-padded -- 32 slots since E281,
+    # 8 before -- so a rotor that yields fewer transitions leaves trailing
+    # zeros. The filter below keeps any pair whose SUM is positive, and a real
+    # half-period paired with a zero sums positive, so `[250, 0]` was admitted
+    # as a spurious half-length cycle. Measured: the same eight real values read
+    # 1974 eHz alone and **1763 with 24 zeros appended** -- an 11% corruption of
+    # the quantity the oracle comparison rests on.
+    #
+    # `speed.coast_fit` already stops at the first non-positive value; this is
+    # the same rule, and the two estimators must agree about where the data
+    # ends. Found by auditing the readers before widening the buffer rather than
+    # after -- which is the one thing E265 and E269 said to do first.
+    end = next((i for i, v in enumerate(iv) if v <= 0), len(iv))
+    iv = iv[:end]
+
+    ps = pair_sums(iv[1:]) or pair_sums(iv)
+    n = len(ps)
+    if n == 0:
+        return 0
+    if n < 3:
+        # Too short to fit: the median is all this is good for.
+        return round(1e6 / statistics.median(ps))
+    mx = (n - 1) / 2
+    my = sum(ps) / n
+    sxx = sum((x - mx) ** 2 for x in range(n))
+    sxy = sum((x - mx) * (y - my) for x, y in enumerate(ps))
+    if sxx == 0:
+        return round(1e6 / my)
+    at_float = my + (sxy / sxx) * (-0.5 - mx)
+    return round(1e6 / at_float) if at_float > 0 else 0
+
+
+def parse(path: pathlib.Path) -> dict | None:
+    """The quantities a run is judged on, or None if the capture is incomplete."""
+    rec: dict[str, dict[str, str]] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for key in (
+            "BEMFRUN",
+            "BEMFDONE",
+            "BEMFGATE",
+            "BEMFRATE",
+            "BEMFTAIL",
+            "BEMFCURRENT",
+            "COASTTIMING",
+            "BEMFDRIVEN",
+            # The sharp guard's own reference and filtered inputs -- the CV/CC
+            # discriminator's raw material, parsed here for the first time
+            # (E243). Absent from captures written before the field existed,
+            # in which case `droop_permille` is None and the gate abstains.
+            "BEMFSAG",
+        ):
+            if line.startswith(key + " "):
+                rec[key] = fields(line)  # the last occurrence wins (restart: seg 2)
+    if not all(k in rec for k in ("BEMFRUN", "BEMFDONE", "BEMFRATE", "BEMFCURRENT", "COASTTIMING")):
+        return None
+    iv = [int(x) for x in rec["COASTTIMING"].get("iv_us", "").split(",") if x]
+    coast = coast_ehz(iv)
+    zc = int(rec["BEMFRATE"].get("zc_per_s", 0))
+    return {
+        "file": path.name,
+        "duty": int(rec["BEMFRUN"].get("target_duty_tenths", 0)),
+        "reason": int(rec["BEMFDONE"].get("reason", 0)),
+        "accepted": int(rec["BEMFDONE"].get("accepted", 0)),
+        # The reference rail, sampled at run start. Every powered run on this
+        # bench reads 1208-1217; a capture taken with the supply off read 281.
+        # `scripts/bemf_run.py` refuses to START a run out of band (E346).
+        "bus_ref": int(rec["BEMFDONE"].get("bus_ref", 0)),
+        "forced": int(rec["BEMFDONE"].get("forced", 0)),
+        "too_early": int(rec["BEMFDONE"].get("too_early", 0)),
+        "blank_arms": int(rec.get("BEMFDRIVEN", {}).get("blank_arms", 0)),
+        "unstable": int(rec["BEMFDONE"].get("unstable", 0)),
+        "hold_ms": int(rec["BEMFRATE"].get("hold_ms", 0)),
+        "rate_permille": int(rec["BEMFRATE"].get("zc_rate_permille_of_expected", 0)),
+        "has_tail": bool(rec.get("BEMFTAIL")),
+        **_rate_vs_coast(rec, zc, coast),
+        "coast_ehz": coast,
+        "coast_crossings": int(rec["COASTTIMING"].get("trans", 0)),
+        "hold_ma": int(rec["BEMFCURRENT"].get("hold_ma", 0)),
+        # E193: the duty the foldback governor ended at. Absent from captures
+        # written before E187, in which case it is taken as the commanded duty
+        # (those runs could not report it, and nothing else in them can say).
+        "ceiling_tenths": int(rec["BEMFCURRENT"].get("ceiling_tenths", 0)),
+        "worst_ma": int(rec["BEMFCURRENT"].get("worst_ma", 0)),
+        # ENV-92: 1 when every mA field is on the PSU-meter scale.
+        "ma_metered": int(rec["BEMFCURRENT"].get("ma_metered", 0)),
+        "droop_permille": _droop(rec),
+    }
+
+
+def _droop(rec: dict) -> float | None:
+    """The VREF-normalised bus against its pre-run reference, per mille.
+
+    `filt_bus` is the sharp guard's own ~207 ms filtered input and `ref_bus`
+    the reference captured before the bridge was energised, so this is the
+    sustained level the guard judges against -- the quantity that separates
+    constant-voltage operation from a current-limiting supply.
+    """
+    sag = rec.get("BEMFSAG")
+    if not sag:
+        return None
+    rb = int(sag.get("ref_bus", 0))
+    rv = int(sag.get("ref_vref", 0))
+    fb = int(sag.get("filt_bus", 0))
+    fv = int(sag.get("filt_vref", 0))
+    if not rb or not fv:
+        return None
+    return fb * rv * 1000 / (rb * fv)
+
+
+def _rate_vs_coast(rec: dict, zc: int, coast: int) -> dict:
+    """The non-circular rate identity, and which inputs produced it.
+
+    Preferred: the matched powered window (`BEMFTAIL`) against the
+    time-anchored coast fit (`speed.coast_fit`), both introduced in E155 --
+    neither rounds to whole µs and both state their origin. Older captures
+    carry neither, so they fall back to the whole-hold `zc_per_s` against six
+    times the E143 index-fitted coast, which is what the gate used through
+    campaigns 6-8; the source is recorded either way so no cohort mixes them
+    silently.
+    """
+    import speed  # noqa: PLC0415  -- sibling script, imported lazily
+
+    tail, ct = rec.get("BEMFTAIL", {}), rec.get("COASTTIMING", {})
+    accepts, span = int(tail.get("accepts", 0)), int(tail.get("span_us", 0))
+    iv = [int(x) for x in ct.get("iv_us", "0").split(",") if x]
+    fit = speed.coast_fit(int(ct.get("offset_us", 0)), int(ct.get("first_us", 0)), iv) if iv else None
+    if accepts and span and fit:
+        powered = accepts * 1e6 / (6.0 * span)
+        at_stop, slope = fit[0], fit[1]
+        # **A coast fit that says the rotor accelerated is not a measurement**
+        # (E273). `speed.coast_fit` least-squares four full-cycle points and
+        # extrapolates the intercept back to the stop, so when the reported
+        # half-periods happen to put the largest pair first the line tilts
+        # upward and the intercept lands below every sibling's -- manufacturing
+        # a high ratio out of the extrapolation rather than the loop.
+        #
+        # The identity's scatter is 93% this estimator and 7% the loop rate
+        # (measured over the six rung-400 runs on one image: `powered` sd 1.03
+        # permille, `coast@0` sd 3.76). Corpus-wide, 10 of 318 runs have a
+        # positive slope and their mean residual is +11.91 permille against
+        # +0.10 for the other 311 -- so the sign is very nearly a deterministic
+        # predictor of a high-side gate failure.
+        #
+        # A coasting rotor must decelerate. `slope >= 0` is therefore
+        # physically impossible, and the right verdict is **no result**: the
+        # run is neither a pass nor a fail on this gate, it is unmeasured. That
+        # is deliberately not a widened band -- the criterion is a sign, so
+        # there is no parameter here to tune toward a preferred outcome, and
+        # E272's proposal to widen the band instead would have made exactly
+        # these broken estimates pass.
+        if at_stop > 0 and slope < 0:
+            return {
+                "rate_vs_coast_permille": round(1000 * powered / at_stop),
+                "rate_source": "matched window vs time-anchored coast",
+            }
+        if at_stop > 0:
+            return {
+                "rate_vs_coast_permille": 0,
+                "rate_source": "coast fit unphysical (slope >= 0); identity unavailable",
+                "coast_slope_ehz_per_s": round(slope * 1e6),
+            }
+    if coast:
+        return {
+            "rate_vs_coast_permille": 1000 * zc // (6 * coast),
+            "rate_source": "legacy: whole hold vs index-fitted coast",
+        }
+    return {"rate_vs_coast_permille": 0, "rate_source": "no coast"}
+
+
+def identity_unavailable(r: dict) -> bool:
+    """Did the rate identity fail to produce a measurement at all? (E273)
+
+    `speed.coast_fit` extrapolates an intercept from four full-cycle points, and
+    when the reported half-periods put the largest pair first the line tilts
+    upward -- the fit then says the rotor accelerated with the bridge off. That
+    is impossible, so there is no identity, and the run is **unmeasured on this
+    axis**: neither a pass nor a failure.
+
+    That third state matters. Gating the 0 would fail a run for the estimator's
+    defect; ignoring it would let a run count toward a rung on strictly less
+    evidence than its siblings. So callers must count only *measured* runs
+    toward the three a rung needs, while not holding the missing identity
+    against it. 10 of 318 matched-source runs in the corpus are in this class
+    (3.1%), and their mean residual was +11.9 permille against +0.1 for the
+    rest -- i.e. the sign was very nearly a deterministic predictor of the
+    high-side gate failures this used to produce.
+    """
+    return "unphysical" in r.get("rate_source", "")
+
+
+def run_gates(r: dict, min_hold_ms: int = 30_000) -> list[str]:
+    """Gates 1-3 for one run; empty list = pass.
+
+    `min_hold_ms` is the dwell a qualifying run must reach. An exploratory run
+    (campaign 6, E137) is driven on a shorter window and is judged on every
+    other gate with this lowered, never with a gate removed."""
+    fails = []
+    if r["reason"] != 2:
+        # Campaign 8's two hard stops carry their own codes, so a run that hit
+        # one says so instead of being a bare "reason != 2".
+        named = {15: "exhausted commutation deadline (a late arm)",
+                 16: "the blanking window latched a comparator edge"}
+        why = named.get(r["reason"])
+        fails.append(f"reason {r['reason']} != 2" + (f": {why}" if why else ""))
+    if r["hold_ms"] < min_hold_ms:
+        fails.append(f"hold {r['hold_ms']} ms < {min_hold_ms}")
+    if r["forced"] != 0:
+        fails.append(f"forced {r['forced']}")
+    # **The run must have held the duty it asked for.** The foldback governor
+    # ratchets the ceiling *down only* on an over-current block and never
+    # reports it back to the caller, so before E187 a throttled run looked
+    # identical to a clean one, and even after E187 the fixture did not read
+    # the field: a run that touched the 4 A allowance, got cut to a lower duty
+    # and then completed its window would have passed every gate here and been
+    # recorded as a rung run (E193 SS1). `ceiling_tenths` of 0 means a capture
+    # older than the field, which is not judged.
+    if r["ceiling_tenths"] and r["ceiling_tenths"] != r["duty"]:
+        fails.append(
+            f"throttled: ceiling {r['ceiling_tenths']} != commanded {r['duty']} "
+            "-- the governor cut the duty, so this is not a run at this rung"
+        )
+    # **`zc_rate_permille_of_expected` is NOT gated any more, because it
+    # measures nothing.** With `hold_forced = 0` the firmware computes
+    # `zc_per_s = accepts / hold_ms` and `zc_expected_per_s = 1e6 /
+    # floor(hold_ms * 1000 / accepts)` -- both sides from the same two
+    # numbers, so the ratio is identically `floor(S) / S` for the unrounded
+    # mean sector S. At 47.5% S = 80.97 µs, and 80/80.97 = 988 permille: a
+    # 1.2% "failure" that is pure truncation and gets worse as the sector
+    # shrinks. Three runs were failed by it at 47.5% (E170) and two images
+    # were compared through it. The field is still parsed and printed for
+    # continuity; nothing decides on it (E172).
+    #
+    # The gate is the **non-circular** identity: accepted events over the
+    # matched powered window against the rotor's own speed from the coast
+    # that follows it. Origins: the window ends at the last accepted crossing
+    # before the stop and is 1-2 `TAIL_WINDOW_US` long (`BEMFTAIL`, raw counts
+    # and spans, no rounding); the coast is fitted over full electrical cycles
+    # placed in time from the stop stamp via the firmware-measured
+    # `offset_us + first_us` and evaluated at the stop. Coverage: the window
+    # is the end of the hold, not its whole length. Uncertainty: the estimator
+    # repeats to sd 2.8 permille over five runs of one image at one rung
+    # within a session (E155), and shifts by ~5 permille between sessions
+    # (E164) -- so the 1% band is about 3.5 sd of the within-session figure.
+    # **The tolerance is unchanged at 1%.**
+    #
+    # **An unavailable identity is unmeasured, not failed** (E273). A coast fit
+    # with slope >= 0 says the rotor accelerated with the bridge off, which is
+    # impossible, so `_rate_vs_coast` returns 0 with a stated source rather
+    # than a manufactured ratio. Gating that 0 against the band would fail a
+    # run for the estimator's defect. The run is still judged by every other
+    # gate, and the missing identity is reported rather than hidden -- which is
+    # the distinction E174 asked for.
+    if identity_unavailable(r):
+        pass  # judged by `identity_unavailable`, not gated here -- see below
+    elif not 990 <= r["rate_vs_coast_permille"] <= 1010:
+        fails.append(
+            f"rate vs coast {r['rate_vs_coast_permille']} permille outside 1% "
+            f"({r['rate_source']})"
+        )
+    # A silent fallback to the legacy inputs would compare unlike quantities,
+    # so it is a stated failure rather than a note nobody sees on a passing
+    # run (E174 found that `rate_source` only surfaced on failure).
+    if r["rate_source"].startswith("legacy") and r.get("has_tail"):
+        fails.append("rate fell back to the legacy inputs although BEMFTAIL was present")
+    if r["rate_source"] == "no coast":
+        fails.append("no coast: the rate identity could not be computed")
+    # The detector must be seen refusing edges, not just accepting them. Two
+    # refusal witnesses: the persistence filter (`unstable`) and the blanking
+    # gate. From E134 the gate is enforced in hardware -- the line stays masked
+    # to the floor -- so early edges no longer dispatch and `too_early` is
+    # legitimately 0; `blank_arms` (one per sector) is then the gate's witness.
+    if r["unstable"] == 0:
+        fails.append("unstable is zero")
+    if r["too_early"] == 0 and r["blank_arms"] == 0:
+        fails.append("neither too_early nor blank_arms: the blanking gate is not witnessed")
+    if r["coast_crossings"] == 0:
+        fails.append("coast crossings = 0: the rotor was not witnessed turning")
+    resid = droop_residual(r)
+    if resid is not None and resid < IR_RESIDUAL_FLOOR:
+        fails.append(
+            f"bus droop {r['droop_permille']:.1f} per mille is {resid:+.1f} "
+            f"against the IR line at {r['hold_ma']} mA: below {IR_RESIDUAL_FLOOR} "
+            "means the rail is folding for a reason other than load, i.e. the "
+            "supply is current-limiting, which cannot count as qualification"
+        )
+    # ENV-92, OPERATOR RULING: only clipping into the 5 A metered allowance is a
+    # problem, and the firmware's own foldback (`ceiling_tenths`, gated above)
+    # is that signal. The 4750 worst-block gate was an agent-set rule on the
+    # uncalibrated scale; it judges legacy captures only.
+    if not r.get("ma_metered") and r["worst_ma"] >= WORST_MA_CEILING:
+        fails.append(
+            f"worst block {r['worst_ma']} mA at or above {WORST_MA_CEILING}: "
+            "within 5% of the firmware's own AverageCurrent allowance (RAW_ALLOW, 5000 mA since ENV-20), where AverageCurrent "
+            "folds back and a foldback disqualifies the rung"
+        )
+    ref = ORACLE.get(r["duty"])
+    if ref and abs(r["coast_ehz"] - ref[0]) * 100 > 5 * ref[0]:
+        fails.append(f"coast {r['coast_ehz']} eHz outside 5% of {ref[0]}")
+    elif r["duty"] in SELF_REF_RUNGS:
+        # Above the oracle's last entry this check used to SILENTLY DISAPPEAR,
+        # so a 525 run was judged on strictly fewer gates than a 475 one (both
+        # E235 reviews, independently). The within-run identity replaces it.
+        fails += self_ref_fails(r)
+    elif not ref:
+        fails.append(f"duty {r['duty']} has neither an oracle figure nor a "
+                     "within-run reference: refusing to judge it on fewer "
+                     "gates than a lower rung")
+    return fails
+
+
+def rung_current_note(runs: list[dict]) -> str:
+    """The current-proxy comparison, REPORT-ONLY since E124 (operator
+    decision): the signed-current proxy fails the reference image's own +-20%
+    band (oracle 15%: 163 / -31 / 172 mA against its 58), so it cannot gate
+    progression. Every electrical protection stays armed; only this
+    uncalibrated comparison left the gate."""
+    ref = ORACLE.get(runs[0]["duty"]) if runs else None
+    if not ref:
+        return ""
+    ma = sum(r["hold_ma"] for r in runs) / len(runs)
+    return f"current (report-only): mean {ma:.0f} mA vs oracle {ref[1]} ({100 * (ma - ref[1]) / ref[1]:+.0f}%)"
+
+
+# Rungs above the historical oracle's last entry (500). The goal is explicit
+# that "historical oracle comparisons end at 50%; higher-rung references must be
+# independently established", so these are judged against the run's OWN rotor
+# instead of a table: the E143 rate identity, `rate_vs_coast_permille`, which is
+# the loop's switching rate as a per mille of 6x the time-anchored coast rate.
+#
+# Nothing about it is imported from a previous image or a previous campaign,
+# which is what makes it admissible here where an extrapolated oracle would not
+# be.
+# ENV-2: 625 added. This EXTENDS the project's existing above-500 rule to a new
+# rung that otherwise has no gate at all -- without it a 625 run fails by
+# default as having "neither an oracle figure nor" a self-reference. It is not
+# the loosening I declined at <=500, where switching gates would have passed
+# runs that failed the one they had. Caveat carried from the Q60-5 review: this
+# gate compares the loop against the same rotor's coast, so it certifies
+# self-consistency and CANNOT detect a speed deficit.
+# ENV-9: 650 added on the same terms as 625, with the same caveat.
+# ENV-93 (envelope push): every tenth from 525 to 1000, so a bisect point between
+# two 2.5 % rungs (e.g. 787) is a judgeable rung. The firmware cap still refuses
+# anything above SIXSTEP_DUTY_CAP; this table only says how a run is judged.
+SELF_REF_RUNGS = tuple(range(525, 1001))
+
+# The worst 10.1 ms current block a run may show and still be judged a pass.
+#
+# E239 predeclared "worst_ma above 3000 mA ends the batch", it was breached at
+# 3174 mA, and the batch ran on to completion because the rule lived in a
+# notebook entry and nothing enforced it. It lives here now.
+#
+# The value is the firmware's own allowance minus a margin, not a choice:
+# `protection::RAW_LIMIT` is 4000 mA, where `AverageCurrent` folds back on the
+# first over-block and stops on the second. A foldback sets
+# `ceiling_tenths < duty`, which cannot count as qualification -- so the gate
+# fails a run 5% BEFORE the firmware starts folding, which is the difference
+# between measuring a limit and disqualifying a rung.
+#
+# It retroactively fails nothing -- verified by replaying `run_gates` over
+# every capture that emits the field: exactly one run is touched and it already
+# failed three other gates. Note the corpus maximum is **172 553 mA**
+# (`e196-pi-avgcurrent_01`, a deliberate provocation), not the 3174 E241
+# claimed; 3174 is the maximum among `reason == 2` runs, which is a different
+# statement and was the one I should have written.
+# ENV-20, OPERATOR DECISION: the allowance moved to 5000 mA with the PSU limit (see
+# protection::RAW_ALLOW); this gate keeps its rule, 5 % under the allowance.
+# ENV-92: legacy (uncalibrated) captures only -- see run_gates.
+WORST_MA_CEILING = 4750
+
+# The CV/CC discriminator, in code for the first time (E243). Every
+# "droop >= 975 per mille" rule in E236-E241 was notebook-only: `filt_bus` and
+# `ref_bus` had ZERO occurrences in this file or in `bemf_run.py`.
+#
+# It is an **IR-line residual**, not an absolute line, because the bus droops
+# with load in perfectly healthy constant-voltage operation. Fitted over 363
+# healthy runs (reason 2, hold >= 20 s, no injection):
+#
+#     droop_permille = 1000.21 - 0.01093 * hold_ma        (-10.93 per mille/A)
+#
+# At the 600-tenth projection (hold ~2726 mA) that line predicts **970.4** --
+# below the absolute 975 threshold E241 predeclared, so a healthy 600 run would
+# have been judged CC by that rule. The residual is duty-independent.
+#
+# The floor is -20 per mille: healthy residuals have p5 -3.1 and sd 6.4, so it
+# is ~3 sigma clear, while the operator-confirmed current-limited runs (1.6 A
+# clamp) sit at -31 to -53. It separates without touching a healthy run.
+IR_LINE_INTERCEPT = 1000.21
+IR_LINE_SLOPE_PER_MA = -0.01093
+IR_RESIDUAL_FLOOR = -20.0
+# ENV-92 metered calibration (firmware/src/protection.rs METER_GAIN_X1000, METER_OFFSET_MA).
+METER_GAIN = 1.131
+METER_OFFSET_MA = 116
+
+
+def droop_residual(r: dict) -> float | None:
+    """Measured bus droop minus what ordinary IR drop predicts, per mille."""
+    d = r.get("droop_permille")
+    if d is None or not r.get("hold_ma"):
+        return None
+    # The line was fitted on the uncalibrated scale; a metered capture's hold is
+    # mapped back through the ENV-92 line (fw = 1.131 * meter - 116 mA).
+    ma = r["hold_ma"] * METER_GAIN - METER_OFFSET_MA if r.get("ma_metered") else r["hold_ma"]
+    return d - (IR_LINE_INTERCEPT + IR_LINE_SLOPE_PER_MA * ma)
+
+# The band is the qualified 500 cohort's own spread, not a choice: 27 healthy
+# runs give min 993, median 1001, max 1013. 980..1020 is generous against that,
+# and the first three 525 runs measured 1002 / 996 / 999 (E239).
+SELF_REF_LO = 980
+SELF_REF_HI = 1020
+
+
+def self_ref_fails(r: dict) -> list[str]:
+    """The within-run rate identity, for a rung with no historical reference.
+
+    **Two different reasons for a missing identity, and they are not the same
+    verdict** (E273). I first wrote a docstring here claiming the `if not v`
+    guard below already treated a missing identity as "nothing to judge"; it
+    did not -- it returned a failure. Describing behaviour the code does not
+    have is precisely the class of error this campaign keeps finding, so:
+
+    * **coast fit unphysical** (slope >= 0, the rotor cannot accelerate with
+      the bridge off): the estimator failed, the run is *unmeasured* on this
+      axis, and `rung_report` declines to count it toward the three rather than
+      holding it against the rung.
+    * **no coast or no hold window at all**: nothing was recorded to judge, and
+      for a rung at or above 525 this identity is the only reference there is,
+      so that remains a stated failure.
+    """
+    v = r.get("rate_vs_coast_permille")
+    if identity_unavailable(r):
+        return []  # unmeasured, not failed -- see `identity_unavailable`
+    if not v:
+        return [f"no within-run rate identity in {r['file']}: "
+                "the coast or the hold window is missing, so this rung has no "
+                "reference at all and cannot be judged"]
+    if not SELF_REF_LO <= v <= SELF_REF_HI:
+        return [f"rate/coast {v} per mille outside {SELF_REF_LO}..{SELF_REF_HI} "
+                "(the qualified 500 cohort's own band)"]
+    return []
+
+
+def rung_oracle(runs: list[dict]) -> list[str]:
+    """Oracle comparison on the rung's means (speed); empty list = pass.
+    The current comparison is report-only (`rung_current_note`, E124)."""
+    if not runs:
+        return ["no runs"]
+    duty = runs[0]["duty"]
+    if duty in SELF_REF_RUNGS:
+        # Judged on every run's own identity rather than a mean against a
+        # table: a mean would let one bad run hide behind two good ones, and
+        # there is no external figure to compare a mean against anyway.
+        fails = []
+        for r in runs:
+            fails += self_ref_fails(r)
+        return fails
+    ref = ORACLE.get(duty)
+    if not ref:
+        return [f"no oracle figure at duty {duty}"]
+    ehz = sum(r["coast_ehz"] for r in runs) / len(runs)
+    ma = sum(r["hold_ma"] for r in runs) / len(runs)
+    fails = []
+    if abs(ehz - ref[0]) > 0.2 * ref[0]:
+        fails.append(f"mean coast {ehz:.0f} eHz vs oracle {ref[0]} (>20%)")
+    del ma  # report-only: see rung_current_note
+    return fails
+
+
+# `rate_permille` is deliberately absent: it is the circular metric (E172),
+# and `check()` banded it here long after `run_gates` stopped gating on it --
+# which made "nothing gates on it" false, as the step-1 review found (E174).
+QUANTITIES = ("accepted", "rate_vs_coast_permille", "coast_ehz", "hold_ma")
+
+
+def cohort() -> list[dict]:
+    runs = []
+    for g in COHORT_GLOBS:
+        for p in sorted(CAPS.rglob(g)):
+            r = parse(p)
+            if r and r["reason"] == 2 and r["duty"] == 250:
+                runs.append(r)
+    return runs
+
+
+def spread(runs: list[dict]) -> dict[str, tuple[int, int]]:
+    return {q: (min(r[q] for r in runs), max(r[q] for r in runs)) for q in QUANTITIES}
+
+
+def check(path: pathlib.Path) -> list[str]:
+    r = parse(path)
+    if r is None:
+        return ["incomplete capture"]
+    fails = run_gates(r)
+    sp = spread(cohort())
+    for q in QUANTITIES:
+        lo, hi = sp[q]
+        if not lo <= r[q] <= hi:
+            fails.append(f"{q}={r[q]} outside cohort [{lo}, {hi}]")
+    return fails
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", type=pathlib.Path)
+    args = ap.parse_args()
+    runs = cohort()
+    sp = spread(runs)
+    print(f"COHORT n={len(runs)} files={','.join(r['file'] for r in runs)}")
+    for q in QUANTITIES:
+        print(f"  {q}: [{sp[q][0]}, {sp[q][1]}]")
+    if args.check:
+        fails = check(args.check)
+        print(f"CHECK {args.check.name}: {'PASS' if not fails else 'FAIL'}")
+        for f in fails:
+            print(f"  - {f}")
+        return 0 if not fails else 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,1249 @@
+//! The run as a typestate: `Idle -> Armed -> Startup -> Handover -> Locked ->
+//! Stopped(Reason)`. Every transition consumes the state it leaves; the only
+//! way into [`Stopped`] is [`stop`], which calls [`Hal::safe_off`]; and the
+//! gate capability each state holds is typed so that only `Armed`, `Startup`
+//! and `Locked` can write the gates (see [`super::hal`]).
+//!
+//! The pass structure is `bemf_run`'s as of E118, statement for statement:
+//! the common checks ([`Ctx::pass`]) and then the state's own step.
+
+use crate::commutation::{self, Direction, Phase, Step};
+use crate::driven;
+use crate::duty::{RUN_PERIOD_TICKS, STARTUP_TICKS};
+use crate::protection::{
+    AverageCurrent, BLOCK_SCANS, BlockVerdict, BusDepth, CurrentMark, FastBusSag, FoldbackGovernor, PhaseCodePolicy,
+    RAW_LIMIT, RailMean, RawScan, Reason, validate_raw_feedback,
+};
+use crate::ramp::duty_at;
+use crate::sagtrace::SagLog;
+use crate::seed::{Edge, Qualification, Seed};
+use crate::sine;
+use crate::sixstep;
+use crate::startup::{Script, StaircaseScript};
+use crate::witness::RotationWitness;
+
+use super::Policies;
+use super::hal::{self, Gates, Hal, Inject};
+use super::measure::Baseline;
+use super::policy::{
+    Advance, Bemf, CATCH_DUTY_TENTHS, CATCH_EHZ, CurrentLimit, DRIVEN_DUTY_TENTHS, DRIVEN_PHASE_DEG, DRIVEN_RATE,
+    HANDOFF_DUTY_TENTHS, INJECT_SAG_DUTY_TENTHS, INJECT_SAG_RELATIVE_FROM, INJECT_SAG_STEP_TENTHS, SIXSTEP_DUTY_CAP,
+    SagLimit, TAIL_WINDOW_US, WITNESS_HYST_CODES, WITNESS_MID_SAMPLES, in_off_window, sector_interval_us,
+    sixstep_ccr_of,
+};
+
+/// ENV-42: the host's 4750 mA worst-block gate in raw residual codes (4000 mA = RAW_LIMIT).
+const FREEZE_GATE_RAW: i32 = (4_750u64 * RAW_LIMIT as u64 / 4_000) as i32;
+
+/// How long a run may last: from its own entry, or to an absolute instant a
+/// campaign supplies (E090), so a restarted segment ends exactly where the
+/// original window does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Window {
+    ForUs(u32),
+    Until(u32),
+}
+
+/// What a run was asked to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Request {
+    pub target_tenths: u16,
+    /// A gate-4 provocation, and how long after the loop closes it fires.
+    pub inject: Option<(Inject, u32)>,
+    pub window: Window,
+}
+
+/// Counters the report is built from.
+pub(crate) struct Stats {
+    pub accepted: u32,
+    pub coalesced_accepts: u32,
+    pub acc_by_step: [u16; 8],
+    pub acc_by_phase: [u16; 8],
+    pub revisit_attempts: [u16; 8],
+    pub revisit_accepts: [u16; 8],
+    pub loop_iters_closed: u32,
+    pub loop_gap_max_us: u32,
+    pub loop_prev_raw: Option<u16>,
+    pub vsenc: (u16, u16),
+    pub star: (u16, u16),
+    pub wit: RotationWitness,
+    pub hold_acc: u32,
+    /// `unstable` as of the hold mark (E212).
+    pub unstable_at_hold: u32,
+    /// The margin histograms as of the hold mark (E315), so the reported
+    /// distributions can be the hold window's rather than a ramp/hold mixture
+    /// whose proportions differ from run to run.
+    pub wait_hist_at_hold: [u32; 8],
+    pub left_hist_at_hold: [u32; 8],
+    /// Whether the hold mark was ever laid down. Needed because the two
+    /// snapshots above are all-zero *both* when the run never held and when it
+    /// held from the first arm, and subtracting an all-zero snapshot from the
+    /// whole-run counts would silently report the ramp as the hold window.
+    pub held: bool,
+    pub hold_ci_sum: u32,
+    /// The matched speed window (campaign 8 step 3): the last accepted
+    /// crossing's stamp with the hold-accept count as of it, plus two marks
+    /// laid down one `TAIL_WINDOW_US` apart. The window reported is
+    /// `tail_prev .. tail_last`, so it is between one and two windows long
+    /// and never collapses to nothing the way a single resetting anchor does.
+    /// Every stamp is on the same extended-µs clock as the stop.
+    pub tail_last: Option<(u32, u32)>,
+    pub tail_mark: Option<(u32, u32)>,
+    pub tail_prev: Option<(u32, u32)>,
+    pub bus_min: u16,
+    pub drive_scans: u32,
+}
+
+/// The driven observation's record.
+pub(crate) struct DrivenLog {
+    pub at: Option<u32>,
+    pub epoch: u32,
+    pub accepts: u32,
+    pub retries: u32,
+    pub late_max_us: u32,
+    /// 1 no boundary, 2 sequence mismatch, 3 qualification fault, 4 window
+    /// elapsed, 5 seed/step mismatch.
+    pub fail: u32,
+    pub qual: Qualification,
+    pub rows: [(u16, u8, u16, u16); 64],
+    pub rows_n: usize,
+    pub seed: Option<Seed>,
+}
+
+/// Everything the stages share, carried through every state.
+pub(crate) struct Ctx {
+    pub req: Request,
+    pub entry: u32,
+    /// The window, µs, resolved against `entry`.
+    pub window_us: u32,
+    pub start: u32,
+    pub injected_at: Option<u32>,
+    pub hold_plans: bool,
+    pub base: Baseline,
+    pub sag: FastBusSag,
+    /// Observation only -- the droop distribution, no stop (E224).
+    pub depth: BusDepth,
+    /// The same observer fed the **raw scan** rather than the 8-scan mean
+    /// (E284). The guard, and `depth` above, both judge the mean, so neither
+    /// can see a dip shorter than its window -- and every run, pass or fail,
+    /// takes a raw scan past the 5% line. This is the one that measures the
+    /// duration that actually discriminates.
+    pub raw_depth: BusDepth,
+    /// The guard's **own** decision variable: the 8-tap mean against
+    /// `FastBusSag::filtered()`, straddling its 950 line (Q60-1). Neither
+    /// observer above watches it -- `depth` uses the baseline, `raw_depth`
+    /// uses the raw scan.
+    pub mean_depth: BusDepth,
+    /// **Scans whose VREF slot is implausible** (Q60-1): a circular-DMA
+    /// rotation puts another channel's code there, and production's only
+    /// validation is `0 < vref < ADC_RAIL`, which an in-range phase code
+    /// passes. Anchored to this run's own bridge-off `ref_vref` rather than a
+    /// constant, so it needs no calibration and no magic number -- and to the
+    /// baseline rather than the EWMA, because the EWMA would converge onto a
+    /// rotated value within 207 ms and stop reporting.
+    pub vref_odd: u32,
+    /// Foreground polls that saw the ADC's sticky `OVR` set (Q60-3).
+    pub adc_ovr: u32,
+    pub current: AverageCurrent,
+    /// Diagnostic-only 100-scan cadence for the sag recorder's block ring.
+    diag_scans: u32,
+    pub governor: FoldbackGovernor,
+    pub rail: RailMean,
+    pub period: u32,
+    pub step: Step,
+    pub applied_duty: u16,
+    pub closed_at: Option<u32>,
+    pub hold_start: Option<u32>,
+    pub hold_current: Option<CurrentMark>,
+    pub last_ci: u32,
+    pub stats: Stats,
+    pub drv: DrivenLog,
+}
+
+impl Ctx {
+    fn new<P: Policies>(req: Request, entry: u32, base: Baseline) -> Self {
+        Self {
+            req,
+            entry,
+            window_us: match req.window {
+                Window::ForUs(us) => us,
+                Window::Until(t) => t.wrapping_sub(entry),
+            },
+            start: entry,
+            injected_at: None,
+            hold_plans: false,
+            base,
+            sag: P::S::watch(base.bus_ref),
+            depth: BusDepth::new(),
+            raw_depth: BusDepth::new_raw(),
+            mean_depth: BusDepth::new_mean_vs_filt(),
+            vref_odd: 0,
+            adc_ovr: 0,
+            current: P::C::meter(base.zero_block),
+            governor: P::C::governor(req.target_tenths),
+            rail: RailMean::new(),
+            period: STARTUP_TICKS,
+            step: Step::new_clamped(1),
+            applied_duty: HANDOFF_DUTY_TENTHS,
+            closed_at: None,
+            hold_start: None,
+            hold_current: None,
+            diag_scans: 0,
+            last_ci: sector_interval_us(CATCH_EHZ),
+            stats: Stats {
+                accepted: 0,
+                coalesced_accepts: 0,
+                acc_by_step: [0; 8],
+                acc_by_phase: [0; 8],
+                revisit_attempts: [0; 8],
+                revisit_accepts: [0; 8],
+                loop_iters_closed: 0,
+                loop_gap_max_us: 0,
+                loop_prev_raw: None,
+                vsenc: (u16::MAX, 0),
+                star: (u16::MAX, 0),
+                wit: RotationWitness::new(WITNESS_MID_SAMPLES, WITNESS_HYST_CODES),
+                hold_acc: 0,
+                unstable_at_hold: 0,
+                wait_hist_at_hold: [0; 8],
+                left_hist_at_hold: [0; 8],
+                held: false,
+                tail_last: None,
+                tail_mark: None,
+                tail_prev: None,
+                hold_ci_sum: 0,
+                bus_min: u16::MAX,
+                drive_scans: 0,
+            },
+            drv: DrivenLog {
+                at: None,
+                epoch: 0,
+                accepts: 0,
+                retries: 0,
+                late_max_us: 0,
+                fail: 0,
+                qual: Qualification::new(entry),
+                rows: [(0, 0, 0, 0); 64],
+                rows_n: 0,
+                seed: None,
+            },
+        }
+    }
+
+    /// The physical plan for a logical step at `duty` on the current period.
+    fn plan<P: Policies>(&self, step: Step, duty: u16) -> Option<sixstep::Plan> {
+        sixstep::plan(P::W::step(step), duty, self.period, SIXSTEP_DUTY_CAP)
+    }
+
+    /// The checks every pass makes, in `bemf_run`'s order: clock, link,
+    /// driver, the closed loop's health, the injection, the roots' latches,
+    /// the host, feedback age, the window, and one scan's protections.
+    /// Returns the pass's timestamp, or why the run stops.
+    /// `sector_start` is the last accepted crossing's stamp, or `None` before
+    /// the loop is closed: it dates a sag row against the switching instant,
+    /// which is the correlation step 3 exists to make possible.
+    fn pass<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        closed: bool,
+        sector_start: Option<u32>,
+    ) -> Result<u32, Reason> {
+        let out = self.pass_inner::<P>(hal, closed, sector_start);
+        // **Freeze on *any* stop, not only a sag verdict.** The pre-run review
+        // of the 50% cohort found that `P::G::freeze()` fired only when the sag
+        // guard latched, so for every other stop -- and the bench's own scar
+        // says the likely one at 50% is a loss-of-lock current surge arriving
+        // as `AverageCurrent`, `PhasePeak` or `Tracking` -- the rings were
+        // never frozen (E181 SS5). In practice the tail still ended at the
+        // stop, because no further scans happen, but "in practice" is not the
+        // property; this is. `freeze` is idempotent and `NoSagLog::freeze` is
+        // a no-op that folds away, so production is unchanged.
+        if P::G::ON && out.is_err() {
+            P::G::freeze();
+        }
+        out
+    }
+
+    /// The pass itself; [`Ctx::pass`] wraps it to freeze the recorder on a stop.
+    fn pass_inner<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        closed: bool,
+        sector_start: Option<u32>,
+    ) -> Result<u32, Reason> {
+        let now = hal.now();
+        hal.drain();
+        if !hal.nfault_high() {
+            return Err(Reason::Driver);
+        }
+        if closed {
+            self.step = hal.com_step();
+            let raw_now = hal.raw();
+            if let Some(p) = self.stats.loop_prev_raw {
+                self.stats.loop_gap_max_us = self.stats.loop_gap_max_us.max(u32::from(raw_now.wrapping_sub(p)));
+            }
+            self.stats.loop_prev_raw = Some(raw_now);
+            self.stats.loop_iters_closed = self.stats.loop_iters_closed.wrapping_add(1);
+        }
+        self.maybe_inject(hal, closed, now);
+        let guard_code = hal.guard_reason();
+        if guard_code != 0 {
+            return Err(reason_from_code(guard_code));
+        }
+        if hal.storm() {
+            return Err(Reason::CompStorm);
+        }
+        if hal.overrun() {
+            return Err(Reason::HandlerOverrun);
+        }
+        // Campaign 8's two hard stops, armed on the closed loop only (see
+        // `Reason::LateArm`): an exhausted commutation deadline, and a
+        // comparator edge the blanking window latched. Both counters only
+        // rise, so one reading is enough, and both take the ordinary
+        // protection route -- `safe_off`, then the report carrying the code.
+        if closed && hal.late_arms() != 0 {
+            return Err(Reason::LateArm);
+        }
+        if closed && hal.blank_latched() != 0 {
+            return Err(Reason::BlankLatched);
+        }
+        if closed
+            && !hal.cap_armed()
+            && self
+                .closed_at
+                .is_some_and(|t| crate::rate::cap_enforced(now.wrapping_sub(t)))
+        {
+            hal.arm_cap();
+        }
+        if hal.rx().is_some_and(super::parser_stop) {
+            return Err(Reason::HostAbort);
+        }
+        if hal.adc_stale(now) {
+            return Err(Reason::AdcTimeout);
+        }
+        if now.wrapping_sub(self.entry) >= self.window_us {
+            return Err(Reason::SegmentDeadline);
+        }
+        if hal.adc_due() {
+            self.scan_pass::<P>(hal, closed, sector_start)?;
+        }
+        Ok(now)
+    }
+
+    /// One fresh scan: the during-run witness, then every scan protection.
+    fn scan_pass<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        closed: bool,
+        sector_start: Option<u32>,
+    ) -> Result<(), Reason> {
+        if closed {
+            let (vc, sr) = hal.comp_inputs();
+            let s = &mut self.stats;
+            s.vsenc = (s.vsenc.0.min(vc), s.vsenc.1.max(vc));
+            s.star = (s.star.0.min(sr), s.star.1.max(sr));
+            if commutation::sector(P::W::step(self.step)).floating == Phase::C
+                && in_off_window(
+                    hal.pwm_counter(),
+                    sixstep_ccr_of(self.applied_duty, self.period),
+                    self.period,
+                    STARTUP_TICKS,
+                )
+            {
+                s.wit.sample(i32::from(vc) - i32::from(sr));
+            }
+        }
+        let scan = hal.scan().ok_or(Reason::AdcTimeout)?;
+        self.stats.drive_scans += 1;
+        self.stats.bus_min = self.stats.bus_min.min(scan.bus);
+        self.rail.feed(scan.bus, scan.vref);
+        // **The two stops that used to return before the row was pushed**, so
+        // the deciding scan was the one sample the trace did not contain
+        // (E181 SS5, gap (a)): a rejected phase code and the absolute bus
+        // floor. They are judged here, and the row for *this* scan is recorded
+        // first. The sag verdict is not consulted -- these are not sag stops;
+        // the row is the evidence of what the rail was doing when they fired.
+        let early = validate_raw_feedback(&scan, PhaseCodePolicy::RetainRails)
+            .or_else(|| (scan.bus < self.base.bus_floor_code).then_some(Reason::Bus));
+        if let Some(r) = early {
+            if P::G::ON && self.rail.ready() {
+                let (filt_bus, filt_vref) = self.sag.filtered();
+                self.record_sag_row::<P>(hal, &scan, sector_start, filt_bus, filt_vref);
+            }
+            return Err(r);
+        }
+        if self.rail.ready() {
+            // The guard's own inputs, recorded at the instant it judges them
+            // and *before* its post-test filter update, so the reference in
+            // the row is the one the comparison used (campaign 9 step 3).
+            // Production's `NoSagLog` folds all of this away.
+            let (bus_mean, vref_mean) = (self.rail.bus_mean(), self.rail.vref_mean());
+            // The guard's own reference, read **before** its post-test filter
+            // update, so it is the value `self.sag.observe` below compares
+            // against on this very scan. Hoisted above the observers because
+            // `raw_depth` must judge the same line the guard does; nothing
+            // mutates `self.sag` between here and the `observe` call.
+            let (filt_bus, filt_vref) = self.sag.filtered();
+            // Observation, before the verdict and returning nothing, so it
+            // covers the deciding scan of a **sag** stop and can pre-empt none.
+            //
+            // Deliberately against the **pre-run baseline** `bus_ref`: this
+            // observer's purpose is the distribution a slow-droop line would
+            // have to be chosen from (E223), which is a baseline question.
+            self.depth
+                .observe(bus_mean, vref_mean, self.base.bus_ref.bus, self.base.bus_ref.vref);
+            // The raw scan, against deeper fractions bracketing the trip line
+            // (E284), and against the **guard's** reference, not the baseline.
+            //
+            // **This was wrong until E291** and the comment asserted the
+            // opposite: it was fed `base.bus_ref` while `FastBusSag` judges
+            // against `filtered()` -- whose own doc says "the ~200 ms average
+            // of the bus, **not** the pre-run baseline", because a slow droop
+            // must take the reference with it. So the 950 bin was measuring a
+            // line ~24 codes shallower than the guard's on the 550 cohort
+            // (0.95*bus_ref = 1157.1 against the guard's 0.95*filt_bus =
+            // 1133.4), which biased the `>= 10` arm of E284's two-sided test
+            // toward being satisfied -- in the one place the test has to be
+            // trustworthy. At the low rungs the two differ by ~2 codes, which
+            // is why the walk's numbers survive.
+            self.raw_depth.observe(scan.bus, scan.vref, filt_bus, filt_vref);
+            // Q60-1: the same reference the guard uses, on the same quantity
+            // the guard judges, straddling its line.
+            self.mean_depth.observe(bus_mean, vref_mean, filt_bus, filt_vref);
+            // Q60-3: the sticky OVR flag, polled here rather than in the DMA
+            // root, so the four ISR roots stay identical to the baseline.
+            if hal.poll_adc_ovr() {
+                self.adc_ovr = self.adc_ovr.saturating_add(1);
+            }
+            // Q60-1: +-10% of the run's own bridge-off reference, multiply-only.
+            let vr = u32::from(self.base.bus_ref.vref);
+            let v = u32::from(scan.vref);
+            if v * 10 < vr * 9 || v * 10 > vr * 11 {
+                self.vref_odd = self.vref_odd.saturating_add(1);
+            }
+            let verdict = self.sag.observe(bus_mean, vref_mean);
+            if P::G::ON {
+                self.record_sag_row::<P>(hal, &scan, sector_start, filt_bus, filt_vref);
+            }
+            if let Some(r) = verdict {
+                // The freeze is in `Ctx::pass`, for every stop alike.
+                return Err(r);
+            }
+        }
+        let verdict = self.current.accumulate(scan.phase_a, scan.phase_b, scan.phase_c);
+        if P::G::ON {
+            // The diagnostic block ring keeps its own 100-scan cadence now that
+            // the protection has no blocks (ENV-91).
+            self.diag_scans += 1;
+            if self.diag_scans >= BLOCK_SCANS {
+                self.diag_scans = 0;
+                P::G::current_block_end();
+            }
+            // ENV-42 observer (diagnostic `freeze-gate` only): freeze the ring on
+            // the first hold scan whose fast tracker reaches the host's 4750 mA gate.
+            if cfg!(feature = "freeze-gate") && self.current.hold_worst_residual() >= FREEZE_GATE_RAW {
+                P::G::freeze();
+            }
+        }
+        match verdict {
+            Some(BlockVerdict::Stop(r)) => Err(r),
+            Some(BlockVerdict::Foldback(red)) => {
+                // ENV-22 observer: under `sag-ring` only, freeze the pre-trip ring
+                // on the first foldback too. `NoSagLog` folds it away.
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                let _ = self.governor.warn(red);
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// Push one row of the guard's own inputs. The rail means are read from
+    /// `self.rail`, the reference is passed in because it must be the value the
+    /// comparison *used* -- read before the post-test filter update.
+    fn record_sag_row<P: Policies>(
+        &mut self,
+        hal: &mut impl Hal,
+        scan: &RawScan,
+        sector_start: Option<u32>,
+        filt_bus: u16,
+        filt_vref: u16,
+    ) {
+        let now = hal.now();
+        P::G::block(&crate::sagtrace::Block {
+            at: hal.raw(),
+            // The shared 125 ns timeline, so this ring and `chain::Beat` can
+            // be paired. Through the Hal like every other clock read, and only
+            // when the recorder is installed: production runs `NoSagLog` and
+            // never initialises TIM2.
+            at_fine: if P::G::ON { hal.fine() } else { 0 },
+            // The raw sample of *this* scan, alongside the mean the guard
+            // judged, so the host can state a dip's true width instead of the
+            // boxcar's.
+            // The carrier phase this scan was taken at; without it a raw
+            // sample cannot be compared with the next one (E266).
+            pwm_ctr: hal.pwm_counter() as u16,
+            bus_raw: scan.bus,
+            phase_a: scan.phase_a,
+            phase_b: scan.phase_b,
+            phase_c: scan.phase_c,
+            bus_mean: self.rail.bus_mean(),
+            vref_mean: self.rail.vref_mean(),
+            filt_bus,
+            filt_vref,
+            streak: self.sag.streak(),
+            step: self.step.get(),
+            duty_tenths: self.applied_duty,
+            since_zc_us: sector_start.map_or(0, |t| now.wrapping_sub(t) as u16),
+        });
+    }
+
+    /// Gate 4 (E080): fire the planned stimulus once, `after` into the loop.
+    fn maybe_inject(&mut self, hal: &mut impl Hal, closed: bool, now: u32) {
+        let Some((kind, after)) = self.req.inject else {
+            return;
+        };
+        if !closed || self.injected_at.is_some() || self.closed_at.is_none_or(|t| now.wrapping_sub(t) < after) {
+            return;
+        }
+        self.injected_at = Some(now);
+        match kind {
+            Inject::Sag => {
+                // Below `INJECT_SAG_RELATIVE_FROM` this is the historical fixed
+                // 500 target, unchanged, so every inherited positive control
+                // still provokes identically. At and above it the fixed target
+                // would be a step DOWN -- an unload -- so the step is relative
+                // and upward (E244).
+                // ENV-6: CLAMPED TO THE CAMPAIGN CEILING, and the real cap passed
+                // as the plan cap. This path used to call
+                // `publish_plans(to, period, to)` -- passing its own target as its
+                // cap -- so at rung 625 the relative step drove 625 + 75 = 700,
+                // i.e. the bridge ran at 70 % with a 4176 mA worst block, above
+                // both the campaign ceiling and WORST_MA_CEILING, while
+                // `applied_ccr` reported the clamped 833. E357 had claimed the cap
+                // "binds whatever any key requests"; it never bound here. A
+                // stimulus that needs to exceed the ceiling must not exist, so at
+                // the cap this step now does nothing, and FastBusSag is simply not
+                // provokable at the top rung -- which is the honest statement.
+                let to = if self.applied_duty >= INJECT_SAG_RELATIVE_FROM {
+                    self.applied_duty.saturating_add(INJECT_SAG_STEP_TENTHS)
+                } else {
+                    INJECT_SAG_DUTY_TENTHS
+                }
+                .min(SIXSTEP_DUTY_CAP);
+                hal.publish_plans(to, self.period, SIXSTEP_DUTY_CAP);
+                // **The report must not claim the rung while the bridge runs
+                // something else.** Without this, `applied_ccr` described the
+                // pre-injection duty and the capture looked like an
+                // unprovoked run at its label.
+                self.applied_duty = to;
+                self.hold_plans = true;
+            }
+            Inject::AverageCurrent => {
+                // A *stricter* allowance with the plans held, so the first
+                // foldback goes unacknowledged (reference
+                // `unacknowledged_second_over_stop=1`).
+                self.current = AverageCurrent::new(self.base.zero_block, RAW_LIMIT / 100);
+                self.hold_plans = true;
+            }
+            other => hal.inject(other),
+        }
+    }
+}
+
+/// `Reason` back from the guard's latched wire code.
+#[must_use]
+pub const fn reason_from_code(code: u32) -> Reason {
+    match code {
+        1 => Reason::CampaignDeadline,
+        3 => Reason::TickGap,
+        4 => Reason::FeedbackStale,
+        7 => Reason::Driver,
+        8 => Reason::Tracking,
+        // **Not `SegmentDeadline`.** That is code 2, the *success* code every
+        // gate treats as a completed window, so an unrecognised guard code
+        // used to decode a stop into a pass (E186 SS6). Every code the guard
+        // can currently store is mapped above; this is the fallback, and a
+        // fallback for an unknown stop must never be the pass.
+        _ => Reason::UnknownGuard,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Idle and Armed
+// ---------------------------------------------------------------------------
+
+/// Nothing energized. Holds no gate capability that can write.
+pub struct Idle {
+    req: Request,
+    gates: Gates<hal::Idle>,
+}
+
+/// Preflight passed, driver awake, baseline taken; the gates are ours.
+pub struct Armed {
+    ctx: Ctx,
+    gates: Gates<hal::Armed>,
+}
+
+impl Idle {
+    pub(crate) fn new(req: Request) -> Self {
+        Self {
+            req,
+            gates: Gates::idle(),
+        }
+    }
+
+    /// Preflight (printed on `io`), hand the pins to TIM1, wake the driver,
+    /// check nFAULT, and take the baseline and zero -- or stop, bridge off.
+    pub fn arm<P: Policies, IO: Hal + crate::report::Sink>(self, io: &mut IO) -> Result<Armed, Refused> {
+        let entry = io.now();
+        let p = io.preflight();
+        super::measure::say_preflight(&p, io);
+        let mut gates = match self.gates.after_preflight(&p) {
+            Ok(g) => g,
+            Err(g) => {
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, g, Reason::Driver, entry));
+            }
+        };
+        io.gates_to_timer(&mut gates);
+        io.resync_adc();
+        io.enable(true);
+        io.led(true);
+        let wake = io.now();
+        while io.now().wrapping_sub(wake) < 2_000 {
+            io.drain();
+        }
+        if !io.nfault_high() {
+            {
+                // Freeze the recorder here as well: an arm refusal is a stop,
+                // and the ring is already armed by the time we get here
+                // (E186 SS3).
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, gates, Reason::Driver, entry));
+            }
+        }
+        let Some(mut base) = super::measure::capture_baseline(io) else {
+            {
+                // Freeze the recorder here as well: an arm refusal is a stop,
+                // and the ring is already armed by the time we get here
+                // (E186 SS3).
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, gates, Reason::AdcTimeout, entry));
+            }
+        };
+        let Some(zero) = super::measure::averaged_zero(io, base.zero_block) else {
+            {
+                // Freeze the recorder here as well: an arm refusal is a stop,
+                // and the ring is already armed by the time we get here
+                // (E186 SS3).
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                return Err(Refused::new(io, gates, Reason::AdcTimeout, entry));
+            }
+        };
+        base.zero_block = zero;
+        Ok(Armed {
+            ctx: Ctx::new::<P>(self.req, entry, base),
+            gates,
+        })
+    }
+}
+
+impl Armed {
+    /// Set the startup carrier, open all three phases at zero, hand the run to
+    /// the guard root and enable MOE.
+    pub fn start<P: Policies>(mut self, hal: &mut impl Hal) -> Startup {
+        let c = &mut self.ctx;
+        hal.set_period(c.period);
+        hal.all_phases_pwm(&mut self.gates);
+        hal.set_compares(&mut self.gates, sine::compares(c.period - 1, 0, 0));
+        hal.comp_mask();
+        hal.drv_end();
+        hal.guard_arm();
+        hal.moe_on(&mut self.gates);
+        c.start = hal.now();
+        c.drv.qual = Qualification::new(c.start);
+        hal.reset_roots();
+        Startup {
+            sine: SineStage {
+                script: StaircaseScript::new(CATCH_DUTY_TENTHS, CATCH_DUTY_TENTHS),
+                last: c.start,
+                tick: 0,
+                theta: 0,
+            },
+            driven: None,
+            ctx: self.ctx,
+            gates: self.gates.pass(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Startup: the sine, then the driven observation
+// ---------------------------------------------------------------------------
+
+struct SineStage {
+    script: StaircaseScript,
+    last: u32,
+    tick: u32,
+    theta: u32,
+}
+
+struct DrivenStage {
+    theta0: u32,
+    t0: u32,
+    next_rel: u32,
+}
+
+/// The reference's startup chain (E058): a sine drags the rotor to the
+/// handover speed, then a driven six-step observes real crossings.
+pub struct Startup {
+    ctx: Ctx,
+    gates: Gates<hal::Startup>,
+    sine: SineStage,
+    driven: Option<DrivenStage>,
+}
+
+/// What one startup pass decided. A pass works on the state in place; only
+/// a transition consumes it ([`Startup::stop`], [`Startup::handover`]) -- the
+/// state is ~1 KB, and moving it through every pass slowed the loop 3.6%
+/// (E120).
+pub enum StartupNext {
+    Continue,
+    /// A qualified seed: its edge, the raw stamp, and the pass's time.
+    Seeded(Seed, u16, u32),
+    Stop(Reason),
+}
+
+impl Startup {
+    /// One pass, in place.
+    pub fn poll<P: Policies>(&mut self, hal: &mut impl Hal) -> StartupNext {
+        let now = match self.ctx.pass::<P>(hal, false, None) {
+            Ok(t) => t,
+            // `pass` has already frozen the recorder.
+            Err(r) => return StartupNext::Stop(r),
+        };
+        let flow = if self.driven.is_none() {
+            self.sine_pass::<P>(hal, now)
+        } else {
+            self.driven_pass::<P>(hal, now)
+        };
+        match flow {
+            Ok(None) => StartupNext::Continue,
+            Ok(Some((seed, raw))) => StartupNext::Seeded(seed, raw, now),
+            Err(r) => {
+                // **The startup stops did not freeze the recorder** -- every
+                // `InvalidSeed` returns through here, outside `Ctx::pass`
+                // (E186 SS3). Without this a perfectly ordinary failed seed
+                // dumps `frozen=0`, which the cohort's own scoring calls a
+                // defect report.
+                if P::G::ON {
+                    P::G::freeze();
+                }
+                StartupNext::Stop(r)
+            }
+        }
+    }
+
+    /// The seed qualified: on to the handover (no gate writes there).
+    #[must_use]
+    pub fn handover(self, seed: Seed, raw: u16, now: u32) -> Handover {
+        Handover {
+            ctx: self.ctx,
+            gates: self.gates.pass(),
+            seed,
+            raw,
+            now,
+        }
+    }
+
+    /// Stop, through `safe_off`.
+    pub fn stop(self, hal: &mut impl Hal, reason: Reason) -> Stopped {
+        stop(hal, self.ctx, self.gates, reason)
+    }
+
+    /// The sine on its 1 kHz schedule, then entry to the driven stage.
+    fn sine_pass<P: Policies>(&mut self, hal: &mut impl Hal, now: u32) -> Result<Option<(Seed, u16)>, Reason> {
+        let s = &mut self.sine;
+        if now.wrapping_sub(s.last) >= 1_000 {
+            s.last = s.last.wrapping_add(1_000);
+            if let Some(sp) = s.script.at(s.tick) {
+                s.theta = s.theta.wrapping_add(sine::theta_increment(sp.freq_chz));
+                let duty = self.ctx.governor.clamp(sp.duty_tenths);
+                hal.set_compares(
+                    &mut self.gates,
+                    sine::compares(self.ctx.period - 1, u32::from(duty), s.theta),
+                );
+            }
+            s.tick += 1;
+        }
+        if Script::handoff_due(now.wrapping_sub(self.ctx.start)) {
+            self.enter_driven::<P>(hal)?;
+        }
+        Ok(None)
+    }
+
+    /// Enter the driven stage on the sine's own phase, advanced by the
+    /// reference's `drivephase60`, turning at the sine's rate.
+    fn enter_driven<P: Policies>(&mut self, hal: &mut impl Hal) -> Result<(), Reason> {
+        let t_now = hal.now();
+        let turned = DRIVEN_RATE.wrapping_mul(t_now.wrapping_sub(self.sine.last));
+        let mut theta_d = driven::phase_shift(self.sine.theta.wrapping_add(turned), DRIVEN_PHASE_DEG);
+        let mut bnd = self.boundary(driven::next(theta_d, DRIVEN_RATE))?;
+        let mut t0 = t_now;
+        let w = bnd.initial_wait();
+        if w != 0 {
+            // A sliver of a first sector is waited out floating, never driven.
+            hal.float_all();
+            while hal.now().wrapping_sub(t_now) < u32::from(w) {
+                hal.drain();
+            }
+            t0 = hal.now();
+            theta_d = theta_d.wrapping_add(DRIVEN_RATE.wrapping_mul(t0.wrapping_sub(t_now)));
+            bnd = self.boundary(driven::next(theta_d, DRIVEN_RATE))?;
+        }
+        let c = &mut self.ctx;
+        self.driven = Some(DrivenStage {
+            theta0: theta_d,
+            t0,
+            next_rel: u32::from(bnd.delay_us),
+        });
+        c.step = bnd.step;
+        if let Some(pl) = c.plan::<P>(c.step, DRIVEN_DUTY_TENTHS) {
+            hal.apply_plan(&mut self.gates, &pl);
+            c.applied_duty = DRIVEN_DUTY_TENTHS;
+        }
+        c.drv.epoch = 0;
+        c.drv.qual = Qualification::new(t0);
+        c.drv.at = Some(t0);
+        hal.drv_begin(c.step);
+        Ok(())
+    }
+
+    fn boundary(&mut self, b: Option<driven::Boundary>) -> Result<driven::Boundary, Reason> {
+        b.ok_or_else(|| {
+            self.ctx.drv.fail = 1;
+            Reason::InvalidSeed
+        })
+    }
+
+    /// The driven stage: consume an acceptance (maybe the seed), resume a
+    /// deferred level, check the qualification, and commutate on schedule.
+    fn driven_pass<P: Policies>(&mut self, hal: &mut impl Hal, now: u32) -> Result<Option<(Seed, u16)>, Reason> {
+        if let Some(a) = hal.drv_poll() {
+            let c = &mut self.ctx;
+            c.drv.accepts += 1;
+            let e = Edge {
+                epoch: a.epoch,
+                step: a.step,
+                at_us: hal.stamp_from_raw(a.raw),
+                interval_us: a.interval_us,
+            };
+            if c.drv.rows_n < c.drv.rows.len() {
+                c.drv.rows[c.drv.rows_n & 63] = (e.epoch, e.step.get(), e.interval_us as u16, a.position_us);
+                c.drv.rows_n += 1;
+            }
+            if let Some(sd) = c.drv.qual.accept(e) {
+                if sd.step != c.step {
+                    c.drv.fail = 5;
+                    return Err(Reason::InvalidSeed);
+                }
+                return Ok(Some((sd, a.raw)));
+            }
+        }
+        if hal.drv_resume_deferred(self.ctx.step) {
+            self.ctx.drv.retries += 1;
+        }
+        if self.ctx.drv.qual.fault().is_some() {
+            self.ctx.drv.fail = 3;
+            return Err(Reason::InvalidSeed);
+        }
+        if self.ctx.drv.qual.expired(now) {
+            self.ctx.drv.fail = 4;
+            return Err(Reason::InvalidSeed);
+        }
+        self.driven_boundary::<P>(hal, now)?;
+        Ok(None)
+    }
+
+    /// The next driven boundary, recomputed from the stage's origin phase every
+    /// time so rounding never accumulates.
+    fn driven_boundary<P: Policies>(&mut self, hal: &mut impl Hal, now: u32) -> Result<(), Reason> {
+        let Some(d) = self.driven.as_ref() else {
+            return Ok(());
+        };
+        let (theta0, t0, next_rel) = (d.theta0, d.t0, d.next_rel);
+        let deadline = t0.wrapping_add(next_rel);
+        if now.wrapping_sub(deadline) >= u32::MAX / 2 {
+            return Ok(());
+        }
+        self.ctx.drv.late_max_us = self.ctx.drv.late_max_us.max(now.wrapping_sub(deadline));
+        let bnd = self.boundary(driven::next(
+            theta0.wrapping_add(DRIVEN_RATE.wrapping_mul(next_rel)),
+            DRIVEN_RATE,
+        ))?;
+        let c = &mut self.ctx;
+        if bnd.step != c.step.next() {
+            c.drv.fail = 2;
+            return Err(Reason::InvalidSeed);
+        }
+        c.step = bnd.step;
+        c.drv.epoch += 1;
+        hal.drv_advance(c.step, c.drv.epoch);
+        if let Some(pl) = c.plan::<P>(c.step, DRIVEN_DUTY_TENTHS) {
+            hal.apply_plan(&mut self.gates, &pl);
+        }
+        hal.comp_select(c.step);
+        hal.comp_arm(c.step);
+        if let Some(d) = self.driven.as_mut() {
+            d.next_rel = d.next_rel.wrapping_add(u32::from(bnd.delay_us));
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Handover and Locked
+// ---------------------------------------------------------------------------
+
+/// A qualified seed, between the driven stage and the closed loop. Its gate
+/// capability cannot write: nothing is driven here.
+pub struct Handover {
+    ctx: Ctx,
+    gates: Gates<hal::Handover>,
+    seed: Seed,
+    raw: u16,
+    now: u32,
+}
+
+/// The closed loop: COMP decides, the COM root commutates, the foreground
+/// consumes, retries, and follows the duty. Holds no serial handle.
+pub struct Locked {
+    ctx: Ctx,
+    gates: Gates<hal::Locked>,
+    sector_start: u32,
+    last_com_count: u32,
+}
+
+impl Handover {
+    /// Take the driven stage back, install the estimator from the seed and
+    /// hand the loop to COMP; then, as `Locked`, apply the transfer duty and
+    /// hand commutation to the COM root, first commutation `wait` after the
+    /// seed edge.
+    pub fn lock<P: Policies>(self, hal: &mut impl Hal) -> Locked {
+        let Handover {
+            mut ctx,
+            gates,
+            seed: sd,
+            raw,
+            now,
+        } = self;
+        hal.drv_end();
+        // **Nothing is installed or written once the guard has latched.**
+        // `set_period` and `apply_plan` below rewrite the compares that
+        // `guard_trip` zeroed, and they used to run unconditionally -- ahead of
+        // `com_handover`'s own latch check. No current flows (MOE and the
+        // driver enable are both down), so this was never a re-energisation;
+        // it rested on caller ordering, which is the thing step 2 set out to
+        // stop resting on (E186 SS2). A latched guard now skips the installs
+        // outright, and the next `Ctx::pass` stops the run with the reason.
+        let latched = hal.guard_reason() != 0;
+        let adv = P::A::level(duty_at(ctx.req.target_tenths, 0));
+        ctx.last_ci = sd.interval_us;
+        let commit_us = sd
+            .edge_us
+            .wrapping_add(commutation::wait_time(sd.interval_us, adv).max(1));
+        ctx.closed_at = Some(now);
+        ctx.drv.seed = Some(sd);
+        ctx.period = RUN_PERIOD_TICKS;
+        let mut gates: Gates<hal::Locked> = gates.pass();
+        let bemf_duty = ctx.governor.clamp(duty_at(ctx.req.target_tenths, 0));
+        if !latched {
+            hal.det_install(P::B::estimator(sd.interval_us), sd.interval_us, raw, ctx.step, adv);
+            hal.set_period(ctx.period);
+            if let Some(pl) = ctx.plan::<P>(ctx.step, bemf_duty) {
+                hal.apply_plan(&mut gates, &pl);
+                ctx.applied_duty = bemf_duty;
+            }
+            hal.com_handover(bemf_duty, ctx.period, ctx.step, commit_us);
+        }
+        Locked {
+            ctx,
+            gates,
+            sector_start: sd.edge_us,
+            last_com_count: 0,
+        }
+    }
+}
+
+impl Locked {
+    /// Stop, through `safe_off`.
+    pub fn stop(self, hal: &mut impl Hal, reason: Reason) -> Stopped {
+        stop(hal, self.ctx, self.gates, reason)
+    }
+
+    /// One pass of the closed loop, in place; `Some` is why it must stop.
+    pub fn poll<P: Policies>(&mut self, hal: &mut impl Hal) -> Option<Reason> {
+        let now = match self.ctx.pass::<P>(hal, true, Some(self.sector_start)) {
+            Ok(t) => t,
+            Err(r) => return Some(r),
+        };
+        let c = &mut self.ctx;
+        let since_close = c.closed_at.map_or(0, |t| now.wrapping_sub(t));
+        // Characterization hook: a scheduled duty in place of the production
+        // ramp, and a schedule end. `NoSagLog` (production) returns `None` /
+        // `false` and the branch folds away.
+        if P::G::ON && P::G::done(since_close) {
+            return Some(Reason::SegmentDeadline);
+        }
+        let scheduled = if P::G::ON { P::G::duty(now, since_close) } else { None };
+        let duty = c
+            .governor
+            .clamp(scheduled.unwrap_or_else(|| duty_at(c.req.target_tenths, since_close)));
+        // The first instant the *applied* duty reaches target is the hold.
+        if c.hold_start.is_none() && duty >= c.req.target_tenths {
+            c.hold_start = Some(now);
+            c.hold_current = Some(c.current.mark());
+            // The worst-block window starts at the same instant as the mean's
+            // (E244). A max cannot be recovered by subtraction the way a
+            // running total can, so it needs its own reset.
+            c.current.mark_hold();
+            // **`unstable` at the hold mark** (E212), so the unstable/accepted
+            // ratio can be read on the hold window as `hold_acc` already is.
+            // Whole-run, the ratio mixes a 20 s ramp with a 55 s hold and a
+            // short run reads high for that reason alone -- which is exactly
+            // how the one late-arm run's apparent anomaly stayed confounded
+            // (E210 SS1).
+            c.stats.unstable_at_hold = hal.unstable_count();
+            // **The margin histograms at the hold mark** (E315), for exactly
+            // the reason stated above, which I then walked into anyway. The
+            // first margin-hist pair read 76% hold at rung 500 against 30% at
+            // 550, so the whole-run comparison between them was a ramp-fraction
+            // comparison: the ramp's long intervals put every arm in the top
+            // `wait` bucket, diluting the low buckets by however much ramp the
+            // run happened to contain. Both E315 reviews named this confound
+            // and one of them named this very line as the fix pattern. Eight
+            // loads and eight stores, in the foreground, so no ISR instruction
+            // and no ratchet event.
+            c.stats.wait_hist_at_hold = hal.wait_hist();
+            c.stats.left_hist_at_hold = hal.left_hist();
+            c.stats.held = true;
+        }
+        // ENV-43 observer (diagnostic `late-worst` only): keep re-marking the hold's
+        // worst-block window for its first 5 s, so `worst_hold_ma` reports the worst
+        // block from hold + 5 s to the end, clear of the ramp-top transient. Reporting
+        // only: the protection verdicts and the hold mean are untouched.
+        if cfg!(feature = "late-worst") && c.hold_start.is_some_and(|h| now.wrapping_sub(h) < 5_000_000) {
+            c.current.mark_hold();
+        }
+        if let Some(raw) = hal.det_poll() {
+            self.consume(hal, raw);
+        }
+        hal.publish_filter_depth();
+        let cc = hal.com_count();
+        if cc != self.last_com_count {
+            self.last_com_count = cc;
+        }
+        let c = &mut self.ctx;
+        if duty != c.applied_duty && !c.hold_plans {
+            hal.publish_plans(duty, c.period, SIXSTEP_DUTY_CAP);
+            c.applied_duty = duty;
+            hal.set_advance(P::A::level(duty));
+            // ENV-30b: closed-loop hysteresis only at high duty, re-evaluated on every
+            // duty change. Engaging it at the ~200 eHz close starved the loop into a
+            // Tracking stop (env30-prod-2B: 16 accepts, 279 unstable). Production
+            // (`CLOSED_COMP_HYST == 0`) compiles this out.
+            if super::policy::CLOSED_COMP_HYST != 0 {
+                let on = duty >= super::policy::CLOSED_HYST_FROM_TENTHS;
+                hal.comp_hysteresis(if on { super::policy::CLOSED_COMP_HYST } else { 0 });
+            }
+        }
+        None
+    }
+
+    /// An accepted crossing: statistics, and the estimate as of it.
+    fn consume(&mut self, hal: &mut impl Hal, accepted: super::accepted::Accepted) {
+        let edge_us = hal.stamp_from_raw(accepted.raw);
+        let count = edge_us.wrapping_sub(self.sector_start);
+        let c = &mut self.ctx;
+        let ci_before = c.last_ci;
+        self.sector_start = edge_us;
+        c.stats.accepted = c.stats.accepted.wrapping_add(accepted.count.get());
+        c.stats.coalesced_accepts = c.stats.coalesced_accepts.wrapping_add(accepted.count.get() - 1);
+        if c.hold_start.is_some() {
+            c.stats.hold_acc = c.stats.hold_acc.wrapping_add(accepted.count.get());
+            c.stats.hold_ci_sum = c.stats.hold_ci_sum.saturating_add(count);
+            // Roll the matched window's anchor forward once it is older than
+            // `TAIL_WINDOW_US`, so the window always ends at the newest
+            // crossing and is one to two windows long (step 3).
+            let here = (edge_us, c.stats.hold_acc);
+            match c.stats.tail_mark {
+                Some((t, _)) if edge_us.wrapping_sub(t) < TAIL_WINDOW_US => {}
+                _ => {
+                    c.stats.tail_prev = c.stats.tail_mark;
+                    c.stats.tail_mark = Some(here);
+                }
+            }
+            c.stats.tail_last = Some(here);
+        }
+        // These histograms describe sampled notifications. Intermediate
+        // sectors/stamps are not recoverable from a latest-value mailbox.
+        let bin = (c.step.get() as usize - 1) & 7;
+        c.stats.acc_by_step[bin] = c.stats.acc_by_step[bin].saturating_add(1);
+        // Shift-only thresholds, no division on a motor path.
+        let half = ci_before >> 1;
+        let t = if count <= half + (ci_before >> 2) {
+            0
+        } else if count <= ci_before {
+            1
+        } else if count <= ci_before + (ci_before >> 2) {
+            2
+        } else if count <= ci_before + half {
+            3
+        } else {
+            4
+        };
+        c.stats.acc_by_phase[t] = c.stats.acc_by_phase[t].saturating_add(1);
+        c.last_ci = hal.det_average().unwrap_or(c.last_ci);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stopped
+// ---------------------------------------------------------------------------
+
+/// The bridge is off. Built only by [`stop`] and from a [`Refused`], both of
+/// which consumed the gate capability through [`Hal::safe_off`].
+pub struct Stopped {
+    pub reason: Reason,
+    pub entry: u32,
+    pub stopped_at: u32,
+    /// `None` when the run never drove (refused before `Armed::start`).
+    pub(crate) ctx: Option<Ctx>,
+    _gates: Gates<hal::Stopped>,
+}
+
+/// A run refused before it drove (preflight, nFAULT, baseline): the bridge
+/// is off -- the capability went through `safe_off` -- and there is no report.
+pub struct Refused {
+    pub reason: Reason,
+    pub entry: u32,
+    gates: Gates<hal::Stopped>,
+}
+
+impl Refused {
+    fn new<S>(hal: &mut impl Hal, gates: Gates<S>, reason: Reason, entry: u32) -> Self {
+        Self {
+            reason,
+            entry,
+            gates: hal.safe_off(gates),
+        }
+    }
+}
+
+impl From<Refused> for Stopped {
+    fn from(r: Refused) -> Self {
+        Self {
+            reason: r.reason,
+            entry: r.entry,
+            stopped_at: r.entry,
+            ctx: None,
+            _gates: r.gates,
+        }
+    }
+}
+
+/// The one route into [`Stopped`] for a run that drove: take the estimator
+/// back, stamp the stop, take everything else back, `safe_off`, mask the
+/// comparator, restore the startup carrier.
+pub(crate) fn stop<S>(hal: &mut impl Hal, ctx: Ctx, gates: Gates<S>, reason: Reason) -> Stopped {
+    hal.det_release();
+    let stopped_at = hal.now();
+    hal.take_back();
+    let g = hal.safe_off(gates);
+    hal.comp_mask();
+    hal.set_period(STARTUP_TICKS);
+    hal.led(false);
+    Stopped {
+        reason,
+        entry: ctx.entry,
+        stopped_at,
+        ctx: Some(ctx),
+        _gates: g,
+    }
+}
+
+#[cfg(test)]
+mod accepted_tests {
+    use super::*;
+    use crate::run::{
+        Production,
+        accepted::Accepted,
+        sim::{Crossings, Faults, Sim},
+    };
+    use core::num::NonZeroU32;
+
+    #[test]
+    fn coalesced_delivery_reaches_actual_report_and_tail_without_inventing_stamps() {
+        let mut sim = Sim::new(
+            Crossings {
+                interval_us: 100,
+                until_us: None,
+            },
+            Faults::default(),
+        );
+        let mut ctx = Ctx::new::<Production>(
+            Request {
+                target_tenths: 150,
+                inject: None,
+                window: Window::ForUs(10_000),
+            },
+            0,
+            Baseline {
+                zero_block: 614_400,
+                bus_ref: crate::protection::BusReference { bus: 1214, vref: 1506 },
+                bus_floor_code: 840,
+            },
+        );
+        ctx.hold_start = Some(1000);
+        let mut locked = Locked {
+            ctx,
+            gates: Gates::idle().pass(),
+            sector_start: 1000,
+            last_com_count: 0,
+        };
+        for (raw, count) in [(1100, 1), (1400, 3), (1700, 3)] {
+            sim.t = raw as u32;
+            locked.consume(
+                &mut sim,
+                Accepted {
+                    raw,
+                    count: NonZeroU32::new(count).unwrap(),
+                },
+            );
+        }
+        let report = Production::report(&mut sim, &locked.ctx, Reason::SegmentDeadline, 1800, None);
+        assert_eq!(report.accepted, 7);
+        assert_eq!(report.hold_acc, 7);
+        assert_eq!(report.coalesced_accepts, 4);
+        let tail = report.tail.unwrap();
+        assert_eq!(tail.accepts, 6);
+        assert_eq!(tail.span_us, 600);
+        assert_eq!(tail.start_before_stop_us, 700);
+        assert_eq!(tail.end_before_stop_us, 100);
+        // Sampled diagnostic bins are NOT fabricated for the four hidden edges.
+        assert_eq!(report.acc_by_step.iter().copied().sum::<u16>(), 3);
+        report.emit(&mut sim);
+        assert!(sim.log.text.contains("BEMFMAILBOX coalesced_accepts=4"));
+    }
+}

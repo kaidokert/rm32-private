@@ -12,3 +12,10 @@ rinz/logs/
 rinz/notes/
 rinz/ref_docs/
 minz/captures/
+captures/
+scripts/__pycache__/
+rm32_stm32/scripts/__pycache__/
+binz/am32_g071_isr_ref/*.lst
+binz/am32_g071_isr_ref/*.txt
+*.bak
+binz/firmware50/isr_ref/*
