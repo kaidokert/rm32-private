@@ -2,14 +2,17 @@
 target = "thumbv6m-none-eabi"
 
 [target.thumbv6m-none-eabi]
-rustflags = ["-C", "link-arg=-Tlink.x"]
+linker = "scripts/audit-linker.cmd"
+rustflags = ["-C", "link-arg=-Tlink.x", "-C", "linker-flavor=ld.lld"]
 
 [target.thumbv7em-none-eabi]
-rustflags = ["-C", "link-arg=-Tlink.x"]
+linker = "scripts/audit-linker.cmd"
+rustflags = ["-C", "link-arg=-Tlink.x", "-C", "linker-flavor=ld.lld"]
 
 [target.thumbv7em-none-eabihf]
 # BENCH-SPECIFIC (B8): --probe pins the bench ST-LINK V3 serial because a
 # second (wrong) probe is often attached to this machine. The public tree
 # omits --probe (probe-rs auto-selects the sole attached probe).
 runner = "probe-rs run --chip STM32L431KCUx --probe 0483:374f:0037002F3234510836303532"
-rustflags = ["-C", "link-arg=-Tlink.x"]
+linker = "scripts/audit-linker.cmd"
+rustflags = ["-C", "link-arg=-Tlink.x", "-C", "linker-flavor=ld.lld"]

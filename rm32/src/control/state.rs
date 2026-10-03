@@ -65,13 +65,13 @@ impl DutyState {
         zero_crosses: u32,
         stall_protection: u8,
     ) -> u16 {
-        let setpoint = crate::functions::map(
-            input as i32,
-            crate::constants::THROTTLE_MIN_SIGNAL as i32,
-            crate::constants::DSHOT_MAX_THROTTLE as i32,
-            self.minimum as i32,
-            crate::constants::DUTY_SCALE_MAX as i32,
-        ) as u16;
+        let input = input.clamp(
+            crate::constants::THROTTLE_MIN_SIGNAL,
+            crate::constants::DSHOT_MAX_THROTTLE,
+        );
+        let input_span = (input - crate::constants::THROTTLE_MIN_SIGNAL) as u32;
+        let duty_span = (crate::constants::DUTY_SCALE_MAX - self.minimum) as u32;
+        let setpoint = self.minimum + crate::fast_math::div2000_pwm(input_span * duty_span) as u16;
         let safe_shift = stall_protection.min(5);
         if zero_crosses < (crate::constants::STARTUP_ZC_BASE >> safe_shift) {
             setpoint.clamp(self.min_startup, self.startup_max)
@@ -93,13 +93,13 @@ impl DutyState {
         if self.ramp_count > self.ramp_divider as u16 {
             self.ramp_count = 0;
             if voltage_based {
-                let v_change = crate::functions::map(
-                    battery_voltage as i32,
-                    RAMP_VOLTAGE_LOW_MV,
-                    RAMP_VOLTAGE_HIGH_MV,
-                    RAMP_VOLTAGE_CHANGE_MAX,
-                    RAMP_VOLTAGE_CHANGE_MIN,
-                ) as u8;
+                let mv = (battery_voltage as u32)
+                    .clamp(RAMP_VOLTAGE_LOW_MV as u32, RAMP_VOLTAGE_HIGH_MV as u32);
+                let numerator = (mv - RAMP_VOLTAGE_LOW_MV as u32)
+                    * (RAMP_VOLTAGE_CHANGE_MAX - RAMP_VOLTAGE_CHANGE_MIN) as u32;
+                let v_change = (RAMP_VOLTAGE_CHANGE_MAX as u32
+                    - crate::fast_math::div1400_ramp(numerator))
+                    as u8;
                 self.max_change = if commutation_interval > RAMP_FAST_COMMUTATION_THRESHOLD {
                     v_change
                 } else {
@@ -188,15 +188,16 @@ impl DutyState {
 
     /// Compute PWM compare value from duty cycle and timer auto-reload.
     pub(crate) fn pwm_compare(&self, tim1_arr: u16) -> u16 {
-        ((self.cycle as u32 * tim1_arr as u32) / crate::constants::DUTY_SCALE_MAX as u32 + 1) as u16
+        (crate::fast_math::div2000_pwm(self.cycle as u32 * tim1_arr as u32) + 1) as u16
     }
 
     /// Compute PWM compare value for proportional brake mode.
     pub(crate) fn brake_compare(drag_brake_strength: u8, tim1_arr: u16) -> u16 {
         let brake_duty = drag_brake_strength as u32 * crate::constants::BRAKE_STRENGTH_SCALE;
-        tim1_arr.saturating_sub(
-            (brake_duty * tim1_arr as u32 / crate::constants::DUTY_SCALE_MAX as u32) as u16,
-        )
+        if brake_duty >= crate::constants::DUTY_SCALE_MAX as u32 {
+            return 0;
+        }
+        tim1_arr.saturating_sub(crate::fast_math::div2000_pwm(brake_duty * tim1_arr as u32) as u16)
     }
 
     /// Finalize tick: store last duty, return current cycle for PWM output.
@@ -726,6 +727,24 @@ mod tests {
         assert_eq!(reset, 2000);
     }
 
+    #[test]
+    fn current_ceiling_has_final_authority_over_command_and_stall_boost() {
+        let mut duty = DutyState::default();
+        duty.cycle = 1800;
+
+        // A large requested duty plus positive stall boost cannot exceed the
+        // current controller's foreground-published ceiling.
+        duty.clamp_ceilings(300, 1900, 1250);
+        assert_eq!(duty.cycle, 1250);
+        assert_eq!(duty.maximum, 1900);
+
+        // A later high command cannot silently undo the same ceiling; only
+        // the main current policy may publish a different value.
+        duty.cycle = 2000;
+        duty.clamp_ceilings(150, 2000, 1250);
+        assert_eq!(duty.cycle, 1250);
+    }
+
     /// Mirrors C: "tenKhzRoutine stall protection PID"
     /// C setup: stallPid.Kp=1, commutation_interval=8000, target=6500,
     ///          stall_protection_adjust=0
@@ -869,6 +888,43 @@ mod tests {
         d.ramp_limit(0, 0, 50, 1000, false);
 
         assert_eq!(d.cycle(), 402);
+    }
+
+    #[test]
+    fn m0_setpoint_math_matches_original_map_over_complete_domain() {
+        for minimum in 0..=crate::constants::DUTY_SCALE_MAX {
+            let mut duty = DutyState::default();
+            duty.set_duty_limits(minimum, 0, crate::constants::DUTY_SCALE_MAX);
+            for input in
+                crate::constants::THROTTLE_MIN_SIGNAL..=crate::constants::DSHOT_MAX_THROTTLE
+            {
+                let expected = crate::functions::map(
+                    input as i32,
+                    crate::constants::THROTTLE_MIN_SIGNAL as i32,
+                    crate::constants::DSHOT_MAX_THROTTLE as i32,
+                    minimum as i32,
+                    crate::constants::DUTY_SCALE_MAX as i32,
+                ) as u16;
+                assert_eq!(duty.compute_setpoint(input, u32::MAX, 0), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn m0_pwm_math_matches_original_division_on_all_supported_timers() {
+        for arr in [1999, 2665, 7082] {
+            let mut duty = DutyState::default();
+            for cycle in 0..=crate::constants::DUTY_SCALE_MAX {
+                duty.set_cycle(cycle);
+                let expected = (cycle as u32 * arr as u32 / 2000 + 1) as u16;
+                assert_eq!(duty.pwm_compare(arr), expected);
+            }
+            for strength in 0..=10 {
+                let scaled = strength as u32 * crate::constants::BRAKE_STRENGTH_SCALE;
+                let expected = arr.saturating_sub((scaled * arr as u32 / 2000) as u16);
+                assert_eq!(DutyState::brake_compare(strength, arr), expected);
+            }
+        }
     }
 
     // --- ProtectionState tests ---

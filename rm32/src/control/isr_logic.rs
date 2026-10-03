@@ -145,9 +145,9 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             }
             if ctx.config.brake_on_stop == 2 {
                 ctx.hal.phase().com_step(2);
-                let brake_duty = (ctx.config.active_brake_power as u32 * tim1_arr as u32
-                    / DUTY_SCALE_MAX as u32)
-                    * 10;
+                let brake_duty = crate::fast_math::div2000_pwm(
+                    ctx.config.active_brake_power as u32 * tim1_arr as u32,
+                ) * 10;
                 ctx.hal.pwm().set_duty_all(brake_duty as u16);
             }
         }
@@ -178,7 +178,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     }
 
     // Ramp rate limiting
-    let average_interval = (ctx.shared.e_com_time() / 3) as u32;
+    let average_interval = crate::fast_math::div3_i32(ctx.shared.e_com_time()) as u32;
     ctx.duty.ramp_limit(
         ctx.shared.battery_voltage(),
         ctx.shared.commutation_interval(),
@@ -325,7 +325,7 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     };
     let was_interrupt_mode = !shared.old_routine();
 
-    if was_interrupt_mode && (e_com / 3) as u32 > exit_interval + 500 {
+    if was_interrupt_mode && crate::fast_math::div3_i32(e_com) as u32 > exit_interval + 500 {
         shared.set_old_routine(true);
     }
 

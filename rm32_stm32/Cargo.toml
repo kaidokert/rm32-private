@@ -73,5 +73,6 @@ serde_yaml = "0.9"
 
 [profile.release]
 opt-level = "s"
-lto = true
+lto = "thin"
+codegen-units = 1
 debug = true

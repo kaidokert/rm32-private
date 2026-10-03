@@ -19,6 +19,7 @@ pub mod current;
 pub mod dshot;
 pub mod dshot_commands;
 pub mod edt;
+pub mod fast_math;
 pub mod filter;
 pub mod fixed_mode;
 pub mod functions;

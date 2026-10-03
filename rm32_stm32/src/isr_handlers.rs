@@ -248,7 +248,7 @@ pub fn handle_tim6() {
     // The 30 ms camp-blackout bound needs a camp-side fix instead.
     // COMP gate stale average — latched every tick in ALL builds (this
     // is control, not instrumentation; see crate::comp_gate).
-    crate::comp_gate::latch((shared.e_com_time() / 3).max(0) as u32);
+    crate::comp_gate::latch(rm32::fast_math::div3_i32(shared.e_com_time()).max(0) as u32);
     shared.dbg_isr_tick_inc();
 }
 

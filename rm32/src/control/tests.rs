@@ -590,6 +590,118 @@ mod tests {
     }
 
     #[test]
+    fn all_off_tracking_recovery_restarts_through_normal_startup_next_tick() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+
+        shared.mode.set(crate::motor_mode::MotorMode::Armed);
+        shared.adjusted_input.set(1000);
+        shared.request_isr_action(IsrAction::AllOff);
+
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+        assert_eq!(shared.mode.get(), crate::motor_mode::MotorMode::Armed);
+        assert_eq!(hal.phase.com_step_calls, 0);
+        assert_eq!(shared.isr_action(), IsrAction::None);
+
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+        assert_eq!(shared.mode.get(), crate::motor_mode::MotorMode::OldRoutine);
+        assert_eq!(hal.phase.com_step_calls, 1);
+        assert_eq!(shared.commutation_interval(), 10_000);
+    }
+
+    #[test]
+    fn tracking_restart_retains_command_but_reclimbs_through_bounded_ramp() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+
+        // A tracking trip preserves the receiver command, but AllOff owns the
+        // first tick and grants that command no bridge authority.
+        shared.mode.set(crate::motor_mode::MotorMode::Armed);
+        shared.adjusted_input.set(1000);
+        shared.request_isr_action(IsrAction::AllOff);
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+        assert_eq!(shared.adjusted_input(), 1000);
+        assert_eq!(shared.duty_cycle(), 0);
+        assert_eq!(hal.pwm.last_duty, 0);
+
+        // The next tick uses the ordinary startup path. Default min_startup
+        // is 120 and the startup ramp permits only +2 per 10 kHz tick, so a
+        // retained high command cannot jump directly to its target duty.
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+        assert_eq!(
+            shared.motor_mode(),
+            crate::motor_mode::MotorMode::OldRoutine
+        );
+        assert_eq!(shared.duty_cycle(), 122);
+        assert!(shared.duty_cycle_setpoint() > shared.duty_cycle());
+
+        // A newer receiver command supersedes the retained one immediately;
+        // it still goes through the same bounded ramp rather than a raw PWM
+        // write. Minimum throttle maps to the startup floor of 120.
+        shared
+            .adjusted_input
+            .set(crate::constants::THROTTLE_MIN_SIGNAL);
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+        assert_eq!(shared.duty_cycle_setpoint(), 120);
+        assert_eq!(shared.duty_cycle(), 120);
+    }
+
+    #[test]
     fn isr_tick_consumes_interval_timer_reset_action() {
         let mut comm = crate::commutation::Commutation::new();
         let mut bemf = crate::control::state::BemfState::default();

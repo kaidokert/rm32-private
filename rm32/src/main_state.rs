@@ -370,31 +370,18 @@ impl<LED: OutputPin> MainState<LED> {
         // Stall detection: if interval timer exceeds threshold, motor has stalled.
         // C: if (INTERVAL_TIMER_COUNT > 45000 && running == 1)
         if shared.interval_timer_count() > BEMF_STALL_TIMER_THRESHOLD && shared.running() {
-            // Was the chain in interrupt mode when the timeout hit? Decides
-            // the recovery below; must be read BEFORE set_old_routine.
-            let was_interrupt_mode = !shared.old_routine();
             // Only increment if not already latched (102 = confirmed stuck)
             if self.protection.bemf_timeout_happened != BEMF_FAULT_LATCHED {
                 self.protection.bemf_timeout_happened =
                     self.protection.bemf_timeout_happened.saturating_add(1);
             }
-            shared.set_old_routine(true);
-            if shared.adjusted_input() < THROTTLE_MIN_SIGNAL {
-                shared.request_isr_action(IsrAction::ResetIntervalTimer);
-                shared.transition(crate::motor_mode::MotorEvent::StopMotor);
-                shared.set_commutation_interval(DESYNC_RESET_INTERVAL);
-            } else {
-                shared.request_isr_action(IsrAction::CommutateKick);
-            }
+            // A BEMF timeout is confirmed tracking loss. Kill the bridge and
+            // return to Armed; persistent throttle then enters the ordinary
+            // startup path on the tick after AllOff is consumed.
+            shared.request_isr_action(IsrAction::AllOff);
+            shared.transition(crate::motor_mode::MotorEvent::StopMotor);
             shared.set_zero_crosses(0);
-            // Active re-kick, ungated — AM32 calls zcfoundroutine() here
-            // unconditionally. Also the dead-start escape: a standstill
-            // window whose comparator level mismatches the expected
-            // post-ZC level only advances via this timeout, so the kick
-            // (interval reset + COM-timer re-arm) is AM32's implicit
-            // open-loop crawl to the next window.
-            let _ = was_interrupt_mode;
-            shared.request_isr_action(crate::shared_comm::IsrAction::CommutateKick);
+            shared.set_commutation_interval(DESYNC_RESET_INTERVAL);
         }
 
         // Dynamic BEMF timeout threshold: lenient at low throttle
@@ -928,6 +915,10 @@ mod tests {
             main.protection.bemf_timeout_happened > 0,
             "bemf_timeout_happened should increment on stall"
         );
+        assert_eq!(shared.motor_mode(), MotorMode::Armed);
+        assert_eq!(shared.isr_action(), IsrAction::AllOff);
+        assert_eq!(shared.zero_crosses(), 0);
+        assert_eq!(shared.commutation_interval(), DESYNC_RESET_INTERVAL);
     }
 
     #[test]
