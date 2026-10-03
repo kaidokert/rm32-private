@@ -1,5 +1,15 @@
 # Agent Notes
 
+## 2026-09-14 binz persistence diagnostic observer seam
+
+`core::am32_hal::Recorder::persistence_rejected(u16)` is a default no-op,
+invoked at `am32_isr::interrupt_routine`'s existing first-mismatch return.
+Index is zero-based; no added comparator reads or controller decisions.
+Overrides must remain bounded and observer-only. All85 core tests pass.
+Binz's unused-hook G071 build has byte-identical PT_LOAD segments to its
+frozen pre-hook BC876 image; other platforms' codegen not measured. No minz
+hardware run (board disconnected). See sibling binz/PERSISTENCE_REJECTION_PROBE.md.
+
 ## 2026-05-19 comparator polarity sweep (`examples/motor_tester.rs`)
 
 This repo already has broad comparator/background notes in

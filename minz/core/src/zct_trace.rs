@@ -21,7 +21,7 @@
 //! seams: the critical section arrives as a [`Cs`] impl and the
 //! drain sink as a byte closure, so the whole module is host-testable.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::am32::{self, ZCT_REC, ZctRing};
 use crate::am32_hal::Cs;
@@ -79,7 +79,7 @@ impl<const N: usize> ZctTrace<'_, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::sync::atomic::{AtomicU16, AtomicUsize};
+    use portable_atomic::{AtomicU16, AtomicUsize};
 
     // (write() is exercised end-to-end — batch gate, pack, cs-guarded
     // push — by the am32_control tests, which own the cluster
@@ -95,7 +95,12 @@ mod tests {
         static COMM_N: AtomicU32 = AtomicU32::new(0);
         static BATCHING: AtomicBool = AtomicBool::new(false);
         let zct = ZctTrace {
-            ring: ZctRing { ring: &RING, head: &HEAD, tail: &TAIL, drop: &DROP },
+            ring: ZctRing {
+                ring: &RING,
+                head: &HEAD,
+                tail: &TAIL,
+                drop: &DROP,
+            },
             comm_n: &COMM_N,
             batching: &BATCHING,
         };

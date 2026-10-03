@@ -9,8 +9,22 @@ description = "Host-testable control/guard/telemetry logic for the minz bench fi
 [workspace]
 
 [dependencies]
+portable-atomic = { version = "1", default-features = false }
 # None. The am32 cluster structs hold plain `core::sync::atomic` refs
 # (native single-word atomics on both thumbv7em and x86).
 
 [lib]
 name = "minz_core"
+
+[features]
+default = []
+# Opt-in binz same-board timing A/B. The default/reference remains the
+# historical AM32 temp_advance=16; this feature has no runtime branch.
+bench-advance-18 = []
+# Opt-in binz high-speed timing A/B. Mutually exclusive with advance18;
+# default/reference behavior remains the historical value16.
+bench-advance-20 = []
+bench-advance-22 = []
+# Binz direct-PWM experiment: polling/startup stays18; interrupt-mode COM
+# reads a precomputed 18..22 level from Duty::duty_cycle.
+bench-advance-scheduled = []

@@ -14,7 +14,7 @@
 // which is `core::sync::atomic::AtomicU32` in the example (all its
 // statics are). AtomicU32 exists on both x86 (host tests) and
 // thumbv7em, so no portable_atomic shim is needed for this module.
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 // ===============================================================
 // Constants owned here (with their AM32 citations), so the pure
@@ -478,9 +478,9 @@ impl UartDuty {
 /// owns the index arithmetic. Relaxed ordering is sufficient for
 /// SPSC on a single core with data-in-the-atomics.
 pub struct RxRing<'a, const N: usize> {
-    pub ring: &'a [core::sync::atomic::AtomicU16; N],
-    pub head: &'a core::sync::atomic::AtomicUsize,
-    pub tail: &'a core::sync::atomic::AtomicUsize,
+    pub ring: &'a [portable_atomic::AtomicU16; N],
+    pub head: &'a portable_atomic::AtomicUsize,
+    pub tail: &'a portable_atomic::AtomicUsize,
 }
 
 impl<const N: usize> RxRing<'_, N> {
@@ -515,9 +515,9 @@ impl<const N: usize> RxRing<'_, N> {
 /// no cortex-m dependency; that guard stays with the caller). The
 /// single consumer drains via a byte sink.
 pub struct ZctRing<'a, const N: usize> {
-    pub ring: &'a [[core::sync::atomic::AtomicU16; ZCT_REC]; N],
-    pub head: &'a core::sync::atomic::AtomicUsize,
-    pub tail: &'a core::sync::atomic::AtomicUsize,
+    pub ring: &'a [[portable_atomic::AtomicU16; ZCT_REC]; N],
+    pub head: &'a portable_atomic::AtomicUsize,
+    pub tail: &'a portable_atomic::AtomicUsize,
     pub drop: &'a AtomicU32,
 }
 
@@ -534,8 +534,10 @@ impl<const N: usize> ZctRing<'_, N> {
         let nx = (h + 1) % N;
         if nx == self.tail.load(Ordering::Relaxed) {
             self.drop.fetch_add(1, Ordering::Relaxed);
-            self.tail
-                .store((self.tail.load(Ordering::Relaxed) + 1) % N, Ordering::Relaxed);
+            self.tail.store(
+                (self.tail.load(Ordering::Relaxed) + 1) % N,
+                Ordering::Relaxed,
+            );
         }
         for (i, b) in rec.iter().enumerate() {
             self.ring[h][i].store(*b as u16, Ordering::Relaxed);
@@ -564,19 +566,24 @@ impl<const N: usize> ZctRing<'_, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::sync::atomic::AtomicU32;
+    use portable_atomic::AtomicU32;
 
     // --- ZctRing -----------------------------------------------
 
     #[test]
     fn zct_ring_drops_oldest_when_full_and_drains_bounded() {
-        use core::sync::atomic::{AtomicU16, AtomicUsize};
+        use portable_atomic::{AtomicU16, AtomicUsize};
         static RING: [[AtomicU16; ZCT_REC]; 4] =
             [const { [const { AtomicU16::new(0) }; ZCT_REC] }; 4];
         static HEAD: AtomicUsize = AtomicUsize::new(0);
         static TAIL: AtomicUsize = AtomicUsize::new(0);
         static DROP: AtomicU32 = AtomicU32::new(0);
-        let z = ZctRing { ring: &RING, head: &HEAD, tail: &TAIL, drop: &DROP };
+        let z = ZctRing {
+            ring: &RING,
+            head: &HEAD,
+            tail: &TAIL,
+            drop: &DROP,
+        };
         let mk = |v: u8| {
             let mut r = [0u8; ZCT_REC];
             r[0] = 0x5B;
@@ -607,11 +614,15 @@ mod tests {
 
     #[test]
     fn rx_ring_push_pop_wraps_and_drops_when_full() {
-        use core::sync::atomic::{AtomicU16, AtomicUsize};
+        use portable_atomic::{AtomicU16, AtomicUsize};
         static RING: [AtomicU16; 4] = [const { AtomicU16::new(0) }; 4];
         static HEAD: AtomicUsize = AtomicUsize::new(0);
         static TAIL: AtomicUsize = AtomicUsize::new(0);
-        let rx = RxRing { ring: &RING, head: &HEAD, tail: &TAIL };
+        let rx = RxRing {
+            ring: &RING,
+            head: &HEAD,
+            tail: &TAIL,
+        };
         assert_eq!(rx.pop(), None);
         rx.push(b'a' as u16);
         rx.push(b'b' as u16);
@@ -685,7 +696,10 @@ mod tests {
     #[test]
     fn blend_forms_match_source() {
         // Interrupt blend: (ci + (lz+tz)/2)/2.
-        assert_eq!(blend_interval(746, 700, 720), (746 + ((700 + 720) >> 1)) >> 1);
+        assert_eq!(
+            blend_interval(746, 700, 720),
+            (746 + ((700 + 720) >> 1)) >> 1
+        );
         assert_eq!(blend_interval(1000, 0, 0), 500);
         // Polling blend: (thiszc + 3*ci)/4.
         assert_eq!(polling_blend(700, 746), (700 + 3 * 746) / 4);
@@ -796,7 +810,9 @@ mod tests {
     #[test]
     fn zct_pack_golden_bytes() {
         // step=3, old_routine, not batched, sample fields.
-        let rec = zct_pack(3, true, false, 0x1234, 0x0102, 0x00BB, 0x02C8, 0xABCD, 0x0304);
+        let rec = zct_pack(
+            3, true, false, 0x1234, 0x0102, 0x00BB, 0x02C8, 0xABCD, 0x0304,
+        );
         assert_eq!(rec[0], 0x5B);
         assert_eq!(rec[1], 0xA9);
         assert_eq!(rec[2], 0x03 | 0x80); // step + old bit, no batch bit

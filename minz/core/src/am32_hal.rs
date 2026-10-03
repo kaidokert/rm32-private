@@ -112,6 +112,12 @@ pub trait Recorder {
     /// Freeze the ring (a fault freezes so the dump shows the events
     /// LEADING TO the kill).
     fn freeze(&self);
+    /// Optional diagnostic at the existing persistence rejection return.
+    /// Zero-based index of the first mismatching read; no additional signal
+    /// read or timestamp is taken by the core. Implementations must be bounded
+    /// and observer-only. Default users retain a compile-time no-op.
+    #[inline(always)]
+    fn persistence_rejected(&self, _read_index: u16) {}
 }
 
 /// Critical-section provider (the `cortex_m::interrupt::free`
@@ -228,7 +234,7 @@ pub(crate) mod mock {
     use crate::am32_loop::{Bench, Drive, Duty, Sched};
     use crate::zct_trace::ZctTrace;
     use core::cell::{Cell, RefCell};
-    use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
+    use portable_atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
 
     #[derive(Default)]
     pub(crate) struct MockHal {
@@ -242,6 +248,7 @@ pub(crate) mod mock {
         pub(crate) duties: RefCell<Vec<u16>>,
         pub(crate) com_arrs: RefCell<Vec<u16>>,
         pub(crate) events: RefCell<Vec<(u8, u8, u16)>>,
+        pub(crate) persistence_rejections: RefCell<Vec<u16>>,
         pub(crate) frozen: Cell<bool>,
         pub(crate) comp_value: Cell<bool>,
         /// Scripted comparator reads: while non-empty, each `value()`
@@ -348,7 +355,11 @@ pub(crate) mod mock {
     impl Comparator for &MockHal {
         fn output_level(&self) -> bool {
             let mut seq = self.comp_seq.borrow_mut();
-            if seq.is_empty() { self.comp_value.get() } else { seq.remove(0) }
+            if seq.is_empty() {
+                self.comp_value.get()
+            } else {
+                seq.remove(0)
+            }
         }
         fn set_step(&mut self, step: u8, rising: bool) {
             self.calls.borrow_mut().push("set_step");
@@ -418,6 +429,9 @@ pub(crate) mod mock {
     }
 
     impl Recorder for MockHal {
+        fn persistence_rejected(&self, read_index: u16) {
+            self.persistence_rejections.borrow_mut().push(read_index);
+        }
         fn record(&self, ty: u8, sector: u8, data: u16) {
             self.events.borrow_mut().push((ty, sector, data));
         }
