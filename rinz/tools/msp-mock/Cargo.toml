@@ -1,0 +1,7 @@
+[package]
+name = "msp-mock"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+multiwii_serial_protocol = "0.1.1"
