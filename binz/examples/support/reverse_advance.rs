@@ -9,7 +9,11 @@ mod tests {
 
     #[test]
     fn boundary_is_exact_and_bounded() {
-        for duty in [0, 100, 250, 349] { assert_eq!(level(duty), 20); }
-        for duty in [350, 351, 450, 500] { assert_eq!(level(duty), 22); }
+        for duty in [0, 100, 250, 349] {
+            assert_eq!(level(duty), 20);
+        }
+        for duty in [350, 351, 450, 500] {
+            assert_eq!(level(duty), 22);
+        }
     }
 }

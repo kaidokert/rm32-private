@@ -49629,3 +49629,23 @@ gate; coast speed8.7% below old2096oracle also fails. Not a protection abort,
 not qualification, no cause attributed to box. Complete capture retained:
 captures/2026-09-27/e490-loaded-box50_01.txt. Fresh MCP p after fixture confirms
 MOE/CCRs/ENABLE0,gateslow1,nFAULT1,PASS; UARTclosed. No further run.
+
+## E491 — one operator-requested boxed60 acoustic screen
+
+Operator clarifies different physical motor of same model, prop installed,
+restricted box airflow; purpose is listening, not envelope qualification.
+Historical motor speed/current oracle is not acceptance evidence for this unit.
+Same archived81F85AB5, no flash/code/threshold change; MCP fresh alloffPASS.
+One l command,19minus/9plus absolute normalization to600,45s total/~14.8s
+targethold. Previous E490 stopped~15:18:21; selector overhead makes >120sOFF
+before motor start. Last confirmed PSU3A unchanged. No temperature channel;
+bounded run then OFF, no retry on protection. Prediction: target/ceiling600,
+deadline2,nonzero BEMF,late0,finaloffPASS. Retain all data regardless of outcome.
+
+E491 result: reason2 deadline,hold14775ms,target/ceiling600,CCR799/1333.
+Hold192920accepted,forced0,late0,thin0,guard0,storm0,blank_latched0; no foldback.
+Coast2168eHz,within-run reportedidentity1003permille. Currentproxy2426mA,
+worstblock2916mA,zero drift-226mA-equivalent; not a metered current claim.
+Fixture exit1 solely because14.775s<30s qualification hold, not a drive fault.
+Fresh MCP p alloffPASS,nFAULT1,Uartclosed. One requested acoustic screen done;
+no further run. Capture captures/2026-09-27/e491-newmotor-box60_01.txt.

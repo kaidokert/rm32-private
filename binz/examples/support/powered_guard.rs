@@ -2,9 +2,14 @@
 //! Pure policy only: caller must apply a fault immediately to DRV safing.
 //! Absolute phase pulse limits are NOT average-current/duty-expansion approval.
 use super::accepted_timing;
+pub const CAMPAIGN_BASE_US: u32 = if cfg!(feature = "bench-hold-30s") {
+    30_000_000
+} else {
+    5_000_000
+};
 /// Reserve two guard ticks for dispatch/safing latency inside the user limit.
 pub fn reserved_elapsed(elapsed: u32) -> Option<u32> {
-    elapsed.checked_add(200).filter(|&n| n < 5_000_000)
+    elapsed.checked_add(200).filter(|&n| n < CAMPAIGN_BASE_US)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +54,7 @@ impl SessionBudget {
         if !(20_000..=600_000_000).contains(&window) {
             return None;
         }
-        let campaign = 5_000_000 + window;
+        let campaign = CAMPAIGN_BASE_US + window;
         Some((
             Self {
                 campaign_limit: campaign,
@@ -481,7 +486,7 @@ impl<const MIN_CYCLE_US: u32, const MIN_EVENT_US: u32, const REPORT_FAST: bool>
             campaign_elapsed,
             seed_step,
             feedback,
-            5_000_000,
+            CAMPAIGN_BASE_US,
             20_000,
         )
     }

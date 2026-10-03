@@ -35,13 +35,9 @@ impl Latest {
         // its signed average and reports their count. This cache must not
         // secretly turn one such sample into a second pulse-current veto.
         // Bus/VREF rails remain invalid, as do impossible >12-bit DMA words.
-        let invalid_phase_word = frame.raw[0] > 4095
-            || frame.raw[1] > 4095
-            || frame.raw[2] > 4095;
-        let invalid_reference = frame.raw[3] == 0
-            || frame.raw[3] >= 4095
-            || frame.raw[4] == 0
-            || frame.raw[4] >= 4095;
+        let invalid_phase_word = frame.raw[0] > 4095 || frame.raw[1] > 4095 || frame.raw[2] > 4095;
+        let invalid_reference =
+            frame.raw[3] == 0 || frame.raw[3] >= 4095 || frame.raw[4] == 0 || frame.raw[4] >= 4095;
         let error = if invalid_phase_word || invalid_reference {
             Some(Error::Invalid)
         } else if now.wrapping_sub(frame.acquired) > 1000 {

@@ -62,7 +62,10 @@ mod tests {
         }
         // Covers 2^24 and 2^25 microseconds and 915 TIM17 wraps. The
         // observed high-duty faults do not land at either software boundary.
-        assert_eq!(c.sample(origin.wrapping_add(60_000_000u32 as u16)), 60_000_000);
+        assert_eq!(
+            c.sample(origin.wrapping_add(60_000_000u32 as u16)),
+            60_000_000
+        );
     }
     #[test]
     fn irregular_reads_preserve_real_dispatch_gap() {

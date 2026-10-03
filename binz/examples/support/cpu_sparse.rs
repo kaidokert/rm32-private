@@ -33,7 +33,10 @@ pub struct Scope<const ID: usize> {
 #[inline(always)]
 pub fn enter<const ID: usize>() -> Scope<ID> {
     if !powered_timer::owns() || core_bench::live_duty_current().unwrap_or(0) < 350 {
-        return Scope { start: 0, sampled: false };
+        return Scope {
+            start: 0,
+            sampled: false,
+        };
     }
     unsafe {
         let calls = core::ptr::addr_of_mut!(CALLS).cast::<u32>().add(ID);
@@ -42,7 +45,10 @@ pub fn enter<const ID: usize>() -> Scope<ID> {
         let n = countdown.read();
         if n != 0 {
             countdown.write(n - 1);
-            return Scope { start: 0, sampled: false };
+            return Scope {
+                start: 0,
+                sampled: false,
+            };
         }
         countdown.write(PERIOD - 1);
         let samples = core::ptr::addr_of_mut!(SAMPLES).cast::<u32>().add(ID);
@@ -53,7 +59,10 @@ pub fn enter<const ID: usize>() -> Scope<ID> {
             core::ptr::addr_of_mut!(FIRST_US).write(powered_timer::stream_now());
         }
     }
-    Scope { start: t17(), sampled: true }
+    Scope {
+        start: t17(),
+        sampled: true,
+    }
 }
 
 impl<const ID: usize> Drop for Scope<ID> {
@@ -77,16 +86,20 @@ pub fn dump<W: Write>(out: &mut W) {
         return;
     }
     let first = unsafe { core::ptr::addr_of!(FIRST_US).read() };
-    let _ = writeln!(out,
+    let _ = writeln!(
+        out,
         "SPARSECPU first_us={} period={} roots=4 inclusive=1 union=0 diagnostic_only=1",
-        first, PERIOD);
+        first, PERIOD
+    );
     for id in 0..ROOTS {
         let calls = unsafe { core::ptr::addr_of!(CALLS).cast::<u32>().add(id).read() };
         let samples = unsafe { core::ptr::addr_of!(SAMPLES).cast::<u32>().add(id).read() };
         let sum = unsafe { core::ptr::addr_of!(SUM_US).cast::<u32>().add(id).read() };
         let max = unsafe { core::ptr::addr_of!(MAX_US).cast::<u16>().add(id).read() };
-        let _ = writeln!(out,
+        let _ = writeln!(
+            out,
             "SPARSEROW id={} calls={} sampled={} sum_us={} max_us={}",
-            id, calls, samples, sum, max);
+            id, calls, samples, sum, max
+        );
     }
 }

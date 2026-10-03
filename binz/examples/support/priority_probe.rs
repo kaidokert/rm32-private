@@ -4,7 +4,9 @@ use portable_atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static SEQ: AtomicU32 = AtomicU32::new(0);
 fn mark(n: u32) {
-    SEQ.store(SEQ.load(Relaxed) * 10 + n, Relaxed);
+    // Pack one event code per nibble. This keeps the diagnostic encoder
+    // division-free on the M0; the host prints/decodes the value as hex.
+    SEQ.store((SEQ.load(Relaxed) << 4) | (n & 0xF), Relaxed);
 }
 pub fn comp() -> bool {
     if !ACTIVE.load(Relaxed) {
@@ -50,7 +52,7 @@ pub fn check<W: Write>(out: &mut W) {
     }
     let old = [NVIC::get_priority(TIM2), NVIC::get_priority(TIM16)];
     let enabled = [NVIC::is_enabled(TIM2), NVIC::is_enabled(TIM16)];
-    for (priority, expected) in [(0x80, 123), (0x40, 132)] {
+    for (priority, expected) in [(0x80, 0x123), (0x40, 0x132)] {
         cortex_m::interrupt::free(|_| unsafe {
             NVIC::mask(TIM2);
             NVIC::mask(TIM16);
@@ -66,7 +68,7 @@ pub fn check<W: Write>(out: &mut W) {
             NVIC::pend(TIM16);
         });
         let start = t17();
-        while SEQ.load(Relaxed) < 100 && t17().wrapping_sub(start) < 1000 {}
+        while SEQ.load(Relaxed) < 0x100 && t17().wrapping_sub(start) < 1000 {}
         cortex_m::interrupt::free(|_| {
             NVIC::mask(TIM2);
             NVIC::mask(TIM16);
@@ -76,7 +78,7 @@ pub fn check<W: Write>(out: &mut W) {
         });
         let _ = writeln!(
             out,
-            "PRIORITYCASE comp={} com={} sequence={} expected={} disabled={}",
+            "PRIORITYCASE comp={} com={} sequence={:03X} expected={:03X} disabled={}",
             NVIC::get_priority(TIM2),
             NVIC::get_priority(TIM16),
             SEQ.load(Relaxed),

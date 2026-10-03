@@ -2218,7 +2218,11 @@ mod tests {
     }
     #[test]
     fn reverse_startup_budget_is_bounded_by_measured_arm() {
-        let s = Seed { step: 1, edge_tick: 100, interval_ticks: 1666 };
+        let s = Seed {
+            step: 1,
+            edge_tick: 100,
+            interval_ticks: 1666,
+        };
         assert_eq!(s.handoff_with_budget::<952, 40>(366, 308), Some((266, 42)));
         assert_eq!(s.handoff_with_budget::<952, 40>(368, 308), Some((268, 40)));
         assert_eq!(s.handoff_with_budget::<952, 40>(369, 308), None);

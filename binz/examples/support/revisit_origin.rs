@@ -23,8 +23,7 @@ pub const fn classify(software_flag: bool, physical_exti: bool) -> Origin {
 #[inline(always)]
 pub const fn late(measured_half_us: u16, prior_average_half_us: u32) -> bool {
     prior_average_half_us >= 64
-        && measured_half_us as u32
-            > prior_average_half_us + (prior_average_half_us >> 2)
+        && measured_half_us as u32 > prior_average_half_us + (prior_average_half_us >> 2)
 }
 
 /// IT87 wire packing; event-limit values are bounded at 1000 us by policy.

@@ -126,7 +126,11 @@ pub fn bus_tail_dump<W: Write>(out: &mut W) {
     let _ = writeln!(
         out,
         "BUSSCAN n={} total={} fields=stamp_lo,stamp_hi,bus,vref,ia,ib,ic,duty chronological=1 last_event_us={} stop_reason={} stop_us={} diagnostic_only=1",
-        count, total, last_event_us, reason(), STOP_US.load(Relaxed)
+        count,
+        total,
+        last_event_us,
+        reason(),
+        STOP_US.load(Relaxed)
     );
     for ordinal in total - count..total {
         let row = unsafe {
@@ -936,9 +940,9 @@ fn start_inner<const PREPARED: bool, const REENTRY: bool>(
         let (campaign, segment) = if REENTRY {
             (limits.campaign, limits.segment)
         } else if PREPARED {
-            (5_000_000 + window_us, window_us)
+            (powered_guard::CAMPAIGN_BASE_US + window_us, window_us)
         } else {
-            (5_000_000, 20_000)
+            (powered_guard::CAMPAIGN_BASE_US, 20_000)
         };
         RuntimeGuard::admit(0, reserved, step, sample, campaign, segment, age)
     };
@@ -953,7 +957,14 @@ fn start_inner<const PREPARED: bool, const REENTRY: bool>(
             limits.segment,
         )
     } else if PREPARED {
-        RuntimeGuard::with_limits(0, reserved, step, sample, 5_000_000 + window_us, window_us)
+        RuntimeGuard::with_limits(
+            0,
+            reserved,
+            step,
+            sample,
+            powered_guard::CAMPAIGN_BASE_US + window_us,
+            window_us,
+        )
     } else {
         RuntimeGuard::new(0, reserved, step, sample)
     };
@@ -1353,18 +1364,34 @@ pub fn stream_feedback(raw: [u16; 5], acquired: u32) -> bool {
             };
             let core = core_bench::sag_snapshot();
             super::rate_census::peak_timing([
-                acquired, service, pwm.cnt().read().bits(), pwm.arr().read().bits(),
-                pwm.ccr1().read().bits(), pwm.ccr2().read().bits(), pwm.ccr3().read().bits(),
-                event[1], event[2], core[0], core[1], core[2], core[3], core[4],
+                acquired,
+                service,
+                pwm.cnt().read().bits(),
+                pwm.arr().read().bits(),
+                pwm.ccr1().read().bits(),
+                pwm.ccr2().read().bits(),
+                pwm.ccr3().read().bits(),
+                event[1],
+                event[2],
+                core[0],
+                core[1],
+                core[2],
+                core[3],
+                core[4],
                 COMMITS.load(Relaxed),
                 unsafe { (*stm32::TIM17::ptr()).cnt().read().bits() },
-                event[3], event[4],
+                event[3],
+                event[4],
             ]);
             trip_reason(27);
             return false;
         }
         #[cfg(feature = "bench-fast-bus-sag")]
-        let reason = if average_current_live::fast_bus_tripped() { 26 } else { 25 };
+        let reason = if average_current_live::fast_bus_tripped() {
+            26
+        } else {
+            25
+        };
         #[cfg(not(feature = "bench-fast-bus-sag"))]
         let reason = 25;
         trip_reason(reason);

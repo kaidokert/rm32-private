@@ -195,7 +195,14 @@ mod tests {
             let mut io = Mock::default();
             // Neither legacy entry point inherits the live range.
             assert_eq!(apply(&mut io, 300, 1, 300), Err(Refusal::Duty));
-            for carrier in [Carrier::Khz10, Carrier::Khz20, Carrier::Khz24, Carrier::Khz32, Carrier::Khz40, Carrier::Khz48] {
+            for carrier in [
+                Carrier::Khz10,
+                Carrier::Khz20,
+                Carrier::Khz24,
+                Carrier::Khz32,
+                Carrier::Khz40,
+                Carrier::Khz48,
+            ] {
                 assert_eq!(
                     apply_carrier(&mut io, 300, 1, 300, carrier),
                     Err(Refusal::Duty)
@@ -285,7 +292,14 @@ mod tests {
         } else {
             100
         };
-            for carrier in [Carrier::Khz10, Carrier::Khz20, Carrier::Khz24, Carrier::Khz32, Carrier::Khz40, Carrier::Khz48] {
+        for carrier in [
+            Carrier::Khz10,
+            Carrier::Khz20,
+            Carrier::Khz24,
+            Carrier::Khz32,
+            Carrier::Khz40,
+            Carrier::Khz48,
+        ] {
             for duty in 1..=maximum {
                 let mut io = Mock::default();
                 assert_eq!(apply_carrier(&mut io, 0, 1, duty, carrier), Ok(duty));

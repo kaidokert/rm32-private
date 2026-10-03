@@ -150,7 +150,13 @@ pub fn interrupt() {
     MAX_GAP.store(MAX_GAP.load(Relaxed).max(dt), Relaxed);
     let elapsed = ELAPSED.load(Relaxed) + dt;
     ELAPSED.store(elapsed, Relaxed);
-    let limit = if SIX.load(Relaxed) { 96_000 } else { 4_999_000 };
+    let limit = if SIX.load(Relaxed) {
+        96_000
+    } else if cfg!(feature = "bench-hold-30s") {
+        29_999_000
+    } else {
+        4_999_000
+    };
     let reason = if !get_idr(1, 14) {
         2
     } else if dt > 500 {

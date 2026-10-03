@@ -13,8 +13,7 @@ pub struct Prepared {
 impl Prepared {
     /// Foreground only: division is intentionally outside the masked writer.
     pub const fn new(ticks: u32, duty: u32) -> Option<Self> {
-        if !matches!(ticks, 6400 | 3200 | 2666 | 2000 | 1600 | 1333)
-            || duty < MIN || duty > MAX {
+        if !matches!(ticks, 6400 | 3200 | 2666 | 2000 | 1600 | 1333) || duty < MIN || duty > MAX {
             return None;
         }
         Some(Self {

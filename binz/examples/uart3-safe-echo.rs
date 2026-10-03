@@ -65,7 +65,11 @@ fn main() -> ! {
     let _ = writeln!(
         serial,
         "SAFE_UART_READY gates=0 en=0 pwm=absent nflt={}",
-        if nfault.is_high().unwrap_or(false) { 1 } else { 0 }
+        if nfault.is_high().unwrap_or(false) {
+            1
+        } else {
+            0
+        }
     );
     while serial.flush().is_err() {}
 

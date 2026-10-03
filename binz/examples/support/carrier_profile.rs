@@ -121,15 +121,28 @@ mod tests {
             (Carrier::Khz32.arr(), Carrier::Khz32.hz_floor()),
             (1999, 32000)
         );
-        assert_eq!((Carrier::Khz40.arr(), Carrier::Khz40.hz_floor()), (1599, 40000));
-        assert_eq!((Carrier::Khz48.arr(), Carrier::Khz48.hz_floor()), (1332, 48012));
+        assert_eq!(
+            (Carrier::Khz40.arr(), Carrier::Khz40.hz_floor()),
+            (1599, 40000)
+        );
+        assert_eq!(
+            (Carrier::Khz48.arr(), Carrier::Khz48.hz_floor()),
+            (1332, 48012)
+        );
         for bad in [0, 2665, 2667, 6399, 6401, u32::MAX] {
             assert_eq!(Carrier::from_ticks(bad), None);
         }
     }
     #[test]
     fn compare_scales_at_both_carriers_and_rejects_invalid_duty() {
-        for carrier in [Carrier::Khz10, Carrier::Khz20, Carrier::Khz24, Carrier::Khz32, Carrier::Khz40, Carrier::Khz48] {
+        for carrier in [
+            Carrier::Khz10,
+            Carrier::Khz20,
+            Carrier::Khz24,
+            Carrier::Khz32,
+            Carrier::Khz40,
+            Carrier::Khz48,
+        ] {
             for bad in [0, 101, u32::MAX] {
                 assert_eq!(carrier.compare(bad), None);
             }
@@ -153,7 +166,14 @@ mod tests {
     }
     #[test]
     fn all_phase_ticks_map_to_valid_balanced_bins() {
-        for carrier in [Carrier::Khz10, Carrier::Khz20, Carrier::Khz24, Carrier::Khz32, Carrier::Khz40, Carrier::Khz48] {
+        for carrier in [
+            Carrier::Khz10,
+            Carrier::Khz20,
+            Carrier::Khz24,
+            Carrier::Khz32,
+            Carrier::Khz40,
+            Carrier::Khz48,
+        ] {
             let mut bins = [0u32; 32];
             for phase in 0..carrier.ticks() {
                 let bin = carrier.phase_bin(phase).unwrap();
@@ -171,7 +191,14 @@ mod tests {
     }
     #[test]
     fn bounded_counter_discriminator_accepts_reads_not_hidden_wraps() {
-        for carrier in [Carrier::Khz10, Carrier::Khz20, Carrier::Khz24, Carrier::Khz32, Carrier::Khz40, Carrier::Khz48] {
+        for carrier in [
+            Carrier::Khz10,
+            Carrier::Khz20,
+            Carrier::Khz24,
+            Carrier::Khz32,
+            Carrier::Khz40,
+            Carrier::Khz48,
+        ] {
             for delta in [492, 494, 512] {
                 assert!(carrier.continuous(8, delta));
             }
@@ -190,9 +217,14 @@ mod tests {
         }
         phases.sort();
         assert!(phases.windows(2).all(|pair| pair[0] != pair[1]));
-        let largest_gap = phases.windows(2).map(|pair| pair[1] - pair[0])
-            .chain(core::iter::once(phases[0] + Carrier::Khz32.ticks() - phases[49]))
-            .max().unwrap();
+        let largest_gap = phases
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .chain(core::iter::once(
+                phases[0] + Carrier::Khz32.ticks() - phases[49],
+            ))
+            .max()
+            .unwrap();
         assert_eq!(largest_gap, 80); // 1.25us at64MHz; no ripple-phase alias.
     }
     #[test]
@@ -202,10 +234,22 @@ mod tests {
             *phase = (index as u32 * 226 * 64) % Carrier::Khz40.ticks();
         }
         phases.sort();
-        assert_eq!(phases.iter().copied().collect::<std::collections::BTreeSet<_>>().len(), 25);
-        let largest_gap = phases.windows(2).map(|pair| pair[1] - pair[0])
-            .chain(core::iter::once(phases[0] + Carrier::Khz40.ticks() - phases[49]))
-            .max().unwrap();
+        assert_eq!(
+            phases
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            25
+        );
+        let largest_gap = phases
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .chain(core::iter::once(
+                phases[0] + Carrier::Khz40.ticks() - phases[49],
+            ))
+            .max()
+            .unwrap();
         assert_eq!(largest_gap, 64); // 1us at64MHz; 25 positions twice per block.
     }
     #[test]
@@ -216,9 +260,14 @@ mod tests {
         }
         phases.sort();
         assert!(phases.windows(2).all(|pair| pair[0] != pair[1]));
-        let largest_gap = phases.windows(2).map(|pair| pair[1] - pair[0])
-            .chain(core::iter::once(phases[0] + Carrier::Khz48.ticks() - phases[49]))
-            .max().unwrap();
+        let largest_gap = phases
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .chain(core::iter::once(
+                phases[0] + Carrier::Khz48.ticks() - phases[49],
+            ))
+            .max()
+            .unwrap();
         assert_eq!(largest_gap, 41); // 0.641us at64MHz; no ripple-phase alias.
     }
 }

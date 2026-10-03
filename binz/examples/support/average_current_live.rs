@@ -380,8 +380,13 @@ pub fn scan_raw(raw: [u16; 3], bus: u16, vref: u16, vcal: u32) -> bool {
                 reference as u16,
             );
             #[cfg(feature = "bench-phase-peak-stop")]
-            { phase_peak = observed_peak; }
-            #[cfg(all(feature = "bench-phase-current-census", not(feature = "bench-phase-peak-stop")))]
+            {
+                phase_peak = observed_peak;
+            }
+            #[cfg(all(
+                feature = "bench-phase-current-census",
+                not(feature = "bench-phase-peak-stop")
+            ))]
             let _ = observed_peak;
         }
         #[cfg(feature = "bench-fast-bus-sag")]
@@ -462,7 +467,11 @@ pub fn phase_peak_tripped() -> bool {
 #[cfg(feature = "bench-fast-sag-causal")]
 pub fn fast_bus_streak() -> u8 {
     // DMA is the sole writer while powered. Foreground only reads after stop.
-    unsafe { (&*core::ptr::addr_of!(FAST_BUS_SAG)).as_ref().map_or(0, |g| g.low_streak()) }
+    unsafe {
+        (&*core::ptr::addr_of!(FAST_BUS_SAG))
+            .as_ref()
+            .map_or(0, |g| g.low_streak())
+    }
 }
 #[cfg(feature = "bench-average-diagnostic")]
 pub fn dump<W: Write>(out: &mut W) {

@@ -4,6 +4,11 @@
 use super::*;
 use portable_atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+const CAMPAIGN_LIMIT_US: u32 = if cfg!(feature = "bench-hold-30s") {
+    29_999_000
+} else {
+    4_999_000
+};
 static NEXT_DUTY: AtomicU32 = AtomicU32::new(0);
 static APPLIED_DUTY: AtomicU32 = AtomicU32::new(0);
 static NEXT_BEMF_DUTY: AtomicU32 = AtomicU32::new(0);
@@ -232,8 +237,7 @@ pub fn set_phase(degrees: i32) -> bool {
     true
 }
 pub fn set_duty(duty: u32) -> bool {
-    if !(duty == 0
-        || (40..=ACQUISITION_DUTY_MAX).contains(&duty))
+    if !(duty == 0 || (40..=ACQUISITION_DUTY_MAX).contains(&duty))
         || owns()
         || get_idr(3, 1)
         || !powered_timer::outputs_disabled()
@@ -879,7 +883,7 @@ pub fn run(
     #[cfg(feature = "bench-startup-adc")]
     let mut last_scan = baseline_at;
     while owns() {
-        if abort() || clock_us().wrapping_sub(campaign_start) >= 4_999_000 {
+        if abort() || clock_us().wrapping_sub(campaign_start) >= CAMPAIGN_LIMIT_US {
             cancel();
             break;
         }

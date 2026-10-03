@@ -42,8 +42,12 @@ mod tests {
     use super::*;
 
     const ROLES: [(u8, u8, u8); 6] = [
-        (0, 1, 2), (2, 1, 0), (2, 0, 1),
-        (1, 0, 2), (1, 2, 0), (0, 2, 1),
+        (0, 1, 2),
+        (2, 1, 0),
+        (2, 0, 1),
+        (1, 0, 2),
+        (1, 2, 0),
+        (0, 2, 1),
     ];
 
     #[test]
@@ -51,15 +55,23 @@ mod tests {
         for step in 1..=6 {
             let old = ROLES[step - 1];
             let new = ROLES[physical_step(step as u8) as usize - 1];
-            assert_eq!(new, (
-                physical_phase(old.0), physical_phase(old.1), physical_phase(old.2)
-            ));
+            assert_eq!(
+                new,
+                (
+                    physical_phase(old.0),
+                    physical_phase(old.1),
+                    physical_phase(old.2)
+                )
+            );
         }
     }
 
     #[test]
     fn reverse_build_is_opposite_order() {
         #[cfg(feature = "bench-reverse-phases")]
-        assert_eq!((1..=6).map(physical_step).collect::<Vec<_>>(), [4, 3, 2, 1, 6, 5]);
+        assert_eq!(
+            (1..=6).map(physical_step).collect::<Vec<_>>(),
+            [4, 3, 2, 1, 6, 5]
+        );
     }
 }

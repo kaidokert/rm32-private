@@ -6,7 +6,9 @@ use stm32::Interrupt::{ADC_COMP, DMA1_CHANNEL1};
 static MODE: AtomicU32 = AtomicU32::new(0);
 static SEQ: AtomicU32 = AtomicU32::new(0);
 fn mark(n: u32) {
-    SEQ.store(SEQ.load(Relaxed) * 10 + n, Relaxed);
+    // Pack one event code per nibble. This keeps the diagnostic encoder
+    // division-free on the M0; the host prints/decodes the value as hex.
+    SEQ.store((SEQ.load(Relaxed) << 4) | (n & 0xF), Relaxed);
 }
 pub fn comp() -> bool {
     let mode = MODE.load(Relaxed);
@@ -57,7 +59,7 @@ pub fn check<W: Write>(out: &mut W) {
         NVIC::get_priority(DMA1_CHANNEL1),
     ];
     let enabled = [NVIC::is_enabled(ADC_COMP), NVIC::is_enabled(DMA1_CHANNEL1)];
-    for (mode, priority, expected) in [(1, 0, 123), (1, 64, 132), (2, 64, 213)] {
+    for (mode, priority, expected) in [(1, 0, 0x123), (1, 64, 0x132), (2, 64, 0x213)] {
         cortex_m::interrupt::free(|_| unsafe {
             NVIC::mask(ADC_COMP);
             NVIC::mask(DMA1_CHANNEL1);
@@ -74,7 +76,7 @@ pub fn check<W: Write>(out: &mut W) {
             NVIC::pend(ADC_COMP);
         });
         let start = t17();
-        while SEQ.load(Relaxed) < 100 && t17().wrapping_sub(start) < 1000 {}
+        while SEQ.load(Relaxed) < 0x100 && t17().wrapping_sub(start) < 1000 {}
         cortex_m::interrupt::free(|_| {
             NVIC::mask(ADC_COMP);
             NVIC::mask(DMA1_CHANNEL1);
@@ -84,7 +86,7 @@ pub fn check<W: Write>(out: &mut W) {
         });
         let _ = writeln!(
             out,
-            "DMAPRIORITYCASE mode={} comp={} dma={} guard={} sequence={} expected={} disabled={}",
+            "DMAPRIORITYCASE mode={} comp={} dma={} guard={} sequence={:03X} expected={:03X} disabled={}",
             mode,
             NVIC::get_priority(ADC_COMP),
             NVIC::get_priority(DMA1_CHANNEL1),

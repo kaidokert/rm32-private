@@ -132,8 +132,7 @@ pub fn fault_frame_dump<W: Write>(out: &mut W) {
         let _ = writeln!(
             out,
             "ADCFRAME reject={} ia={} ib={} ic={} bus={} vref={} age_us={} acquired_us={} cache_now_us={} pwm_stamp_us={} pwm_cnt={} pwm_arr={} pwm_ccr={} pwm_cr1={} coherent=1 fault_only=1 postrun_only=1",
-            f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7],
-            f[8], f[9], f[10], f[11], f[12], f[13]
+            f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8], f[9], f[10], f[11], f[12], f[13]
         );
     }
 }
@@ -281,7 +280,11 @@ pub fn interrupt() {
                         vcal,
                     ) {
                         #[cfg(feature = "bench-fast-bus-sag")]
-                        let reason = if average_current_live::fast_bus_tripped() { 26 } else { 25 };
+                        let reason = if average_current_live::fast_bus_tripped() {
+                            26
+                        } else {
+                            25
+                        };
                         #[cfg(not(feature = "bench-fast-bus-sag"))]
                         let reason = 25;
                         startup_fail(reason);
@@ -363,8 +366,11 @@ pub fn interrupt() {
                         let stamp = acquisition_now();
                         let pwm = unsafe { &*stm32::TIM1::ptr() };
                         [
-                            stamp, pwm.cnt().read().bits(), pwm.arr().read().bits(),
-                            pwm.ccr1().read().bits(), pwm.cr1().read().bits(),
+                            stamp,
+                            pwm.cnt().read().bits(),
+                            pwm.arr().read().bits(),
+                            pwm.ccr1().read().bits(),
+                            pwm.cr1().read().bits(),
                         ]
                     };
                     powered_timer::stream_fault(10);
@@ -378,11 +384,20 @@ pub fn interrupt() {
                             latest_policy::Error::Latched => 5,
                         };
                         LATEST_FAULT_FRAME = [
-                            code, raw[0] as u32, raw[1] as u32, raw[2] as u32,
-                            raw[3] as u32, raw[4] as u32,
-                            cache_now.wrapping_sub(acquired), acquired, cache_now,
-                            pwm_at_fault[0], pwm_at_fault[1], pwm_at_fault[2],
-                            pwm_at_fault[3], pwm_at_fault[4],
+                            code,
+                            raw[0] as u32,
+                            raw[1] as u32,
+                            raw[2] as u32,
+                            raw[3] as u32,
+                            raw[4] as u32,
+                            cache_now.wrapping_sub(acquired),
+                            acquired,
+                            cache_now,
+                            pwm_at_fault[0],
+                            pwm_at_fault[1],
+                            pwm_at_fault[2],
+                            pwm_at_fault[3],
+                            pwm_at_fault[4],
                         ];
                     }
                     #[cfg(not(feature = "bench-adc-latest-fault-frame"))]

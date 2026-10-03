@@ -27,7 +27,9 @@ static mut PWM_STOP: [u32; 7] = [0; 7];
 
 #[inline(always)]
 pub fn pwm_stop(row: [u32; 7]) {
-    unsafe { core::ptr::addr_of_mut!(PWM_STOP).write(row); }
+    unsafe {
+        core::ptr::addr_of_mut!(PWM_STOP).write(row);
+    }
 }
 
 #[inline(always)]
@@ -42,7 +44,9 @@ pub fn scan(acquired: u32, raw: [u16; 5], streak: u8) {
             .add((head as usize) & 7)
             .write([
                 acquired,
-                raw[0] as u32, raw[1] as u32, raw[2] as u32,
+                raw[0] as u32,
+                raw[1] as u32,
+                raw[2] as u32,
                 raw[3] as u32,
                 raw[4] as u32,
             ]);
@@ -124,9 +128,21 @@ pub fn record(
             core::ptr::addr_of_mut!(THIRD_EVENTS).write(recent());
         }
         let row = [
-            acquired, service, raw[3] as u32, raw[4] as u32,
-            raw[0] as u32, raw[1] as u32, raw[2] as u32,
-            controller[4], event[1], event[2], controller[0], controller[1], controller[2], controller[3], commits,
+            acquired,
+            service,
+            raw[3] as u32,
+            raw[4] as u32,
+            raw[0] as u32,
+            raw[1] as u32,
+            raw[2] as u32,
+            controller[4],
+            event[1],
+            event[2],
+            controller[0],
+            controller[1],
+            controller[2],
+            controller[3],
+            commits,
         ];
         core::ptr::addr_of_mut!(ROWS)
             .cast::<[u32; 15]>()
@@ -138,40 +154,85 @@ pub fn record(
 
 pub fn dump<W: Write>(out: &mut W, reason: u32) {
     let n = unsafe { core::ptr::addr_of!(ROWS_N).read() }.min(3);
-    let _ = writeln!(out,
+    let _ = writeln!(
+        out,
         "SAGCAUSE n={} stop_reason={} fields=acquired_us,service_us,bus,vref,ia,ib,ic,duty,last_event_us,sector,average_half_us,this_zc_half_us,tim2_cnt,core_step,commits fault_triggered={} no_control_authority=1",
-        n, reason, (n == 3 && reason == 26) as u8);
+        n,
+        reason,
+        (n == 3 && reason == 26) as u8
+    );
     for i in 0..n as usize {
         let r = unsafe { core::ptr::addr_of!(ROWS).cast::<[u32; 15]>().add(i).read() };
-        let _ = writeln!(out,
+        let _ = writeln!(
+            out,
             "SAGROW streak={} acquired_us={} service_us={} bus={} vref={} ia={} ib={} ic={} duty={} last_event_us={} sector={} average_half_us={} this_zc_half_us={} tim2_cnt={} core_step={} commits={}",
-            i+1,r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],r[8],r[9],r[10],r[11],r[12],r[13],r[14]);
+            i + 1,
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            r[4],
+            r[5],
+            r[6],
+            r[7],
+            r[8],
+            r[9],
+            r[10],
+            r[11],
+            r[12],
+            r[13],
+            r[14]
+        );
     }
     if n != 0 {
         let first = unsafe { core::ptr::addr_of!(FIRST_EVENTS).read() };
-        let _ = writeln!(out,
+        let _ = writeln!(
+            out,
             "SAGEVENTS at=first_low stamps_us={},{},{},{},{},{},{},{} accepted_guard_timestamps=1 chronological=1",
-            first[0],first[1],first[2],first[3],first[4],first[5],first[6],first[7]);
+            first[0], first[1], first[2], first[3], first[4], first[5], first[6], first[7]
+        );
     }
     if n == 3 {
         let p = unsafe { core::ptr::addr_of!(PWM_STOP).read() };
-        let _ = writeln!(out,
+        let _ = writeln!(
+            out,
             "SAGPWM seen={} stamp_us={} tim1_cnt={} tim1_arr={} ccr1={} ccr2={} ccr3={} cr1={} terminal_dma_service=1 sequential_adc_apertures=1",
-            (p[2] != 0) as u8, p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+            (p[2] != 0) as u8,
+            p[0],
+            p[1],
+            p[2],
+            p[3],
+            p[4],
+            p[5],
+            p[6]
+        );
         let third = unsafe { core::ptr::addr_of!(THIRD_EVENTS).read() };
-        let _ = writeln!(out,
+        let _ = writeln!(
+            out,
             "SAGEVENTS at=third_low stamps_us={},{},{},{},{},{},{},{} accepted_guard_timestamps=1 chronological=1",
-            third[0],third[1],third[2],third[3],third[4],third[5],third[6],third[7]);
+            third[0], third[1], third[2], third[3], third[4], third[5], third[6], third[7]
+        );
         let count = unsafe { core::ptr::addr_of!(SCAN_COUNT).read() }.min(8);
         let head = unsafe { core::ptr::addr_of!(SCAN_HEAD).read() };
-        let _ = writeln!(out,
+        let _ = writeln!(
+            out,
             "SAGSCANS n={} frozen={} fields=acquired_us,ia,ib,ic,bus,vref chronological=1",
-            count, unsafe { core::ptr::addr_of!(SCAN_FROZEN).read() } as u8);
+            count,
+            unsafe { core::ptr::addr_of!(SCAN_FROZEN).read() } as u8
+        );
         for i in 0..count {
             let index = (head.wrapping_sub(count).wrapping_add(i) as usize) & 7;
-            let row = unsafe { core::ptr::addr_of!(SCAN_RING).cast::<[u32; 6]>().add(index).read() };
-            let _ = writeln!(out, "SAGSCAN ordinal={} acquired_us={} ia={} ib={} ic={} bus={} vref={}",
-                i, row[0], row[1], row[2], row[3], row[4], row[5]);
+            let row = unsafe {
+                core::ptr::addr_of!(SCAN_RING)
+                    .cast::<[u32; 6]>()
+                    .add(index)
+                    .read()
+            };
+            let _ = writeln!(
+                out,
+                "SAGSCAN ordinal={} acquired_us={} ia={} ib={} ic={} bus={} vref={}",
+                i, row[0], row[1], row[2], row[3], row[4], row[5]
+            );
         }
     }
 }

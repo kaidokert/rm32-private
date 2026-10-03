@@ -242,7 +242,9 @@ fn follow_sweep(
         unsafe {
             core::ptr::write_volatile(
                 COMP2_CSR,
-                (c.saved & !(15 << 4 | 3 << 8 | 1 << 15)) | ((6 + crate::phase_direction::physical_phase(phase as u8) as u32) << 4) | (2 << 8),
+                (c.saved & !(15 << 4 | 3 << 8 | 1 << 15))
+                    | ((6 + crate::phase_direction::physical_phase(phase as u8) as u32) << 4)
+                    | (2 << 8),
             );
         }
         let switched = t17();
@@ -394,7 +396,9 @@ fn continue_filters(
         unsafe {
             core::ptr::write_volatile(
                 COMP2_CSR,
-                (saved & !(15 << 4 | 3 << 8 | 1 << 15)) | ((6 + crate::phase_direction::physical_phase(phase as u8) as u32) << 4) | (2 << 8),
+                (saved & !(15 << 4 | 3 << 8 | 1 << 15))
+                    | ((6 + crate::phase_direction::physical_phase(phase as u8) as u32) << 4)
+                    | (2 << 8),
             );
         }
         let switched = t17();
@@ -834,7 +838,9 @@ fn acquire_inner(awake: bool, recovery: bool, duty: u32) -> Option<(flying_acqui
             unsafe {
                 core::ptr::write_volatile(
                     COMP2_CSR,
-                    (saved & !(15 << 4 | 3 << 8 | 1 << 15)) | ((6 + crate::phase_direction::physical_phase(phase as u8) as u32) << 4) | (2 << 8),
+                    (saved & !(15 << 4 | 3 << 8 | 1 << 15))
+                        | ((6 + crate::phase_direction::physical_phase(phase as u8) as u32) << 4)
+                        | (2 << 8),
                 );
             }
             let switched = t17();
