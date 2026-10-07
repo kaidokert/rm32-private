@@ -112,6 +112,22 @@ pub trait MotorState {
             self.set_motor_mode(MotorMode::Armed);
         }
     }
+
+    /// `transition` for a caller that NO context writing `motor_mode` can
+    /// preempt (the commutation-timer ISR): nothing can run between its
+    /// read and its write, so an implementation may use a plain load +
+    /// store instead of a compare-and-swap (AM32 assigns the plain globals
+    /// there). Lower-priority writers keep using the atomic versions.
+    /// Caveat: L431 `adjust_irq_priorities` drops the commutation timer one
+    /// level below the DShot DMA ISR; that stays sound only while the DMA
+    /// path never writes `motor_mode` or `zero_crosses`.
+    fn transition_isr0(&self, event: MotorEvent) {
+        self.transition(event);
+    }
+    /// `set_old_routine` for the highest-priority ISR (see `transition_isr0`).
+    fn set_old_routine_isr0(&self, v: bool) {
+        self.set_old_routine(v);
+    }
 }
 
 /// ISR-produced timing and state data consumed by the main loop.
@@ -123,6 +139,12 @@ pub trait IsrTiming {
     fn zero_crosses(&self) -> u32;
     fn set_zero_crosses(&self, v: u32);
     fn increment_zero_crosses(&self);
+    /// `increment_zero_crosses` for the highest-priority ISR: plain load +
+    /// store (AM32 `if (zero_crosses < 10000) zero_crosses++`). See
+    /// `MotorState::transition_isr0` for the contract.
+    fn increment_zero_crosses_isr0(&self) {
+        self.increment_zero_crosses();
+    }
     fn commutation_interval(&self) -> u32;
     fn set_commutation_interval(&self, v: u32);
     fn e_com_time(&self) -> i32;

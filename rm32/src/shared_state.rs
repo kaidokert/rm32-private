@@ -729,6 +729,28 @@ impl crate::shared_comm::MotorState for SharedState {
     fn set_stepper_sine(&self, v: bool) {
         SharedState::set_stepper_sine(self, v);
     }
+    // Highest-priority-ISR variants (contract on the trait): no other
+    // context can run between this load and store. On M0 every lower-
+    // priority CAS runs with interrupts masked (critical-section fallback);
+    // on M4 exception entry clears the exclusive monitor, so a preempted
+    // lower-priority LDREX/STREX retries against the value stored here.
+    fn transition_isr0(&self, event: crate::motor_mode::MotorEvent) {
+        let mode = MotorMode::from_u8(self.motor_mode.load(Ordering::Relaxed));
+        let new = mode.transition(event);
+        if new != mode {
+            self.motor_mode.store(new as u8, Ordering::Release);
+        }
+    }
+    fn set_old_routine_isr0(&self, v: bool) {
+        let mode = MotorMode::from_u8(self.motor_mode.load(Ordering::Relaxed));
+        if v && mode.is_running() {
+            self.motor_mode
+                .store(MotorMode::OldRoutine as u8, Ordering::Release);
+        } else if !v && mode.is_old_routine() {
+            self.motor_mode
+                .store(MotorMode::Running as u8, Ordering::Release);
+        }
+    }
 }
 
 impl crate::shared_comm::IsrTiming for SharedState {
@@ -740,6 +762,12 @@ impl crate::shared_comm::IsrTiming for SharedState {
     }
     fn increment_zero_crosses(&self) {
         self.increment_zero_crosses();
+    }
+    fn increment_zero_crosses_isr0(&self) {
+        let v = self.zero_crosses.load(Ordering::Relaxed);
+        if v < 10000 {
+            self.zero_crosses.store(v + 1, Ordering::Release);
+        }
     }
     fn commutation_interval(&self) -> u32 {
         self.commutation_interval()

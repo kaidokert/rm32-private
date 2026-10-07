@@ -225,6 +225,17 @@ impl PhasePositions {
         }
     }
 
+    /// AM32 sine entry: phase A at `(step - 1) * 60 + enter_sine_angle`
+    /// (180), B/C at +119 / +239.
+    pub fn from_step(step: u8) -> Self {
+        let a = ((step.clamp(1, 6) as i16 - 1) * 60 + 180) % 360;
+        Self {
+            a,
+            b: (a + 119) % 360,
+            c: (a + 239) % 360,
+        }
+    }
+
     /// Advance phase positions by one step.
     /// Forward=true decrements (motor convention), forward=false increments.
     pub fn advance(&mut self, forward: bool) {

@@ -84,6 +84,61 @@ struct BoardYaml {
     #[serde(default)]
     custom_led: bool,
     bemf_pins: BemfPinsYaml,
+    // ---- rm32_stm32-only board extensions (not part of rm32::board) ----
+    /// false = no AM32 bootloader on this board: link the app at the
+    /// flash base (0x08000000) instead of 0x08001000.
+    #[serde(default = "default_true")]
+    bootloader: bool,
+    /// Gate-driver ENABLE pin (e.g. "PD1"), driven high only while armed.
+    #[serde(default)]
+    gate_enable_pin: Option<String>,
+    /// Gate-driver nFAULT input (open-drain, active low, e.g. "PB14").
+    #[serde(default)]
+    nfault_pin: Option<String>,
+    /// Low-side shunt CSA channels summed for a DC-link current estimate
+    /// (e.g. [0, 1, 4]); empty = AM32 single `current_adc_channel`.
+    #[serde(default)]
+    current_shunt_channels: Vec<u8>,
+    /// Bench baseline motor direction (benchuart builds only).
+    #[serde(default)]
+    bench_dir_reversed: bool,
+    /// Bench baseline AM32 sine start (benchuart builds only).
+    #[serde(default)]
+    bench_sine_start: bool,
+    /// Bench baseline PWM carrier in kHz (AM32 pwm_frequency; 0 = default).
+    #[serde(default)]
+    bench_pwm_khz: u8,
+    /// Bench baseline: AM32 variable_pwm = 0 (fixed carrier).
+    #[serde(default)]
+    bench_fixed_pwm: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// "PD1" -> (port index A=0.., pin number).
+fn parse_pin(p: &str) -> (u8, u8) {
+    let b = p.as_bytes();
+    assert!(
+        b.len() >= 3 && b[0] == b'P' && (b'A'..=b'F').contains(&b[1]),
+        "bad pin name {p}"
+    );
+    let n: u8 = p[2..]
+        .parse()
+        .unwrap_or_else(|_| panic!("bad pin name {p}"));
+    assert!(n < 16, "bad pin number in {p}");
+    (b[1] - b'A', n)
+}
+
+fn pin_opt(p: &Option<String>) -> String {
+    match p {
+        Some(p) => {
+            let (port, pin) = parse_pin(p);
+            format!("Some(rm32_stm32::board_ext::PinRef {{ port: {port}, pin: {pin} }})")
+        }
+        None => "None".to_string(),
+    }
 }
 
 fn default_voltage_divider() -> u16 {
@@ -251,8 +306,11 @@ fn main() {
     let dest = Path::new(&out_dir).join("board_config.rs");
 
     // Determine board YAML path
+    // Unconditional: printed only when BOARD was set, a default-board
+    // build never registered the env var, so a later `BOARD=...` build
+    // silently reused the cached default-board config and memory.x.
+    println!("cargo:rerun-if-env-changed=BOARD");
     let board_path = if let Ok(path) = env::var("BOARD") {
-        println!("cargo:rerun-if-env-changed=BOARD");
         path
     } else {
         // Default based on active feature
@@ -334,6 +392,17 @@ pub const BOARD: rm32::board::BoardConfig = rm32::board::BoardConfig {{
         phase_c: {bemf_c:#010x},
     }},
 }};
+
+/// rm32_stm32-only board extensions (see rm32_stm32::board_ext).
+pub const BOARD_EXT: rm32_stm32::board_ext::BoardExt = rm32_stm32::board_ext::BoardExt {{
+    gate_enable: {gate_enable},
+    nfault: {nfault},
+    three_shunt: {three_shunt},
+    bench_dir_reversed: {bench_dir_reversed},
+    bench_sine_start: {bench_sine_start},
+    bench_pwm_khz: {bench_pwm_khz},
+    bench_fixed_pwm: {bench_fixed_pwm},
+}};
 "#,
         board_path = board_path,
         name = board.name,
@@ -356,7 +425,32 @@ pub const BOARD: rm32::board::BoardConfig = rm32::board::BoardConfig {{
         dual_adc = board.dual_adc,
         bridge_enable = board.bridge_enable,
         custom_led = board.custom_led,
+        gate_enable = pin_opt(&board.gate_enable_pin),
+        nfault = pin_opt(&board.nfault_pin),
+        three_shunt = !board.current_shunt_channels.is_empty(),
+        bench_dir_reversed = board.bench_dir_reversed,
+        bench_sine_start = board.bench_sine_start,
+        bench_pwm_khz = board.bench_pwm_khz,
+        bench_fixed_pwm = board.bench_fixed_pwm,
     );
+    if !board.current_shunt_channels.is_empty() {
+        assert!(
+            board.mcu == "stm32g071" && board.current_shunt_channels == [0, 1, 4],
+            "current_shunt_channels: only the G071 [0, 1, 4] sequence is implemented"
+        );
+    }
+    // Library-side cfg so the MCU layer compiles the 3-shunt ADC path.
+    println!("cargo::rustc-check-cfg=cfg(rm32_three_shunt)");
+    if !board.current_shunt_channels.is_empty() {
+        println!("cargo:rustc-cfg=rm32_three_shunt");
+    }
+    // Library-side cfg for PWM/enable-style bridges: lets the commutation
+    // path compile out the writer the board cannot use (binz WCET gate:
+    // the sequential writer was on the COM ISR's static longest path).
+    println!("cargo::rustc-check-cfg=cfg(rm32_bridge_enable)");
+    if board.bridge_enable {
+        println!("cargo:rustc-cfg=rm32_bridge_enable");
+    }
 
     fs::write(&dest, code).unwrap();
 
@@ -385,12 +479,20 @@ pub const BOARD: rm32::board::BoardConfig = rm32::board::BoardConfig {{
              Size reduction required before F051 hardware bringup."
         );
     }
+    // No-bootloader boards (binz bench, SWD-flashed at the flash base) get
+    // the 4K the bootloader would occupy; the EEPROM page address is
+    // unchanged.
+    let (origin, layout, flash_app_kb) = if board.bootloader {
+        ("0x08001000", "AM32 4K bootloader below", flash_app_kb)
+    } else {
+        ("0x08000000", "no bootloader", flash_app_kb + 4)
+    };
     let memory_x = format!(
         "/* Auto-generated by build.rs for {mcu} — do not edit.\n\
-         * App @ 0x08001000 (AM32 4K bootloader below), EEPROM page above. */\n\
+         * App @ {origin} ({layout}), EEPROM page above. */\n\
          MEMORY\n\
          {{\n\
-         \x20 FLASH : ORIGIN = 0x08001000, LENGTH = {flash_app_kb}K\n\
+         \x20 FLASH : ORIGIN = {origin}, LENGTH = {flash_app_kb}K\n\
          \x20 RAM   : ORIGIN = 0x20000000, LENGTH = {ram_kb}K\n\
          }}\n",
         mcu = board.mcu,

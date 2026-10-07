@@ -14,5 +14,9 @@ eeprom.motor_poles=14
 eeprom.stall_protection=1
 
 @sequence
-# High throttle (> 200) forces phase_A_position=0 → changeover
+# High throttle (> 200) forces phase_A_position=0 → changeover. The stepper
+# reads adjusted_input (AM32 `input`, post sine-start mapping), which the
+# input stage publishes AFTER the stepper runs in each pass (firmware main
+# loop and harness alike), so the changeover lands one pass later.
+tick 1 | throttle=500 |
 tick 1 | throttle=500 | stepper_sine=0 running=1 old_routine=1 step=5 commutation_interval=9000

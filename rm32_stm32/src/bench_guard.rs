@@ -61,7 +61,78 @@ pub enum KillReason {
     Overcurrent,
     VbatSag,
     OverVolt,
+    /// Bus fell more than `sag_pm` below its running baseline (a ~256 ms
+    /// average of the bus; the rest voltage before a run starts).
+    RelSag,
+    /// Gate driver nFAULT asserted while enabled.
+    DriverFault,
+    /// Fast current EWMA above `oc_surge_ma` (split guard).
+    Surge,
 }
+
+/// Fixed per-board guard limits — bypass the PSU/battery auto-profile.
+/// Used by boards whose bench supply does not fit the L431 2S/3S
+/// classification (binz: ~12 V PSU with a 700 mA current clamp).
+#[derive(Clone, Copy)]
+pub struct GuardLimits {
+    pub vbat_floor_mv: u16,
+    pub vbat_debounce_ms: u32,
+    pub oc_kill_ma: i16,
+    pub oc_debounce_ms: u32,
+    /// Split current guard (firmware50's shape): when non-zero, the OC check
+    /// runs on per-ms samples fed via `feed_current_ma` — a slow EWMA
+    /// (~256 ms) against `oc_kill_ma` for a sustained overload and a fast
+    /// EWMA (~16 ms) against this surge limit — instead of one short window
+    /// on the 50 ms moving average, which could not tell an acceleration
+    /// surge from a sustained average (binz 57.5 %: 2.24 A trip 0.18 s into
+    /// a 1.85 A hold). 0 = the single check.
+    pub oc_surge_ma: i16,
+    pub ov_kill_mv: u16,
+    pub ov_debounce_ms: u32,
+    /// Relative sag kill, in permille: running bus below (1000 - sag_pm)/1000 of the rest
+    /// peak. 0 = off.
+    pub sag_pm: u16,
+    pub sag_debounce_ms: u32,
+}
+
+/// binz limits on the bench PSU (NUCLEO-G071RB + DRV8304H, 5 A clamp):
+/// 4.5 A sustained (slow EWMA) and 4.8 A surge (fast EWMA) current kills
+/// below the clamp, so the firmware trips before the supply folds; >10 %
+/// bus sag vs the running bus reference; 9 V absolute floor (firmware50's
+/// floor); 14 V over-voltage.
+pub const BINZ_BRINGUP: GuardLimits = GuardLimits {
+    vbat_floor_mv: 9_000,
+    vbat_debounce_ms: 5,
+    oc_kill_ma: 4500, // slow EWMA (sustained), PSU clamp 5 A
+    oc_debounce_ms: 1,
+    oc_surge_ma: 4800, // fast EWMA, under the 5 A clamp
+    ov_kill_mv: 14_000,
+    ov_debounce_ms: 60,
+    sag_pm: 100,
+    sag_debounce_ms: 5,
+};
+
+/// binz on the 3S battery (operator, 2026-10-06): firmware50's ENV-98
+/// battery spec — 8 A metered sustained allowance (slow EWMA), surge
+/// ceiling 1.5x that (fast EWMA, firmware50 ENV-97), 9 V floor. Sag,
+/// over-voltage and fault guards as `BINZ_BRINGUP`.
+pub const BINZ_BATTERY: GuardLimits = GuardLimits {
+    oc_kill_ma: 8000,
+    // Operator, 2026-10-07: 12 -> 13 -> 15 A to test the 10 -> 100 % slam (killed
+    // at 12 A at +0.25 s with the rotor locked). Sensing range: 7 mOhm x
+    // gain 10 = 70 mV/A around VREF/2, clipping near 23 A per phase.
+    oc_surge_ma: 15_000,
+    // Operator, 2026-10-07: 10 % -> 15 % -> 17.5 % to test full slams on the
+    // battery (10 -> 90 % passes at 15 % with a 13.2 % dip; 10 -> 100 %
+    // dipped 16 % before the 12 A surge guard killed it).
+    sag_pm: 175,
+    ..BINZ_BRINGUP
+};
+
+/// DRV8304 wake time after ENABLE rises (datasheet tWAKE <= 1 ms); nFAULT
+/// is ignored this long after the gate driver is enabled.
+const FAULT_WAKE_MS: u32 = 2;
+const FAULT_DEBOUNCE_MS: u32 = 1;
 
 pub struct BenchGuard {
     cyc_per_ms: u32,
@@ -80,6 +151,20 @@ pub struct BenchGuard {
     /// PSU profile → OVOLT trip at 10.8 V once pack voltage recovered
     /// (measured: killed=1 on a healthy 12.2 V pack at 70 %).
     rest_peak_mv: u16,
+    /// Fixed limits (None = L431 auto-profile).
+    limits: Option<GuardLimits>,
+    sag_since: Option<u32>,
+    gate_on_since: Option<u32>,
+    fault_since: Option<u32>,
+    /// Split-guard EWMAs of the per-ms current, mA x256 (None = unprimed).
+    ew_fast: Option<i32>,
+    ew_slow: i32,
+    surge_since: Option<u32>,
+    /// Relative-sag reference: the bus in mV x256, a ~256 ms average while
+    /// running (updated once per ms, AFTER each test) and the bus itself
+    /// while stopped. 0 = unprimed.
+    ew_bus: i32,
+    ew_bus_at: u32,
 }
 
 impl BenchGuard {
@@ -92,7 +177,162 @@ impl BenchGuard {
             latched: None,
             battery: None,
             rest_peak_mv: 0,
+            limits: None,
+            sag_since: None,
+            gate_on_since: None,
+            fault_since: None,
+            ew_fast: None,
+            ew_slow: 0,
+            surge_since: None,
+            ew_bus: 0,
+            ew_bus_at: 0,
         }
+    }
+
+    /// Guard with fixed limits (no source classification).
+    pub const fn with_limits(cpu_mhz: u32, limits: GuardLimits) -> Self {
+        let mut g = Self::new(cpu_mhz);
+        g.limits = Some(limits);
+        g
+    }
+
+    /// Feed one per-ms current sample (mA) to the split guard's EWMAs.
+    pub fn feed_current_ma(&mut self, ma: i32) {
+        let x = ma.clamp(-30_000, 30_000) << 8;
+        match self.ew_fast {
+            None => {
+                self.ew_fast = Some(x);
+                self.ew_slow = x;
+            }
+            Some(f) => {
+                self.ew_fast = Some(f + ((x - f) >> 4)); // tau ~16 ms
+                self.ew_slow += (x - self.ew_slow) >> 8; // tau ~256 ms
+            }
+        }
+    }
+
+    /// Split-guard averages (fast, slow) in mA, for the bench report.
+    pub fn current_ewmas(&self) -> (i32, i32) {
+        (self.ew_fast.unwrap_or(0) >> 8, self.ew_slow >> 8)
+    }
+
+    /// Pre-run rest peak (mV), for the reports.
+    pub fn rest_peak_mv(&self) -> u16 {
+        self.rest_peak_mv
+    }
+
+    /// The relative-sag reference (mV) the bus is judged against.
+    pub fn sag_ref_mv(&self) -> i32 {
+        self.ew_bus >> 8
+    }
+
+    /// Gate-driver fault check. `gate_on` = driver ENABLE high, `fault` =
+    /// nFAULT asserted. Ignored for `FAULT_WAKE_MS` after enable.
+    pub fn fault_tick(&mut self, now_cyc: u32, gate_on: bool, fault: bool) -> Option<KillReason> {
+        if self.latched.is_some() {
+            return None;
+        }
+        if !gate_on {
+            self.gate_on_since = None;
+            self.fault_since = None;
+            return None;
+        }
+        let since = *self.gate_on_since.get_or_insert(now_cyc);
+        let awake = now_cyc.wrapping_sub(since) >= FAULT_WAKE_MS * self.cyc_per_ms;
+        let r = Self::debounce(
+            &mut self.fault_since,
+            awake && fault,
+            now_cyc,
+            FAULT_DEBOUNCE_MS * self.cyc_per_ms,
+            KillReason::DriverFault,
+        );
+        if r.is_some() {
+            self.latched = r;
+        }
+        r
+    }
+
+    fn tick_fixed(
+        &mut self,
+        l: GuardLimits,
+        now_cyc: u32,
+        running: bool,
+        vbat_mv: u16,
+        current_ma: i16,
+    ) -> Option<KillReason> {
+        // Rest peak tracks only while stopped, so a run is judged against
+        // the supply's own unloaded voltage just before it.
+        if !running && vbat_mv > self.rest_peak_mv {
+            self.rest_peak_mv = vbat_mv;
+        }
+        // Relative-sag reference (operator spec, binz 10 % cap: anchor to the
+        // SYNCED operating point, not the no-load voltage; firmware50 E146
+        // did the same with a ~207 ms average). Its purpose is the desync
+        // current surge, which collapses the bus within milliseconds; a load
+        // that draws the bus down slowly takes the reference with it, and the
+        // slow direction is the absolute floor's job. On the battery the
+        // pack's steady IR drop alone reached 10 % of rest at 6.9 A locked
+        // (binz 97.5 %), which the rest-anchored check killed.
+        let x = (vbat_mv as i32) << 8;
+        if !running || self.ew_bus == 0 {
+            self.ew_bus = x;
+            self.ew_bus_at = now_cyc;
+        }
+        let bus_ref = (self.ew_bus >> 8) as u32;
+        let checks = [
+            (
+                running && vbat_mv > 0 && vbat_mv < l.vbat_floor_mv,
+                l.vbat_debounce_ms,
+                KillReason::VbatSag,
+            ),
+            (
+                running
+                    && l.sag_pm > 0
+                    && bus_ref > 0
+                    && (vbat_mv as u32) * 1000 < bus_ref * (1000 - l.sag_pm as u32),
+                l.sag_debounce_ms,
+                KillReason::RelSag,
+            ),
+            (
+                vbat_mv > l.ov_kill_mv,
+                l.ov_debounce_ms,
+                KillReason::OverVolt,
+            ),
+            (
+                if l.oc_surge_ma > 0 {
+                    (self.ew_slow >> 8) > l.oc_kill_ma as i32
+                } else {
+                    current_ma > l.oc_kill_ma
+                },
+                l.oc_debounce_ms,
+                KillReason::Overcurrent,
+            ),
+            (
+                l.oc_surge_ma > 0 && (self.ew_fast.unwrap_or(0) >> 8) > l.oc_surge_ma as i32,
+                l.oc_debounce_ms,
+                KillReason::Surge,
+            ),
+        ];
+        // Update AFTER the test, once per ms (rate-independent tau ~256 ms),
+        // so a collapsing sample cannot drag the reference down onto itself.
+        if running && now_cyc.wrapping_sub(self.ew_bus_at) >= self.cyc_per_ms {
+            self.ew_bus_at = now_cyc;
+            self.ew_bus += (x - self.ew_bus) >> 8;
+        }
+        for (active, ms, reason) in checks {
+            let slot = match reason {
+                KillReason::VbatSag => &mut self.vbat_low_since,
+                KillReason::RelSag => &mut self.sag_since,
+                KillReason::OverVolt => &mut self.ov_since,
+                KillReason::Surge => &mut self.surge_since,
+                _ => &mut self.oc_since,
+            };
+            if let Some(r) = Self::debounce(slot, active, now_cyc, ms * self.cyc_per_ms, reason) {
+                self.latched = Some(r);
+                return Some(r);
+            }
+        }
+        None
     }
 
     pub fn latched(&self) -> Option<KillReason> {
@@ -120,6 +360,9 @@ impl BenchGuard {
     ) -> Option<KillReason> {
         if self.latched.is_some() {
             return None;
+        }
+        if let Some(l) = self.limits {
+            return self.tick_fixed(l, now_cyc, running, vbat_mv, current_ma);
         }
 
         // Source classification from the REST peak (see rest_peak_mv):

@@ -1,0 +1,29 @@
+# binz bench: NUCLEO-G071RB + BOOSTXL-DRV8304H (6x PWM, hardware-strapped
+# "H" variant, no SPI). Pinout = AM32 target DRV8304H_G071
+# (HARDWARE_GROUP_G0_DRV8304H): G0_A gates, comparator A/B swapped vs G0_A.
+# SWD-flashed at 0x08000000 — there is no AM32 bootloader on this board.
+name: "binz G071 DRV8304H"
+mcu: stm32g071
+dead_time: 26            # firmware50 qualified 0-100 % on this board at 26 (AM32 DRV8304H_G071 = 60: 9 % of a 48 kHz period on body diodes, +10 % current)
+voltage_divider: 1194    # bus divider x11.94 (firmware50 BUS_DIVIDER_X100)
+# 3-shunt current is reported as metered mA + 2000 (mcu_g071::adc), so
+# AdcCount::to_milliamps(1600, 80) = mA (see adc.rs three_shunt docs).
+millivolt_per_amp: 80
+current_offset: 1600
+current_adc_channel: 4
+voltage_adc_channel: 6
+has_led: false
+bemf_pins:
+  phase_a: PB3   # COMP2 INM IO1 (VSENA)
+  phase_b: PB7   # COMP2 INM IO2 (VSENB)
+  phase_c: PA2   # COMP2 INM IO3 (VSENC)
+  common: PA3    # COMP2 INP IO3 (virtual neutral)
+# ---- rm32_stm32 board extensions ----
+bootloader: false
+gate_enable_pin: PD1     # DRV8304 ENABLE, high only while armed
+nfault_pin: PB14         # DRV8304 nFAULT, open-drain active low
+current_shunt_channels: [0, 1, 4]   # PA0, PA1, PA4 low-side CSAs
+bench_dir_reversed: true # operator-confirmed rotation (firmware50 Wiring=Reverse)
+bench_pwm_khz: 48       # firmware50's run carrier (AM32 pwm_frequency); 24 kHz ripple on this low-L motor
+bench_fixed_pwm: true    # AM32 variable_pwm=0: hold 48 kHz (variable maps ARR..ARR/2 = 48-96 kHz at pwm_frequency 48)
+bench_sine_start: true   # AM32 sine start: the six-step stalled-rotor kick trips the 500 mA bring-up kill

@@ -28,6 +28,15 @@ pub trait PwmOutput {
 /// Comparator (BEMF sensing) interface
 pub trait Comparator {
     fn output_level(&self) -> bool;
+    /// One read of the zero-cross persistence filter (`bemf_zero_cross`).
+    /// Defaults to `output_level`; a port overrides it when its inlined read
+    /// is much faster than the reference's, so the filter's TIME window
+    /// (filter_level reads) matches the reference rather than only its
+    /// read count.
+    #[inline]
+    fn filter_read(&self) -> bool {
+        self.output_level()
+    }
     /// Set the commutation step and rising/falling edge for BEMF sensing.
     fn set_step(&mut self, step: u8, rising: bool);
     fn change_input(&mut self);

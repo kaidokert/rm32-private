@@ -5,11 +5,17 @@ edition = "2021"
 
 [dependencies]
 rm32 = { path = "../rm32", features = ["bench-diag"] }
-cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+# >= 0.7.8: with cortex-m 0.7.7 (everything else unchanged) the G071 image
+# watchdog-loops at `interrupt::enable()` (core stuck in TIM6 with TIM6
+# pending again). Bisected 2026-10-04, see BINZ_BRINGUP.md "Cargo.lock
+# boot loop". rm32_stm32/Cargo.lock is gitignored, so pin the floor here.
+cortex-m = { version = "0.7.8", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 embedded-hal = "1.0"
 portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
-rtt-target = "0.5"
+# Pinned exactly: `rm32_stm32::dline` calls the #[doc(hidden)]
+# `print_impl::write_str`, which is not covered by semver.
+rtt-target = "=0.5.0"
 heapless = "0.8"
 
 # MCU-specific HAL crates (only one active at a time)
@@ -73,5 +79,11 @@ serde_yaml = "0.9"
 
 [profile.release]
 opt-level = "s"
-lto = true
+# Thin LTO + one codegen unit (binz G071 bring-up): with fat LTO every ISR
+# root inlines its callees, so the M0 WCET gate (scripts/binz_wcet.py via
+# isr_cycles.py, fail-closed on unreviewed loops) cannot attribute loop
+# bounds; the binz qualification images were built this way. This changes
+# the L431 image too: re-qualify Vimdrones (bf_ladder + bf_slam) on it.
+lto = "thin"
+codegen-units = 1
 debug = true

@@ -17,6 +17,17 @@ pub fn init(
     let dp = stm32::Peripherals::take().unwrap();
     let _cp = cortex_m::Peripherals::take().unwrap();
     let mut rcc = dp.RCC.freeze(RccConfig::pll());
+    // Flash prefetch buffer ON — AM32 Mcu/g071/Src/peripherals.c:29
+    // (`FLASH->ACR |= FLASH_ACR_PRFTEN`). rm32 never set it, so at 64 MHz /
+    // 2 wait states every sequential line fetch and branch target paid the
+    // full latency: the 20 kHz tick alone averaged 1610 cycles (25 us) idle
+    // and overran ~37 % of ticks at 30 % duty, starving the main loop into
+    // IWDG resets above ~80 % (binz). Read-modify-write ONLY: ACR bit 18
+    // (DBG_SWEN) resets to 1 and a wholesale write disables SWD.
+    unsafe {
+        let flash = &*stm32::FLASH::ptr();
+        flash.acr().modify(|r, w| w.bits(r.bits() | (1 << 8))); // PRFTEN
+    }
     let gpioa = dp.GPIOA.split(&mut rcc);
     let _gpiob = dp.GPIOB.split(&mut rcc);
 
@@ -43,7 +54,10 @@ pub fn init(
     input.receive_dshot_dma();
 
     let adc = super::adc::new_adc();
-    let _ = adc.init();
+    if let Err(e) = adc.init() {
+        let (kind, what) = e.parts();
+        crate::dprintln!("[rm32] ADC init FAILED: {} {}", kind, what);
+    }
     let telem = super::telemetry_uart::TelemUart::init()
         .unwrap_or_else(|_| super::telemetry_uart::TelemUart::post_init());
 
@@ -59,9 +73,25 @@ pub fn init(
         tim6.dier().write(|w| w.uie().set_bit());
         tim6.cr1().write(|w| w.cen().set_bit());
     }
+    // Three-shunt current: one hardware-triggered scan per TIM6 update.
+    #[cfg(rm32_three_shunt)]
+    super::adc::arm_hw_trigger();
 
+    // NVIC priorities — AM32 G071-matched (Mcu/g071/Src/peripherals.c:
+    // COMP 0, COM timer 0, input DMA 1, tenKhzRoutine TIM6 2, EXTI4_15 2).
+    // Cortex-M0+ implements 2 priority bits in the TOP of each IPR byte;
+    // cortex_m's `set_priority` writes the raw byte, so level N is
+    // `N << 6` (CMSIS NVIC_SetPriority shifts internally). Previously
+    // unset (all level 0): TIM6's control tick could not be preempted by
+    // COMP/commutation — the same defect class as the L431 priority fix.
     unsafe {
         use stm32::{Interrupt, NVIC};
+        let mut nvic = cortex_m::Peripherals::steal().NVIC;
+        nvic.set_priority(Interrupt::ADC_COMP, 0 << 6);
+        nvic.set_priority(Interrupt::TIM14, 0 << 6);
+        nvic.set_priority(Interrupt::DMA1_CHANNEL1, 1 << 6);
+        nvic.set_priority(Interrupt::TIM6_DAC_LPTIM1, 2 << 6);
+        nvic.set_priority(Interrupt::EXTI4_15, 2 << 6);
         NVIC::unmask(Interrupt::TIM6_DAC_LPTIM1);
         NVIC::unmask(Interrupt::TIM14);
         NVIC::unmask(Interrupt::ADC_COMP);

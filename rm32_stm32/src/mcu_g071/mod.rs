@@ -1,7 +1,13 @@
 pub mod adc;
+pub mod bench_serial;
+pub mod bench_uart;
 pub mod chip;
+#[cfg(feature = "benchuart")]
+pub mod coast;
 pub mod comp_init;
 pub mod comparator;
+#[cfg(feature = "benchuart")]
+pub mod filter_cal;
 pub mod flash;
 pub mod init;
 pub mod input_capture;

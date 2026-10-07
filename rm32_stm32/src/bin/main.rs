@@ -33,6 +33,14 @@ include!(concat!(env!("OUT_DIR"), "/board_config.rs"));
 
 #[entry]
 fn main() -> ! {
+    // binz bench time-series recorder (rm32::bench_rec): 2048 x 8 B = 16 KB,
+    // fed from the main loop on the control-tick clock, dumped after a run.
+    // A `static mut` in `#[entry]` is rewritten by cortex-m-rt into a safe
+    // `&'static mut` (entry runs once).
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    static mut REC: rm32::bench_rec::Recorder<2048> = rm32::bench_rec::Recorder::new();
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let rec: &'static mut rm32::bench_rec::Recorder<2048> = REC;
     // Cortex-M PRIMASK is 0 after reset (IRQs enabled). Disable until ISR state
     // is installed and the explicit enable below at the bottom of main.
     cortex_m::interrupt::disable();
@@ -81,6 +89,10 @@ fn main() -> ! {
         dcb.demcr.modify(|v| v & !(1 << 16)); // MON_EN off
     }
 
+    // Board extension pins first: gate-driver ENABLE low, nFAULT pulled up
+    // — before any timer/GPIO init can touch a gate.
+    BOARD_EXT.init_pins();
+
     rtt_target::rtt_init_print!();
     #[cfg(feature = "debuguart")]
     rm32_stm32::debug_uart::init();
@@ -118,6 +130,9 @@ fn main() -> ! {
     #[cfg(feature = "debuguart")]
     rm32_stm32::debug_uart::init();
     rm32_stm32::dprintln!("[rm32] init done");
+    // Boards with a gate-driver ENABLE: MOE + ENABLE off until armed
+    // (re-evaluated every main-loop pass, see drive_gate below).
+    BOARD_EXT.drive_gate(false);
     // Re-print the reset cause now that the UART runs at its final baud —
     // the pre-clock-config print above lands as garbage on the wire
     // (RTT-only). Rung 2: last-boot reason visible on the bench wire.
@@ -268,6 +283,22 @@ fn main() -> ! {
         desired.motor_poles = 14;
         desired.minimum_duty_cycle = 4; // -> minimum_duty 40
         desired.startup_power = 105; // -> min_startup 145, startup_max 440
+        desired.dir_reversed = BOARD_EXT.bench_dir_reversed as u8;
+        desired.use_sine_start = BOARD_EXT.bench_sine_start as u8;
+        if BOARD_EXT.bench_pwm_khz != 0 {
+            desired.pwm_frequency = BOARD_EXT.bench_pwm_khz;
+        }
+        if BOARD_EXT.bench_fixed_pwm {
+            desired.variable_pwm = 0;
+        }
+        if BOARD_EXT.bench_sine_start {
+            // AM32 loadEEpromSettings clamps (main.c:716, :761): out-of-range
+            // changeover -> 5 %, power -> 5. rm32 does not normalise these.
+            desired.sine_mode_changeover_throttle_level = 5;
+            // Power 3 (AM32 default 5): at 5 the sine stage reads ~870 mA on
+            // this motor, over the 750 mA kill under the 800 mA PSU clamp.
+            desired.sine_mode_power = 3;
+        }
         if main_state.config.as_bytes() != desired.as_bytes() {
             let mut flashw = FlashStorage::new();
             flashw.write(eeprom_address, desired.as_bytes());
@@ -375,7 +406,10 @@ fn main() -> ! {
     {
         let _ = isr;
         rm32_stm32::bench_uart::init();
+        #[cfg(feature = "stm32l431")]
         rm32_stm32::dprintln!("[rm32] benchuart: USART2 RX @2M on PA2, DShot capture OFF");
+        #[cfg(feature = "stm32g071")]
+        rm32_stm32::dprintln!("[rm32] benchuart: USART3 RX @115200 on PC11, DShot capture OFF");
     }
 
     // Hardware-timed injected current sampling (clone FALCON pattern):
@@ -423,6 +457,10 @@ fn main() -> ! {
     // SAFETY: All ISR state has been initialized and moved to globals above.
     // NVIC priorities are configured. It is now safe to take interrupts.
     unsafe { cortex_m::interrupt::enable() };
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    rm32_stm32::mcu::active::filter_cal::run();
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    rm32_stm32::isr_handlers::tick_gap_init();
     rm32_stm32::dprintln!("[rm32] irqs enabled, entering main loop");
 
     // --- Main loop ---
@@ -440,6 +478,13 @@ fn main() -> ! {
         any(feature = "stm32l431", feature = "stm32g431")
     ))]
     let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::new(Chip::CPU_FREQUENCY_MHZ);
+    // G071 (binz bench): fixed limits from `bench_guard::BINZ_BATTERY`
+    // (sustained / surge current, relative sag, 9 V floor, OVOLT, nFAULT).
+    #[cfg(all(feature = "debuguart", feature = "stm32g071"))]
+    let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::with_limits(
+        Chip::CPU_FREQUENCY_MHZ,
+        rm32_stm32::bench_guard::BINZ_BATTERY,
+    );
     // Bench UART control state: parser + committed throttle + last-command
     // timestamp for the 3 s deadman (a dead host script must not leave
     // throttle latched — minz semantics).
@@ -447,6 +492,18 @@ fn main() -> ! {
     let mut bench_parser = rm32::bench_input::UartDuty::new();
     #[cfg(feature = "benchuart")]
     let mut bench_throttle: u16 = 0;
+    // Arming requires a GENUINE zero-throttle command after boot. The
+    // internal holds below (no shunt zero yet, latched guard) feed 0 to the
+    // input, which AM32's arming logic accepts as "throttle at zero" — after
+    // an IWDG reset mid-run (binz, 81.5 %) that re-armed the board under a
+    // still-streaming 82 % command and launched it from standstill with no
+    // sine stage or walk. Set only by a received Stop/0 (or Kill).
+    #[cfg(feature = "benchuart")]
+    let mut bench_seen_zero = false;
+    // After a coast measurement the commutation IRQ stays masked until the
+    // control has stopped (mcu_g071::coast::release_com).
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut coast_hold_com = false;
     #[cfg(feature = "benchuart")]
     let mut bench_last_cmd: Option<u32> = None;
     #[cfg(feature = "benchuart")]
@@ -462,7 +519,71 @@ fn main() -> ! {
     #[cfg(feature = "benchuart")]
     let mut bench_last_val: u16 = 0;
     #[cfg(feature = "benchuart")]
+    #[cfg_attr(not(feature = "stm32l431"), allow(unused_mut))]
     let mut bench_drops: u32 = 0;
+    #[cfg(rm32_three_shunt)]
+    let mut gate_on_at: Option<u32> = None;
+    #[cfg(rm32_three_shunt)]
+    let mut zero_tried = false;
+    // Bench aggregate: peak of the guard's current input (the 50 ms AM32
+    // moving average) and time above 750 mA, per run (reset at run start).
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut i50_max: i16 = 0;
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut i50_over_ms: u32 = 0;
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut i50_last_tk: u32 = 0;
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut was_running = false;
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut hist_rearm = true;
+    // Hold-mean speed: e_com_time (us per electrical revolution, six
+    // intervals summed — 6x finer than the single-interval `avg`) sampled
+    // every 20 ticks while running; reported as the mean in 0.1 us, eHz =
+    // 1e7 / ecom10 host-side (firmware50's `ehz_from_sector` quantity; no
+    // 64-bit divide — the image is near its flash limit). Reset per query.
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut ecom_sum: u32 = 0;
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut ecom_n: u32 = 0;
+    // Hold snapshot (binz): NO UART traffic while the bridge drives — a
+    // query at 82.5 % let UART-coupled comparator noise starve the main
+    // loop (polled TX) into an IWDG reset. `H` silently resets the hold
+    // aggregates at hold start; the run's numbers are frozen on the
+    // running -> stopped edge and printed as an `r` line by the next `i`.
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut run_duty: u16 = 0;
+    // Main-loop starvation meter: max gap between main passes, in 50 us
+    // TIM6 ticks (the IWDG fires at a 2 s gap = 40000 ticks). Reset by `H`.
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut loop_last_tk: u32 = 0;
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut loop_gap_max: u32 = 0;
+    // Recorder clock: last SysTick value and the sub-tick cycle carry.
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let (mut rec_syst, mut rec_cyc): (u32, u32) = (0, 0);
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    let mut dsy_at_h: u32 = 0;
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    #[allow(clippy::type_complexity)]
+    let mut run_snap: Option<(
+        u16,
+        i32,
+        i16,
+        u32,
+        i32,
+        u32,
+        u32,
+        u32,
+        u32,
+        [u32; 4],
+        u32,
+        u32,
+        u32,
+        [u32; 3],
+    )> = None;
+    #[cfg(rm32_three_shunt)]
+    let mut guard_ma_seq: u32 = 0;
     // Two-frame confirmation (AM32 protocol-detection pattern): a
     // throttle/stop commit only APPLIES when the same value arrives twice
     // consecutively. Measured need: ore=24 stops=13 in one sweep — RX
@@ -705,20 +826,41 @@ fn main() -> ! {
         // Debug builds only — see the instantiation comment (Tier A5).
         #[cfg(all(
             feature = "debuguart",
-            any(feature = "stm32l431", feature = "stm32g431")
+            any(feature = "stm32l431", feature = "stm32g431", feature = "stm32g071")
         ))]
         {
-            let guard_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
-            if let Some(reason) = bench_guard.tick(
-                guard_now,
-                shared.running(),
-                shared.battery_voltage(),
-                shared.actual_current(),
-            ) {
+            let guard_now = rm32_stm32::bench_clock::now_cyc();
+            // Split current guard: one per-ms sample per new 1 kHz reading.
+            #[cfg(rm32_three_shunt)]
+            {
+                let (seq, ma) = rm32_stm32::mcu_g071::adc::last_ms_sample();
+                if seq != guard_ma_seq {
+                    guard_ma_seq = seq;
+                    bench_guard.feed_current_ma(ma);
+                }
+            }
+            let guard_trip = bench_guard
+                .tick(
+                    guard_now,
+                    shared.running(),
+                    shared.battery_voltage(),
+                    shared.actual_current(),
+                )
+                .or_else(|| {
+                    bench_guard.fault_tick(
+                        guard_now,
+                        BOARD_EXT.gate_enable.is_some() && BOARD_EXT.gate_enabled(),
+                        BOARD_EXT.fault(),
+                    )
+                });
+            if let Some(reason) = guard_trip {
                 let (tag, code) = match reason {
                     rm32_stm32::bench_guard::KillReason::Overcurrent => ("OC", 1u16),
                     rm32_stm32::bench_guard::KillReason::VbatSag => ("VBAT", 2u16),
                     rm32_stm32::bench_guard::KillReason::OverVolt => ("OVOLT", 3u16),
+                    rm32_stm32::bench_guard::KillReason::RelSag => ("SAG", 4u16),
+                    rm32_stm32::bench_guard::KillReason::DriverFault => ("NFAULT", 5u16),
+                    rm32_stm32::bench_guard::KillReason::Surge => ("OCFAST", 6u16),
                 };
                 // Blackbox: record the kill, then FREEZE so the dump shows
                 // the events leading TO the fault (minz reason codes:
@@ -731,15 +873,164 @@ fn main() -> ! {
                 #[cfg(not(feature = "blackbox"))]
                 let _ = code;
                 rm32_stm32::dprintln!(
-                    "!! BENCH KILL reason={} vbat_mv={} i_ma={} (latched until reset)",
+                    "!! BENCH KILL reason={} vbat_mv={} i_ma={} rest_mv={} ref_mv={} (latched until reset)",
                     tag,
                     shared.battery_voltage(),
-                    shared.actual_current()
+                    shared.actual_current(),
+                    bench_guard.rest_peak_mv(),
+                    bench_guard.sag_ref_mv()
                 );
             }
             if bench_guard.latched().is_some() {
                 shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
                 shared.transition(rm32::motor_mode::MotorEvent::Disarm);
+                // Keep the record of what led up to the kill.
+                #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                rec.freeze();
+            }
+        }
+        // Gate policy: MOE + driver ENABLE follow armed (no-op on boards
+        // without an ENABLE pin). After the guard, so a kill's Disarm drops
+        // the gates on the same pass.
+        BOARD_EXT.drive_gate(shared.armed());
+        #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+        {
+            let running = shared.running();
+            if running && !was_running {
+                i50_max = 0;
+                i50_over_ms = 0;
+                run_snap = None;
+            }
+            if !running && was_running {
+                #[cfg(rm32_three_shunt)]
+                let imean = adc.take_mean_ma().0;
+                #[cfg(not(rm32_three_shunt))]
+                let imean = 0i32;
+                let ecom10 = ecom_sum.saturating_mul(10).checked_div(ecom_n).unwrap_or(0);
+                run_snap = Some((
+                    run_duty,
+                    imean,
+                    i50_max,
+                    ecom10,
+                    bench_guard.current_ewmas().1,
+                    main_state.dsy_fast.wrapping_sub(dsy_at_h),
+                    rm32_stm32::isr_handlers::T6_MAX.load(core::sync::atomic::Ordering::Relaxed),
+                    rm32_stm32::isr_handlers::T6_OVR.load(core::sync::atomic::Ordering::Relaxed),
+                    loop_gap_max,
+                    [0, 1, 2, 3].map(|i| {
+                        rm32_stm32::isr_handlers::T6_CP[i]
+                            .load(core::sync::atomic::Ordering::Relaxed)
+                    }),
+                    rm32_stm32::isr_handlers::COMP_ENTRIES
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                    rm32_stm32::isr_handlers::COMP_CAMPS
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                    {
+                        let n = rm32_stm32::isr_handlers::T6_N
+                            .load(core::sync::atomic::Ordering::Relaxed);
+                        let sm = rm32_stm32::isr_handlers::T6_SUM
+                            .load(core::sync::atomic::Ordering::Relaxed);
+                        sm.checked_div(n).unwrap_or(0)
+                    },
+                    {
+                        use core::sync::atomic::Ordering::Relaxed;
+                        use rm32_stm32::isr_handlers::{GAP_LATE, GAP_LOST, GAP_MAX};
+                        [
+                            GAP_MAX.load(Relaxed),
+                            GAP_LATE.load(Relaxed),
+                            GAP_LOST.load(Relaxed),
+                        ]
+                    },
+                ));
+            }
+            if running {
+                run_duty = shared.duty_cycle();
+            }
+            was_running = running;
+            rm32_stm32::sector_hist::drain();
+            let tk = shared.dbg_isr_tick();
+            let gap = tk.wrapping_sub(loop_last_tk);
+            loop_last_tk = tk;
+            // Time-series recorder, clocked by the free-running SysTick (CPU
+            // cycles), NOT the control-tick count: at low speed control
+            // ticks can be lost (binz map: 5894 at 5 % throttle), which
+            // would compress the record's time axis. Elapsed cycles convert
+            // to 50 us tick units with carry; the 24-bit SysTick wraps every
+            // 262 ms, far above any main-loop gap.
+            {
+                // SAFETY: read-only access to the free-running SysTick.
+                let now = unsafe { (*cortex_m::peripheral::SYST::PTR).cvr.read() };
+                rec_cyc += rec_syst.wrapping_sub(now) & 0x00FF_FFFF;
+                rec_syst = now;
+            }
+            let rec_n = rec_cyc / rm32_stm32::bench_clock::CYC_PER_TICK;
+            rec_cyc %= rm32_stm32::bench_clock::CYC_PER_TICK;
+            if rec_n > 0 {
+                rec.ticks(rec_n, || {
+                    rm32::bench_rec::Sample::pack(
+                        shared.duty_cycle(),
+                        shared.old_routine(),
+                        main_state.dsy_fast as u32,
+                        shared.commutation_interval(),
+                        // fast (~16 ms) EWMA of the per-ms metered current:
+                        // the single per-ms sample is random-phase noisy.
+                        bench_guard.current_ewmas().0,
+                        shared.battery_voltage(),
+                    )
+                });
+            }
+            if gap > loop_gap_max && gap < 1_000_000 {
+                loop_gap_max = gap;
+            }
+            if running && tk.wrapping_sub(i50_last_tk) >= 20 {
+                i50_last_tk = tk;
+                let i = shared.actual_current();
+                i50_max = i50_max.max(i);
+                let ec = shared.e_com_time();
+                if ec > 0 {
+                    ecom_sum = ecom_sum.saturating_add(ec as u32);
+                    ecom_n += 1;
+                }
+                if i > 750 {
+                    i50_over_ms += 1;
+                }
+            }
+        }
+        // 3-shunt zero: the DRV8304 current amplifiers only run while the
+        // driver is awake, so the zero is taken per enable — ZERO_SETTLE
+        // after ENABLE rises (DRV wake + the arming tune), with the bridge
+        // idle. Until a zero is accepted, current reads 0 and bench
+        // throttle is held at 0 (see `shunt_zero_ok` below).
+        #[cfg(rm32_three_shunt)]
+        {
+            const ZERO_SETTLE_MS: u32 = 1500;
+            let now = rm32_stm32::bench_clock::now_cyc();
+            if !BOARD_EXT.gate_enabled() {
+                if gate_on_at.take().is_some() {
+                    adc.clear_zero();
+                }
+            } else {
+                let since = *gate_on_at.get_or_insert(now);
+                if adc.zero() == 0
+                    && !zero_tried
+                    && now.wrapping_sub(since) >= ZERO_SETTLE_MS * Chip::CPU_FREQUENCY_MHZ * 1000
+                    && !shared.running()
+                    && shared.duty_cycle() == 0
+                {
+                    zero_tried = true;
+                    adc.capture_zero(2000); // 100 ms of 20 kHz scans: 64 left +/-25 mA run-to-run
+                }
+                // Follow the CSA settling while armed with the bridge idle;
+                // frozen from the first throttle until the motor stops.
+                adc.set_zero_tracking(
+                    adc.zero() != 0
+                        && !shared.running()
+                        && shared.adjusted_input() == 0
+                        && shared.duty_cycle() == 0,
+                );
+            }
+            if gate_on_at.is_none() {
+                zero_tried = false;
             }
         }
 
@@ -751,7 +1042,7 @@ fn main() -> ! {
         #[cfg(feature = "benchuart")]
         {
             use rm32::bench_input::UartCmd;
-            let bench_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+            let bench_now = rm32_stm32::bench_clock::now_cyc();
             // WAXWING freeze-on-fall: any desync/orbit event at wall
             // duty freezes the phase-voltage ring so the deaf window
             // survives the churn (52 ms post-mortem; 'x' dumps + re-arms).
@@ -819,6 +1110,7 @@ fn main() -> ! {
                             bench_pending = v;
                         }
                         UartCmd::Stop => {
+                            bench_seen_zero = true;
                             bench_last_cmd = Some(bench_now);
                             bench_stop_n += 1;
                             if bench_pending == 0 {
@@ -829,6 +1121,7 @@ fn main() -> ! {
                             bench_pending = 0;
                         }
                         UartCmd::Kill => {
+                            bench_seen_zero = true;
                             bench_throttle = 0;
                             bench_last_cmd = Some(bench_now);
                             shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
@@ -905,6 +1198,135 @@ fn main() -> ! {
                                     }
                                 }
                             );
+                            // G071/binz feedback line: engineering units
+                            // for the firmware50 comparison. ehz from the
+                            // 2 MHz interval timer (e_com_time = 3 steps):
+                            // f_e = 2e6 / (6 * avg). imean = per-scan mean
+                            // metered mA since the previous 'i'.
+                            #[cfg(feature = "stm32g071")]
+                            {
+                                #[cfg(rm32_three_shunt)]
+                                let ((imean, in_n), zero, sh) =
+                                    (adc.take_mean_ma(), adc.zero(), adc.shunts());
+                                #[cfg(not(rm32_three_shunt))]
+                                let ((imean, in_n), zero, sh) = ((0i32, 0u32), 0u32, [0u16; 3]);
+                                let ehz = if avg > 0 && shared.running() {
+                                    2_000_000 / (6 * avg)
+                                } else {
+                                    0
+                                };
+                                rm32_stm32::dprintln!(
+                                    "b vbus_mv={} i_ma={} imean_ma={} in={} ehz={} nf={} en={} moe={} armed={} zero={} sh={},{},{} rest_mv={} killed={} fwd={} tk={} i50max={} i50over_ms={} ewf={} ews={} ecom10={} inj={} t6max={} t6ovr={} t6cp={},{},{},{} t6mean={} gapmax={} gaplate={} gaplost={}",
+                                    shared.battery_voltage(),
+                                    shared.actual_current(),
+                                    imean,
+                                    in_n,
+                                    ehz,
+                                    BOARD_EXT.fault() as u8,
+                                    BOARD_EXT.gate_enabled() as u8,
+                                    rm32_stm32::mcu_g071::pwm::moe() as u8,
+                                    shared.armed() as u8,
+                                    zero,
+                                    sh[0],
+                                    sh[1],
+                                    sh[2],
+                                    bench_guard.rest_peak_mv(),
+                                    bench_guard.latched().is_some() as u8,
+                                    shared.forward() as u8,
+                                    shared.dbg_isr_tick(),
+                                    i50_max,
+                                    i50_over_ms,
+                                    bench_guard.current_ewmas().0,
+                                    bench_guard.current_ewmas().1,
+                                    // mean e_com in 0.1 us; eHz = 1e7 / ecom10 (host side)
+                                    ecom_sum.saturating_mul(10).checked_div(ecom_n).unwrap_or(0),
+                                    rm32_stm32::isr_handlers::INJECT_N
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::T6_MAX
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::T6_OVR
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::T6_CP[0]
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::T6_CP[1]
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::T6_CP[2]
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::T6_CP[3]
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    {
+                                        let n = rm32_stm32::isr_handlers::T6_N
+                                            .load(core::sync::atomic::Ordering::Relaxed);
+                                        let sm = rm32_stm32::isr_handlers::T6_SUM
+                                            .load(core::sync::atomic::Ordering::Relaxed);
+                                        sm.checked_div(n).unwrap_or(0)
+                                    },
+                                    rm32_stm32::isr_handlers::GAP_MAX
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::GAP_LATE
+                                        .load(core::sync::atomic::Ordering::Relaxed),
+                                    rm32_stm32::isr_handlers::GAP_LOST
+                                        .load(core::sync::atomic::Ordering::Relaxed)
+                                );
+                                ecom_sum = 0;
+                                ecom_n = 0;
+                                // Aggregates cover the interval since the
+                                // previous query. Sector statistics: dumped
+                                // only with the bridge stopped (UART TX
+                                // couples into the comparator), reset at
+                                // every query while running (hold start).
+                                i50_max = 0;
+                                i50_over_ms = 0;
+                                if !shared.running() {
+                                    if let Some((
+                                        d,
+                                        im,
+                                        pk,
+                                        ec,
+                                        ews,
+                                        dsy,
+                                        t6m,
+                                        t6o,
+                                        lg,
+                                        cp,
+                                        ce,
+                                        cc,
+                                        t6mean,
+                                        gp,
+                                    )) = run_snap
+                                    {
+                                        rm32_stm32::dprintln!(
+                                            "r duty={} imean_ma={} i50max={} ecom10={} ews={} dsy={} t6max={} t6ovr={} loopgap={} t6cp={},{},{},{} comp_entries={} camps={} t6mean={} gapmax={} gaplate={} gaplost={}",
+                                            d,
+                                            im,
+                                            pk,
+                                            ec,
+                                            ews,
+                                            dsy,
+                                            t6m,
+                                            t6o,
+                                            lg,
+                                            cp[0],
+                                            cp[1],
+                                            cp[2],
+                                            cp[3],
+                                            ce,
+                                            cc,
+                                            t6mean,
+                                            gp[0],
+                                            gp[1],
+                                            gp[2]
+                                        );
+                                    }
+                                    rm32_stm32::sector_hist::dump();
+                                    hist_rearm = true;
+                                } else if hist_rearm {
+                                    // first running query after a stop =
+                                    // the quiet protocol's hold start
+                                    rm32_stm32::sector_hist::reset();
+                                    hist_rearm = false;
+                                }
+                            }
                         }
                         UartCmd::TraceToggle => {
                             #[cfg(feature = "zctrace")]
@@ -920,6 +1342,88 @@ fn main() -> ! {
                             rm32_stm32::dprintln!(
                                 "[bench] zctrace: build without 'zctrace' feature"
                             );
+                        }
+                        UartCmd::RecArmFast | UartCmd::RecArmSlow => {
+                            // Silent (sent while driving): 200 ticks = 10 ms,
+                            // 1000 ticks = 50 ms at the 20 kHz control tick.
+                            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                            rec.arm(if matches!(cmd, UartCmd::RecArmFast) {
+                                200
+                            } else {
+                                1000
+                            });
+                        }
+                        UartCmd::RecDump => {
+                            // After the stop only (the host sends it then).
+                            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                            {
+                                rec.freeze();
+                                rm32_stm32::dprintln!(
+                                    "rec n={} period_ticks={} tick_us=50 fields=duty_flags,ci,ma,mv",
+                                    rec.len(),
+                                    rec.period()
+                                );
+                                for k in 0..rec.len() {
+                                    if let Some(s) = rec.get(k) {
+                                        rm32_stm32::dprintln!(
+                                            "rd {} {} {} {}",
+                                            s.duty_flags,
+                                            s.ci,
+                                            s.ma,
+                                            s.mv
+                                        );
+                                    }
+                                    if k % 32 == 0 {
+                                        sys.reload_watchdog();
+                                    }
+                                }
+                                rm32_stm32::dprintln!("rec end");
+                            }
+                        }
+                        UartCmd::CoastMeasure => {
+                            // Coast-down rotor speed: zero throttle, bridge
+                            // off, then time phase A's free BEMF crossings
+                            // (mcu_g071::coast). Commutation stays masked
+                            // until the control has stopped (below).
+                            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                            {
+                                use rm32_stm32::mcu::active::coast;
+                                // SAFETY: read-only SysTick counter.
+                                let t_off =
+                                    unsafe { (*cortex_m::peripheral::SYST::PTR).cvr.read() };
+                                bench_throttle = 0;
+                                bench_last_cmd = Some(bench_now);
+                                shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
+                                let c = coast::measure(t_off, BOARD.bemf_pins.phase_a, 60);
+                                coast_hold_com = true;
+                                rm32_stm32::dprintln!(
+                                    "coast trans={} first_cyc={} cpu_mhz={}",
+                                    c.trans,
+                                    c.first_cyc,
+                                    Chip::CPU_FREQUENCY_MHZ
+                                );
+                                for (k, row) in c.iv_cyc.chunks(8).enumerate() {
+                                    rm32_stm32::dprintln!(
+                                        "coast iv_cyc[{}] {} {} {} {} {} {} {} {}",
+                                        k * 8,
+                                        row[0],
+                                        row[1],
+                                        row[2],
+                                        row[3],
+                                        row[4],
+                                        row[5],
+                                        row[6],
+                                        row[7]
+                                    );
+                                }
+                            }
+                        }
+                        UartCmd::DesyncInject => {
+                            // Silent (no TX while driving): one-shot flag
+                            // consumed by the next commutation ISR.
+                            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                            rm32_stm32::isr_handlers::DESYNC_INJECT
+                                .store(true, core::sync::atomic::Ordering::Relaxed);
                         }
                         UartCmd::DriveToggle => {
                             use core::sync::atomic::Ordering;
@@ -1062,6 +1566,36 @@ fn main() -> ! {
                             rm32_stm32::dprintln!("[cfg] save requested");
                         }
                         UartCmd::HistDump => {
+                            // binz: `H` = silent hold-start reset (no output).
+                            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                            {
+                                i50_max = 0;
+                                i50_over_ms = 0;
+                                ecom_sum = 0;
+                                ecom_n = 0;
+                                #[cfg(rm32_three_shunt)]
+                                let _ = adc.take_mean_ma();
+                                dsy_at_h = main_state.dsy_fast;
+                                rm32_stm32::isr_handlers::T6_MAX
+                                    .store(0, core::sync::atomic::Ordering::Relaxed);
+                                rm32_stm32::isr_handlers::T6_OVR
+                                    .store(0, core::sync::atomic::Ordering::Relaxed);
+                                loop_gap_max = 0;
+                                rm32_stm32::isr_handlers::tick_gap_reset();
+                                for c in &rm32_stm32::isr_handlers::T6_CP {
+                                    c.store(0, core::sync::atomic::Ordering::Relaxed);
+                                }
+                                rm32_stm32::isr_handlers::COMP_ENTRIES
+                                    .store(0, core::sync::atomic::Ordering::Relaxed);
+                                rm32_stm32::isr_handlers::COMP_CAMPS
+                                    .store(0, core::sync::atomic::Ordering::Relaxed);
+                                rm32_stm32::isr_handlers::T6_SUM
+                                    .store(0, core::sync::atomic::Ordering::Relaxed);
+                                rm32_stm32::isr_handlers::T6_N
+                                    .store(0, core::sync::atomic::Ordering::Relaxed);
+                                rm32_stm32::sector_hist::reset();
+                                hist_rearm = false;
+                            }
                             #[cfg(all(
                                 feature = "benchuart",
                                 any(feature = "stm32l431", feature = "stm32g431")
@@ -1165,6 +1699,25 @@ fn main() -> ! {
             // A latched safety kill outranks any commanded throttle.
             if bench_guard.latched().is_some() {
                 bench_throttle = 0;
+            }
+            // No current measurement without a shunt zero: no drive either.
+            #[cfg(rm32_three_shunt)]
+            if adc.zero() == 0 && bench_throttle != 0 {
+                bench_throttle = 0;
+                rm32_stm32::dprintln!("[bench] throttle held: no 3-shunt zero yet");
+            }
+            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+            if coast_hold_com && !shared.running() {
+                rm32_stm32::mcu::active::coast::release_com();
+                coast_hold_com = false;
+            }
+            // No genuine zero received since boot: hold disarmed (see
+            // bench_seen_zero).
+            if !bench_seen_zero {
+                bench_throttle = 0;
+                if shared.armed() {
+                    shared.transition(rm32::motor_mode::MotorEvent::Disarm);
+                }
             }
             // ZC-trace drain: up to 3 records per pass onto the bench wire
             // (binary, interleaved with the text log — the capture script

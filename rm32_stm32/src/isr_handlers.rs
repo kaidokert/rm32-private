@@ -99,8 +99,110 @@ pub static SR_MV: [core::sync::atomic::AtomicU16; SR_N] =
 #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static SR_HEAD: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
+/// binz bench: TIM6 handler section costs (max cycles per section within
+/// one tick): [entry latency (CNT at entry), ten_khz_tick, tones, tail to
+/// the T6 measurement]. Reset by `H`.
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static T6_CP: [core::sync::atomic::AtomicU32; 4] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 4];
+
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+static T6_PREV: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+#[inline(always)]
+fn t6_cp(i: usize) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let c = unsafe { (*crate::pac::TIM6::ptr()).cnt().read().bits() };
+    let d = if i == 0 {
+        c
+    } else {
+        let p = T6_PREV.load(Relaxed);
+        if c >= p { c - p } else { c + 3200 - p } // one wrap at most
+    };
+    T6_PREV.store(c, Relaxed);
+    if d > T6_CP[i].load(Relaxed) {
+        T6_CP[i].store(d, Relaxed);
+    }
+}
+
+/// binz bench: TIM6 tick-to-tick ENTRY gaps, stamped on a free-running
+/// SysTick (24-bit down-counter at the CPU clock, no interrupt; armed by
+/// `tick_gap_init`). The overrun counter above is censored at one period;
+/// this one sees how late a tick really ran and whether one was lost
+/// outright (gap >= 2 periods: UIF is a single flag, a second update while
+/// it is still set disappears). Model: firmware50's guard `gap_max_us`.
+/// Reset by `H` (`tick_gap_reset`).
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static GAP_MAX: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// Gaps over 1.5 periods (4800 cycles): the tick ran at least half late.
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static GAP_LATE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// Gaps of 2 periods or more (6400 cycles): at least one tick lost.
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static GAP_LOST: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// Previous entry stamp; `u32::MAX` = no previous sample (after a reset).
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+static GAP_PREV: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub fn tick_gap_init() {
+    // SAFETY: SysTick is unused on the G071 path (no SysTick handler, no
+    // HAL delay on it); free-running at the core clock, interrupt off.
+    unsafe {
+        let st = &*cortex_m::peripheral::SYST::PTR;
+        st.rvr.write(0x00FF_FFFF);
+        st.cvr.write(0);
+        st.csr.write(0b101); // CLKSOURCE = core, TICKINT = 0, ENABLE
+    }
+}
+
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub fn tick_gap_reset() {
+    use core::sync::atomic::Ordering::Relaxed;
+    // The ISR may store GAP_PREV between these; at worst one gap after the
+    // reset is measured from a stamp taken just before it (still a real gap).
+    GAP_PREV.store(u32::MAX, Relaxed);
+    GAP_MAX.store(0, Relaxed);
+    GAP_LATE.store(0, Relaxed);
+    GAP_LOST.store(0, Relaxed);
+}
+
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+#[inline(always)]
+fn tick_gap() {
+    use core::sync::atomic::Ordering::Relaxed;
+    // SAFETY: read-only access to the free-running SysTick counter.
+    let now = unsafe { (*cortex_m::peripheral::SYST::PTR).cvr.read() };
+    let prev = GAP_PREV.load(Relaxed);
+    GAP_PREV.store(now, Relaxed);
+    if prev == u32::MAX {
+        return;
+    }
+    // Down-counter: elapsed = prev - now, modulo 2^24 (wraps every 262 ms).
+    let gap = prev.wrapping_sub(now) & 0x00FF_FFFF;
+    if gap > GAP_MAX.load(Relaxed) {
+        GAP_MAX.store(gap, Relaxed);
+    }
+    if gap >= 4800 {
+        GAP_LATE.store(GAP_LATE.load(Relaxed).wrapping_add(1), Relaxed);
+        if gap >= 6400 {
+            GAP_LOST.store(GAP_LOST.load(Relaxed).wrapping_add(1), Relaxed);
+        }
+    }
+}
+
 /// 20kHz control loop tick (TIM6 ISR body).
 pub fn handle_tim6() {
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    tick_gap();
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    t6_cp(0);
+    // Three-shunt boards: TIM6 TRGO hardware-triggers one ADC scan per tick;
+    // fold the scan the previous update produced (first thing, before the
+    // new scan's first conversion lands). See mcu_g071::adc::tick_scan.
+    #[cfg(all(feature = "stm32g071", rm32_three_shunt))]
+    crate::mcu::active::adc::tick_scan();
     // Minimal-overhead timing bracket: DWT.CYCCNT delta written to a plain
     // store (single-writer, no fetch_max LDREX/STREX). Liveness counter
     // (dbg_isr_tick_inc) moved AFTER the bracket so it doesn't bias the
@@ -147,6 +249,8 @@ pub fn handle_tim6() {
         hal: &mut state.hal,
     };
     rm32::control::isr_logic::ten_khz_tick(&mut ctx);
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    t6_cp(1);
 
     // A3 tone stepper (after the control tick so tone PWM writes land
     // last within the tick). While a tone is active the control path's
@@ -159,7 +263,7 @@ pub fn handle_tim6() {
         match state.tone.tick(req, shared.running()) {
             ToneAction::StartNote(n) => {
                 #[cfg(feature = "debuguart")]
-                TONE_STARTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                bump_single_writer(&TONE_STARTS);
                 state
                     .hal
                     .pwm
@@ -173,9 +277,9 @@ pub fn handle_tim6() {
             ToneAction::Silence => {
                 #[cfg(feature = "debuguart")]
                 if shared.running() {
-                    TONE_ABORTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    bump_single_writer(&TONE_ABORTS);
                 } else {
-                    TONE_ENDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    bump_single_writer(&TONE_ENDS);
                 }
                 state.hal.phase.all_off();
                 state.hal.pwm.set_prescaler(0);
@@ -196,6 +300,8 @@ pub fn handle_tim6() {
     // Comparator-level history (deaf-hiccup discriminator): one comp
     // read per tick shifted into edge_probe::LEVEL_HIST — constant
     // per-tick cost at prio 3. Decoded per window from the probe row.
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    t6_cp(2);
     #[cfg(feature = "zctrace")]
     crate::edge_probe::level_tick(!comp_at_pre_zc_level());
 
@@ -248,14 +354,72 @@ pub fn handle_tim6() {
     // The 30 ms camp-blackout bound needs a camp-side fix instead.
     // COMP gate stale average — latched every tick in ALL builds (this
     // is control, not instrumentation; see crate::comp_gate).
-    crate::comp_gate::latch((shared.e_com_time() / 3).max(0) as u32);
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    t6_cp(3);
+    crate::comp_gate::latch(rm32::fast_math::div3_i32(shared.e_com_time()).max(0) as u32);
     shared.dbg_isr_tick_inc();
+    // binz bench: measured TIM6 handler wall time — TIM6 counts CPU cycles
+    // from its own update (PSC 0, ARR 3199), so CNT at exit is the elapsed
+    // time since the tick including entry latency and COM/COMP preemption.
+    // UIF already set again at exit = the next tick is already due (overrun).
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    {
+        use core::sync::atomic::Ordering::Relaxed;
+        let t6 = unsafe { &*crate::pac::TIM6::ptr() };
+        let cnt = t6.cnt().read().bits();
+        if t6.sr().read().bits() & 1 != 0 {
+            T6_OVR.store(T6_OVR.load(Relaxed).wrapping_add(1), Relaxed);
+        } else {
+            if cnt > T6_MAX.load(Relaxed) {
+                T6_MAX.store(cnt, Relaxed);
+            }
+            T6_SUM.store(T6_SUM.load(Relaxed).wrapping_add(cnt), Relaxed);
+            T6_N.store(T6_N.load(Relaxed).wrapping_add(1), Relaxed);
+        }
+    }
 }
+
+/// binz bench: max TIM6 handler wall time (cycles since its update) and
+/// overrun count; reset by the `H` hold-start command.
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static T6_MAX: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// binz bench: COMP ISR entries and camp re-entries (gate closed, post-ZC
+/// level: pending left set, the ISR re-fires until the gate opens).
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static COMP_ENTRIES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static COMP_CAMPS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// binz bench: sum / count of TIM6 wall time over non-overrun ticks (mean).
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static T6_SUM: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static T6_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static T6_OVR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Bench desync injection (binz `K`): consumed by the next commutation.
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static DESYNC_INJECT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+/// Injections actually consumed by the commutation ISR.
+#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+pub static INJECT_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Commutation timer expired (TIM14 ISR body).
 pub fn handle_tim14() {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    if DESYNC_INJECT.load(core::sync::atomic::Ordering::Relaxed) {
+        DESYNC_INJECT.store(false, core::sync::atomic::Ordering::Relaxed);
+        state.commutation.inject_skip();
+        INJECT_N.store(
+            INJECT_N
+                .load(core::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1),
+            core::sync::atomic::Ordering::Relaxed,
+        );
+    }
     #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
     // Edge probe: interval count at TIM16 entry, BEFORE any step logic —
@@ -339,6 +503,13 @@ pub fn handle_comp() {
     }
     #[cfg(not(feature = "zctrace"))]
     let _ = accepted;
+    // binz bench: per-sector interval statistics on every accept. Accepts
+    // only happen in interrupt mode (the comparator interrupt is enabled
+    // only there — commutation_timer_expired), so no mode check is needed.
+    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    if accepted {
+        crate::sector_hist::accept(state.bemf.this_zc_time(), state.commutation.step());
+    }
     // Blackbox: one ACC per genuine acceptance. data = commutation interval.
     // Gated on zct-armed (see the REF record above for the rationale).
     #[cfg(all(
@@ -377,7 +548,7 @@ pub fn handle_comp() {
 /// true if the comparator currently sits at the PRE-zero-cross level
 /// (`output_level() == rising` — the level the persistence filter
 /// rejects). COMP-ISR context only (touches `ISR_LOCAL`).
-#[cfg(feature = "stm32l431")]
+#[cfg(any(feature = "stm32l431", feature = "stm32g071"))]
 pub fn comp_at_pre_zc_level() -> bool {
     use rm32::hal::Comparator as _;
     let state = ISR_LOCAL.get();
@@ -389,6 +560,15 @@ pub fn comp_at_pre_zc_level() -> bool {
 pub static EDT_SENT: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
 #[cfg(feature = "debuguart")]
 pub static EDT_LAST: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+
+/// Single-writer (TIM6 ISR) counter bump: load + store, no RMW — thumbv6m
+/// has no atomic fetch_add, and only this ISR ever writes the counters.
+#[cfg(feature = "debuguart")]
+#[inline(always)]
+fn bump_single_writer(c: &core::sync::atomic::AtomicU32) {
+    use core::sync::atomic::Ordering::Relaxed;
+    c.store(c.load(Relaxed).wrapping_add(1), Relaxed);
+}
 
 /// Tone-path decision counters (instrument-decisions-not-outcomes):
 /// starts = StartNote actions applied (note transitions), aborts =

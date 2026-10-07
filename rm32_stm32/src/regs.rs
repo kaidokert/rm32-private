@@ -15,6 +15,21 @@ pub enum InitError {
     FlashError(&'static str),
 }
 
+impl InitError {
+    /// (kind, subsystem) for plain `{}` printing. `{:?}` on the `&'static
+    /// str` payload pulls core's Unicode escape tables (~0.8 KB) into the
+    /// image — that overflowed the binz G071 flash region.
+    pub fn parts(&self) -> (&'static str, &'static str) {
+        match *self {
+            InitError::Timeout(s) => ("timeout", s),
+            InitError::AdcInit(s) => ("adc", s),
+            InitError::ClockInit(s) => ("clock", s),
+            InitError::UartInit(s) => ("uart", s),
+            InitError::FlashError(s) => ("flash", s),
+        }
+    }
+}
+
 /// Spin-wait for a condition with a cycle-counted timeout.
 /// Returns `Ok(())` if condition becomes true, `Err(InitError::Timeout)` if not.
 #[inline]

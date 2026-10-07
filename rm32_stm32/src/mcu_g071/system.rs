@@ -68,12 +68,21 @@ impl System for SystemControl {
 
     fn start_watchdog(&mut self, prescaler: u8, reload: u16) {
         let iwdg = unsafe { &*stm32g0xx_hal::stm32::IWDG::PTR };
+        // Start FIRST (KR=0xCCCC also starts LSI): with the IWDG stopped,
+        // SR.PVU/RVU never clear after the PR/RLR writes, and the old
+        // unlock-configure-wait-start order hung boot here forever (binz
+        // bring-up; the L431 port had the same defect). Bounded wait — a
+        // wedged IWDG must not hang the firmware either.
         unsafe {
-            iwdg.kr().write(|w| w.bits(0x5555)); // unlock
+            iwdg.kr().write(|w| w.bits(0xCCCC)); // start (and LSI)
+            iwdg.kr().write(|w| w.bits(0x5555)); // unlock PR/RLR
             iwdg.pr().write(|w| w.pr().bits(prescaler));
             iwdg.rlr().write(|w| w.rl().bits(reload));
-            while iwdg.sr().read().bits() & 0x03 != 0 {}
-            iwdg.kr().write(|w| w.bits(0xCCCC)); // start
+            let _ = crate::regs::wait_for(
+                || iwdg.sr().read().bits() & 0x03 == 0,
+                1_000_000,
+                "IWDG update",
+            );
             iwdg.kr().write(|w| w.bits(0xAAAA)); // reload
         }
     }

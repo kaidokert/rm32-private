@@ -8,7 +8,9 @@ pub struct Commutation {
     pub(crate) desync_check: bool,
     /// Per-step commutation intervals for e_com_time averaging.
     /// Written by ISR on each step advance via record_interval().
-    intervals: [u16; 6],
+    intervals: [u16; 8],
+    /// Sum of `intervals` (slots 6 and 7 stay 0).
+    interval_sum: u32,
 }
 
 impl Commutation {
@@ -18,7 +20,8 @@ impl Commutation {
             forward: true,
             rising: true,
             desync_check: false,
-            intervals: [0; 6],
+            intervals: [0; 8],
+            interval_sum: 0,
         }
     }
 
@@ -27,14 +30,30 @@ impl Commutation {
     /// `commutation_intervals[step - 1] = commutation_interval`
     ///
     /// Returns the updated e_com_time for publishing to SharedComm.
+    #[inline(always)]
     pub(crate) fn record_interval(&mut self, commutation_interval: u16) -> i32 {
-        self.intervals[(self.step - 1) as usize] = commutation_interval;
-        let sum: u32 = self.intervals.iter().map(|&v| v as u32).sum();
-        ((sum + 4) >> 1) as i32
+        // Running sum of the six slots (binz WCET: the 6-term re-sum ran on
+        // every commutation in the priority-0 ISR). `step` is 1..=6 by
+        // construction; `& 7` and the 8-slot array keep the index in range
+        // without a panic path on the COM ISR's longest path.
+        debug_assert!((1..=6).contains(&self.step), "step {}", self.step);
+        let k = (self.step.wrapping_sub(1) & 7) as usize;
+        let old = self.intervals[k];
+        self.intervals[k] = commutation_interval;
+        self.interval_sum = self.interval_sum - old as u32 + commutation_interval as u32;
+        ((self.interval_sum + 4) >> 1) as i32
+    }
+
+    /// Bench fault injection: advance one extra step, so the next
+    /// commutation lands two sectors on — a deliberate loss of sync that
+    /// exercises desync detection and recovery (binz `K` key).
+    pub fn inject_skip(&mut self) {
+        self.advance();
     }
 
     /// Advance one commutation step. Returns the new step number.
     /// Sets `desync_check` on step wrap.
+    #[inline(always)]
     pub(crate) fn advance(&mut self) -> u8 {
         if self.forward {
             self.step += 1;

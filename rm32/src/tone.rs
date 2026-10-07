@@ -15,7 +15,13 @@
 
 /// One tone note: TIM1 prescaler (pitch), commutation step (which
 /// windings hum), duration in milliseconds.
+///
+/// 4-byte aligned (8 bytes): at its natural 2-byte alignment the 6-byte copy
+/// out of the tune tables became a call to the generic `memcpy` (297
+/// instructions on thumbv6m) inside the 20 kHz tick; aligned, LLVM copies it
+/// with two word loads/stores (binz WCET gate).
 #[derive(Clone, Copy)]
+#[repr(C, align(4))]
 pub struct Note {
     pub prescaler: u16,
     pub step: u8,

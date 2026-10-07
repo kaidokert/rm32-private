@@ -18,6 +18,8 @@ use embedded_hal::digital::OutputPin;
 pub struct SystemTick {
     pub input_state: InputState,
     sine_positions: PhasePositions,
+    /// Previous-pass `stepper_sine` (entry edge seeds the phase positions).
+    sine_active: bool,
 }
 
 impl SystemTick {
@@ -25,6 +27,7 @@ impl SystemTick {
         Self {
             input_state: InputState::new(),
             sine_positions: PhasePositions::new(),
+            sine_active: false,
         }
     }
 
@@ -107,11 +110,20 @@ impl SystemTick {
         tim1_autoreload: u16,
     ) -> Option<(crate::sine::SineStepResult, (u16, u16, u16))> {
         if !shared.stepper_sine() {
+            self.sine_active = false;
             return None;
         }
+        if !self.sine_active {
+            // AM32 seeds the positions from the commutation step at entry;
+            // rm32 enters from a stop, so the boot step (1) is used.
+            self.sine_positions = PhasePositions::from_step(1);
+            self.sine_active = true;
+        }
+        // AM32's stepper reads `input` (post sine-start mapping) — that is
+        // rm32's adjusted_input, not the raw newinput.
         Some(crate::sine::sine_step(
             &mut self.sine_positions,
-            shared.newinput(),
+            shared.adjusted_input(),
             shared.armed(),
             shared.forward(),
             config.motor_poles,
@@ -266,7 +278,7 @@ mod tests {
 
         shared.transition(MotorEvent::Arm);
         shared.transition(MotorEvent::EnterSine);
-        shared.set_newinput(crate::constants::SINE_CHANGEOVER_THROTTLE + 1);
+        shared.set_adjusted_input(crate::constants::SINE_CHANGEOVER_THROTTLE + 1);
 
         let Some((
             SineStepResult::Changeover {

@@ -111,12 +111,17 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     // Throttle → setpoint
     // Read adjusted_input (set by process_input: bidir-mapped or raw passthrough)
     let input = ctx.shared.adjusted_input();
+    // AM32 setInput: with sine start, six-step begins at 47 + 80 and the
+    // duty map starts at input 137 (below that the sine stepper drives).
+    let sine_start = ctx.config.use_sine_start != 0;
+    let start_threshold = THROTTLE_MIN_SIGNAL + if sine_start { 80 } else { 0 };
     if ctx.shared.armed() && !ctx.shared.stepper_sine() {
-        if input >= THROTTLE_MIN_SIGNAL {
+        if input >= start_threshold {
             let setpoint = ctx.duty.compute_setpoint(
                 input,
                 ctx.shared.zero_crosses(),
                 ctx.config.stall_protection,
+                sine_start,
             );
             ctx.shared.set_duty_cycle_setpoint(setpoint);
             if !ctx.shared.running() {
@@ -145,10 +150,15 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             }
             if ctx.config.brake_on_stop == 2 {
                 ctx.hal.phase().com_step(2);
-                let brake_duty = (ctx.config.active_brake_power as u32 * tim1_arr as u32
-                    / DUTY_SCALE_MAX as u32)
-                    * 10;
+                let brake_duty = crate::fast_math::div2000_pwm(
+                    ctx.config.active_brake_power as u32 * tim1_arr as u32,
+                ) * 10;
                 ctx.hal.pwm().set_duty_all(brake_duty as u16);
+            }
+            // AM32: below the six-step threshold the sine stepper takes
+            // over (phase positions are seeded by the main-loop stepper).
+            if sine_start {
+                ctx.shared.set_stepper_sine(true);
             }
         }
     }
@@ -178,7 +188,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     }
 
     // Ramp rate limiting
-    let average_interval = (ctx.shared.e_com_time() / 3) as u32;
+    let average_interval = crate::fast_math::div3_i32(ctx.shared.e_com_time()) as u32;
     ctx.duty.ramp_limit(
         ctx.shared.battery_voltage(),
         ctx.shared.commutation_interval(),
@@ -207,7 +217,31 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     );
 
     // PWM output
-    if ctx.shared.armed() && ctx.shared.running() {
+    // Sine stepper driving (armed, throttle above idle): the main loop
+    // writes the CCRs. AM32 main-loop stepper `do_once_sinemode`: on
+    // entering slow stepping, stop commutation + BEMF interrupts and put all
+    // phases on PWM; AM32 skips every tenKhz duty write while it steps.
+    // Sine IDLE (unarmed / zero throttle) falls through to the brake chain
+    // below, as AM32's stepper idle does per `brake_on_stop` (main.c: 1 ->
+    // proportional brake, 2 -> comStep(2), else allOff).
+    let sine_drive =
+        ctx.shared.stepper_sine() && ctx.shared.armed() && input > THROTTLE_MIN_SIGNAL + 1;
+    if !sine_drive {
+        ctx.duty.sine_outputs_on = false;
+    }
+    if sine_drive {
+        if input < SINE_SLOW_STEP_THROTTLE {
+            if !ctx.duty.sine_outputs_on {
+                ctx.hal.com_timer().disable_interrupt();
+                ctx.hal.comp().mask_interrupts();
+                ctx.hal.pwm().set_duty_all(0);
+                ctx.hal.phase().all_pwm();
+                ctx.duty.sine_outputs_on = true;
+            }
+        } else {
+            ctx.duty.sine_outputs_on = false;
+        }
+    } else if ctx.shared.armed() && ctx.shared.running() {
         ctx.hal.pwm().set_duty_all(ctx.duty.pwm_compare(tim1_arr));
     } else if ctx.shared.prop_brake_active() {
         // SAFETY-CRITICAL ORDER: reconfigure the bridge for braking
@@ -311,7 +345,8 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
         shared.set_desync_check_pending(true);
         commutation.set_desync_check(false);
     }
-    let e_com = commutation.record_interval(shared.commutation_interval() as u16);
+    let ci0 = shared.commutation_interval();
+    let e_com = commutation.record_interval(ci0 as u16);
     shared.set_e_com_time(e_com);
     phase.com_step(step);
     phase.pulse_toggle(step);
@@ -323,47 +358,52 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     } else {
         OLD_ROUTINE_EXIT_INTERVAL
     };
-    let was_interrupt_mode = !shared.old_routine();
-
-    if was_interrupt_mode && (e_com / 3) as u32 > exit_interval + 500 {
-        shared.set_old_routine(true);
-    }
-
-    if was_interrupt_mode {
-        let new_ci = bemf.update_timing_from_timer(shared.commutation_interval());
-        shared.set_commutation_interval(new_ci);
-    }
-
-    // Polling/interrupt exclusivity (AM32 main.c commutate
-    // am32_isr.rs:122-124): the comparator interrupt path is live ONLY in
-    // interrupt mode. rm32 previously enabled unconditionally, so both
-    // BEMF paths ran concurrently during old_routine — double-commutation
-    // risk and inconsistent interval updates.
+    // The two modes are written as exclusive branches (behaviour identical
+    // to the former sequence of independent `if`s, which re-read
+    // old_routine three times): only one of set_old_routine /
+    // transition(BemfLocked) can run per commutation, and a static
+    // worst-case path should not pay for both (binz WCET gate).
     if !shared.old_routine() {
-        comp.enable_interrupts();
-    }
-    bemf.reset_after_commutation();
-    shared.increment_zero_crosses();
-
-    let zc = shared.zero_crosses();
-    let ci = shared.commutation_interval();
-    // Polling→interrupt changeover (AM32): the
-    // zc>=20 form applies ONLY with stall_protection / rc_car_reverse;
-    // the normal path is `ci < changeover` ALONE. rm32 previously
-    // required zc>=20 unconditionally — and since spin-up desyncs reset
-    // zero_crosses, a descent through the changeover rarely survived 20
-    // commutations: THE engage lottery (forensic: ci descending
-    // 2676→853, 30/30 still polling, sawtooth zc resets).
-    let changeover_met = if strict_changeover {
-        zc >= OLD_ROUTINE_EXIT_ZC && ci <= exit_interval
+        // Interrupt mode.
+        let to_old = crate::fast_math::div3_i32(e_com) as u32 > exit_interval + 500;
+        if to_old {
+            shared.set_old_routine_isr0(true);
+        }
+        let new_ci = bemf.update_timing_from_timer(ci0);
+        shared.set_commutation_interval(new_ci);
+        // Polling/interrupt exclusivity (AM32 main.c commutate
+        // am32_isr.rs:122-124): the comparator interrupt path is live ONLY
+        // in interrupt mode. rm32 previously enabled unconditionally, so
+        // both BEMF paths ran concurrently during old_routine —
+        // double-commutation risk and inconsistent interval updates.
+        if !to_old {
+            comp.enable_interrupts();
+        }
+        bemf.reset_after_commutation();
+        shared.increment_zero_crosses_isr0();
     } else {
-        ci < exit_interval
-    };
-    if !was_interrupt_mode && shared.old_routine() && changeover_met {
-        shared.transition(MotorEvent::BemfLocked);
-        // Changeover: arm the interrupt path now (AM32 zcfoundroutine
-        // enables comparator interrupts at this exact transition).
-        comp.enable_interrupts();
+        // Polling mode (old_routine): comparator interrupts stay off.
+        bemf.reset_after_commutation();
+        shared.increment_zero_crosses_isr0();
+        let zc = shared.zero_crosses();
+        // Polling→interrupt changeover (AM32): the
+        // zc>=20 form applies ONLY with stall_protection / rc_car_reverse;
+        // the normal path is `ci < changeover` ALONE. rm32 previously
+        // required zc>=20 unconditionally — and since spin-up desyncs reset
+        // zero_crosses, a descent through the changeover rarely survived 20
+        // commutations: THE engage lottery (forensic: ci descending
+        // 2676→853, 30/30 still polling, sawtooth zc resets).
+        let changeover_met = if strict_changeover {
+            zc >= OLD_ROUTINE_EXIT_ZC && ci0 <= exit_interval
+        } else {
+            ci0 < exit_interval
+        };
+        if changeover_met {
+            shared.transition_isr0(MotorEvent::BemfLocked);
+            // Changeover: arm the interrupt path now (AM32 zcfoundroutine
+            // enables comparator interrupts at this exact transition).
+            comp.enable_interrupts();
+        }
     }
 }
 
@@ -388,7 +428,7 @@ pub fn bemf_zero_cross<C: hal::Comparator, I: hal::IntervalTimer, T: hal::ComTim
     com_timer: &mut T,
 ) -> bool {
     for _ in 0..bemf.filter_level() {
-        if comp.output_level() == commutation.rising() {
+        if comp.filter_read() == commutation.rising() {
             return false;
         }
     }

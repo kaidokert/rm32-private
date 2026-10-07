@@ -28,6 +28,19 @@ pub enum UartCmd {
     Info,
     /// 'b' — request a black-box dump (stub until the blackbox rung).
     BbDump,
+    /// 'K' — inject one desync: the next commutation skips a step (bench
+    /// fault injection, to exercise desync detection and recovery).
+    DesyncInject,
+    /// 'C' — coast measurement: bridge off, then time the rotor's free
+    /// BEMF crossings on one phase (true rotor speed, independent of the
+    /// commutation loop's own interval estimate).
+    CoastMeasure,
+    /// 'R' — arm the time-series recorder at 10 ms per sample (steps).
+    RecArmFast,
+    /// 'Y' — arm the time-series recorder at 50 ms per sample (ladders).
+    RecArmSlow,
+    /// 'X' — freeze and dump the time-series recorder (after the stop).
+    RecDump,
     /// 'D' — toggle complementary (damped) PWM drive live (bench
     /// diagnostic: splits drive-mode physics from spin-up dynamics).
     DriveToggle,
@@ -130,6 +143,11 @@ impl UartDuty {
             b'i' => Some(UartCmd::Info),
             b'b' => Some(UartCmd::BbDump),
             b'D' => Some(UartCmd::DriveToggle),
+            b'K' => Some(UartCmd::DesyncInject),
+            b'C' => Some(UartCmd::CoastMeasure),
+            b'R' => Some(UartCmd::RecArmFast),
+            b'Y' => Some(UartCmd::RecArmSlow),
+            b'X' => Some(UartCmd::RecDump),
             b'A' => Some(UartCmd::AdcToggle),
             b'V' => Some(UartCmd::WatchArm),
             b'J' => Some(UartCmd::InjToggle),
@@ -371,6 +389,26 @@ mod tests {
             last = p.step(b);
         }
         last
+    }
+
+    #[test]
+    fn recorder_keys_parse() {
+        let mut p = UartDuty::default();
+        assert_eq!(p.step(b'R'), Some(UartCmd::RecArmFast));
+        assert_eq!(p.step(b'Y'), Some(UartCmd::RecArmSlow));
+        assert_eq!(p.step(b'X'), Some(UartCmd::RecDump));
+    }
+
+    #[test]
+    fn coast_measure_key_parses() {
+        let mut p = UartDuty::default();
+        assert_eq!(p.step(b'C'), Some(UartCmd::CoastMeasure));
+    }
+
+    #[test]
+    fn desync_inject_key_parses() {
+        let mut p = UartDuty::default();
+        assert_eq!(p.step(b'K'), Some(UartCmd::DesyncInject));
     }
 
     #[test]

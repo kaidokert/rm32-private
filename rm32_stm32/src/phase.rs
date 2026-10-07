@@ -134,6 +134,102 @@ pub fn l431_atomic_com_step(step: u8, comp: bool) {
     }
 }
 
+/// G071 port of the L431 atomic commutation writer (same AM32 G0_A pin map:
+/// A = PA10/PB1, B = PA9/PB0, C = PA8/PA7; G0 GPIO MODER @0x00, BSRR @0x18).
+/// The register images are computed at compile time per (comp, step), so
+/// the commutation ISR does one table lookup, two BSRR writes and two MODER
+/// read-modify-writes. The generic sequential writer it replaces was 543
+/// instructions (AM32's comStep: 359) — the dominant share of the COM root
+/// in the binz WCET gate. Same order as the L431 writer: BSRR first, then
+/// MODER, so the final pin levels land together.
+#[cfg(feature = "stm32g071")]
+mod g071_atomic {
+    const AF: u32 = 0b10;
+    const OUT: u32 = 0b01;
+    /// phase index 0=A,1=B,2=C -> (hi pin @GPIOA, lo pin, lo on GPIOA)
+    const PINS: [(u32, u32, bool); 3] = [(10, 1, false), (9, 0, false), (8, 7, true)];
+    /// per step 1..6: (pwm phase, low phase) — the third phase floats.
+    const ROLES: [(usize, usize); 6] = [(0, 1), (2, 1), (2, 0), (1, 0), (1, 2), (0, 2)];
+
+    /// [bsrr_a, bsrr_b, moder_a_mask, moder_a_val, moder_b_mask, moder_b_val]
+    const fn plan(step_ix: usize, comp: bool) -> [u32; 6] {
+        let (pwm, low) = ROLES[step_ix];
+        let mut r = [0u32; 6];
+        let mut idx = 0;
+        while idx < 3 {
+            let (hi, lo, lo_a) = PINS[idx];
+            // (hi_mode, lo_mode, hi_level: 0 none/1 low, lo_level: 0 none/1 low/2 high)
+            let (hi_mode, lo_mode, hi_lvl, lo_lvl) = if idx == pwm {
+                // driven leg: hi AF; lo AF (complementary) or OUTPUT-low (diode)
+                (
+                    AF,
+                    if comp { AF } else { OUT },
+                    0u32,
+                    if comp { 0u32 } else { 1u32 },
+                )
+            } else if idx == low {
+                (OUT, OUT, 1, 2) // low leg: hi off, low FET on
+            } else {
+                (OUT, OUT, 1, 1) // floating leg: both off
+            };
+            r[2] |= 0b11 << (hi * 2);
+            r[3] |= hi_mode << (hi * 2);
+            if hi_lvl == 1 {
+                r[0] |= 1 << (hi + 16);
+            }
+            let bsrr_lo = match lo_lvl {
+                1 => 1 << (lo + 16),
+                2 => 1 << lo,
+                _ => 0,
+            };
+            if lo_a {
+                r[2] |= 0b11 << (lo * 2);
+                r[3] |= lo_mode << (lo * 2);
+                r[0] |= bsrr_lo;
+            } else {
+                r[4] |= 0b11 << (lo * 2);
+                r[5] |= lo_mode << (lo * 2);
+                r[1] |= bsrr_lo;
+            }
+            idx += 1;
+        }
+        r
+    }
+
+    const fn table(comp: bool) -> [[u32; 6]; 6] {
+        let mut t = [[0u32; 6]; 6];
+        let mut s = 0;
+        while s < 6 {
+            t[s] = plan(s, comp);
+            s += 1;
+        }
+        t
+    }
+
+    static PLAN: [[[u32; 6]; 6]; 2] = [table(false), table(true)];
+
+    const GPIOA: u32 = 0x5000_0000;
+    const GPIOB: u32 = 0x5000_0400;
+
+    #[inline]
+    pub fn com_step(step: u8, comp: bool) {
+        let Some(p) = PLAN[comp as usize].get((step as usize).wrapping_sub(1)) else {
+            return;
+        };
+        // SAFETY: G071 GPIOA/GPIOB BSRR (write-only set/reset) and MODER
+        // (RMW of only the six gate pins' fields); ISR-exclusive owner of
+        // the gate-pin modes while running.
+        unsafe {
+            core::ptr::write_volatile((GPIOA + 0x18) as *mut u32, p[0]);
+            core::ptr::write_volatile((GPIOB + 0x18) as *mut u32, p[1]);
+            let ma = GPIOA as *mut u32;
+            core::ptr::write_volatile(ma, (core::ptr::read_volatile(ma) & !p[2]) | p[3]);
+            let mb = GPIOB as *mut u32;
+            core::ptr::write_volatile(mb, (core::ptr::read_volatile(mb) & !p[4]) | p[5]);
+        }
+    }
+}
+
 /// Pulse output toggle function — stored as fn pointer to avoid storing raw addresses.
 /// Monomorphized per pin type at `enable_pulse_output` call site.
 type PulseToggleFn = fn(u32);
@@ -277,6 +373,21 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
             l431_atomic_com_step(step, self.effective_comp_pwm());
             return;
         }
+        // G071: same writer, compile-time register images (binz WCET gate).
+        // On a board without an enable-style bridge (build cfg) the atomic
+        // writer is the WHOLE function: the sequential writer below is not
+        // compiled in, so it is not on the COM ISR's longest path either.
+        #[cfg(all(feature = "stm32g071", not(rm32_bridge_enable)))]
+        {
+            g071_atomic::com_step(step, self.effective_comp_pwm());
+            return;
+        }
+        #[cfg(all(feature = "stm32g071", rm32_bridge_enable))]
+        if !self.bridge_enable {
+            g071_atomic::com_step(step, self.effective_comp_pwm());
+            return;
+        }
+        #[allow(unreachable_code)]
         match step {
             1 => {
                 Self::phase_float::<CH, CL>();
