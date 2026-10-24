@@ -13,6 +13,7 @@ current_offset: 0
 current_adc_channel: 8
 voltage_adc_channel: 11
 stall_protect_interval: 6500
+bench_dir_reversed: true  # prop pushes into the table (normal rotation lifts the rig)
 min_bemf_counts: 3
 bemf_pins:
   phase_a: PB7   # COMP2 INM IO2

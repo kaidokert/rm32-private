@@ -41,6 +41,12 @@ name = "bringup_pac"
 path = "examples/bringup_pac.rs"
 required-features = ["stm32l431"]
 
+# Bench UART wiring check: echo S/PA2 (USART2 RX) -> TX1/PB6 (USART1 TX).
+[[example]]
+name = "uart_echo"
+path = "examples/uart_echo.rs"
+required-features = ["stm32l431"]
+
 [features]
 default = ["stm32g071"]
 stm32g071 = ["dep:stm32g0xx-hal"]
