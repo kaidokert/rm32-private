@@ -451,6 +451,19 @@ pub const BOARD_EXT: rm32_stm32::board_ext::BoardExt = rm32_stm32::board_ext::Bo
     if board.bridge_enable {
         println!("cargo:rustc-cfg=rm32_bridge_enable");
     }
+    // Bench supply the image's safety guard is built for (bench builds
+    // only; production has no bench guard). `psu` = the shared 5 A bench
+    // PSU, `battery` = the 3S pack. Unset keeps the per-board default
+    // (binz: battery limits; L431: classify the supply from rest voltage).
+    println!("cargo:rerun-if-env-changed=BENCH_SUPPLY");
+    println!("cargo::rustc-check-cfg=cfg(rm32_supply_psu)");
+    println!("cargo::rustc-check-cfg=cfg(rm32_supply_battery)");
+    match std::env::var("BENCH_SUPPLY").as_deref() {
+        Ok("psu") => println!("cargo:rustc-cfg=rm32_supply_psu"),
+        Ok("battery") => println!("cargo:rustc-cfg=rm32_supply_battery"),
+        Ok(other) => panic!("BENCH_SUPPLY must be `psu` or `battery`, got `{other}`"),
+        Err(_) => {}
+    }
 
     fs::write(&dest, code).unwrap();
 

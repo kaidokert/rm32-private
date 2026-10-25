@@ -129,6 +129,24 @@ pub const BINZ_BATTERY: GuardLimits = GuardLimits {
     ..BINZ_BRINGUP
 };
 
+/// Vimdrones L431 on the shared 5 A bench PSU (operator, 2026-10-25):
+/// 4.5 A held for 85 ms (the L431's per-sample current check; it has no
+/// split-EWMA feed, so `oc_surge_ma = 0` selects the instantaneous test),
+/// 10 % sag vs the running bus reference, 9 V floor, 14 V over-voltage,
+/// with binz's debounce times. Replaces the rest-voltage classification,
+/// which reads the ~11.7 V PSU as a battery (15 A).
+pub const L431_PSU: GuardLimits = GuardLimits {
+    vbat_floor_mv: 9_000,
+    vbat_debounce_ms: 5,
+    oc_kill_ma: 4500,
+    oc_debounce_ms: 85,
+    oc_surge_ma: 0,
+    ov_kill_mv: 14_000,
+    ov_debounce_ms: 60,
+    sag_pm: 100,
+    sag_debounce_ms: 5,
+};
+
 /// DRV8304 wake time after ENABLE rises (datasheet tWAKE <= 1 ms); nFAULT
 /// is ignored this long after the gate driver is enabled.
 const FAULT_WAKE_MS: u32 = 2;

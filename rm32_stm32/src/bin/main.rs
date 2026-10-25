@@ -478,17 +478,45 @@ fn main() -> ! {
     // (14.0 V OV, 15 A OC) — a 4S production pack would trip the latched
     // OVOLT kill within ~60 ms of classification. Production protection
     // is the AM32 mechanism set (LVC, current-limit PID, stuck rotor).
+    // L431/G431: classify the supply from rest voltage, unless the image is
+    // built for the bench PSU (BENCH_SUPPLY=psu → fixed L431_PSU limits).
     #[cfg(all(
         feature = "debuguart",
-        any(feature = "stm32l431", feature = "stm32g431")
+        any(feature = "stm32l431", feature = "stm32g431"),
+        not(rm32_supply_psu)
     ))]
     let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::new(Chip::CPU_FREQUENCY_MHZ);
-    // G071 (binz bench): fixed limits from `bench_guard::BINZ_BATTERY`
-    // (sustained / surge current, relative sag, 9 V floor, OVOLT, nFAULT).
+    #[cfg(all(
+        feature = "debuguart",
+        any(feature = "stm32l431", feature = "stm32g431"),
+        rm32_supply_psu
+    ))]
+    let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::with_limits(
+        Chip::CPU_FREQUENCY_MHZ,
+        rm32_stm32::bench_guard::L431_PSU,
+    );
+    // G071 (binz bench): fixed limits (sustained / surge current, relative
+    // sag, 9 V floor, OVOLT, nFAULT): BINZ_BRINGUP for the 5 A PSU
+    // (BENCH_SUPPLY=psu), BINZ_BATTERY otherwise.
     #[cfg(all(feature = "debuguart", feature = "stm32g071"))]
     let mut bench_guard = rm32_stm32::bench_guard::BenchGuard::with_limits(
         Chip::CPU_FREQUENCY_MHZ,
-        rm32_stm32::bench_guard::BINZ_BATTERY,
+        if cfg!(rm32_supply_psu) {
+            rm32_stm32::bench_guard::BINZ_BRINGUP
+        } else {
+            rm32_stm32::bench_guard::BINZ_BATTERY
+        },
+    );
+    #[cfg(feature = "debuguart")]
+    rm32_stm32::dprintln!(
+        "[rm32] bench guard: supply={}",
+        if cfg!(rm32_supply_psu) {
+            "psu"
+        } else if cfg!(rm32_supply_battery) {
+            "battery"
+        } else {
+            "default"
+        }
     );
     // Bench UART control state: parser + committed throttle + last-command
     // timestamp for the 3 s deadman (a dead host script must not leave
