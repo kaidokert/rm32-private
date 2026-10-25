@@ -1,0 +1,18 @@
+# Vectors the AM32 C harness (../am32_reqcheck, am32_harness) fails while
+# the Rust harness passes them. Each is a behavioural difference between the
+# vector's expectation (written against rm32) and AM32's C code; none is
+# triaged yet (gc increment 1, 2026-10-25: plumbing fixed, divergences
+# parked). scripts/gc_gate.sh fails on any C failure NOT listed here, and
+# reports listed vectors that start passing so they can be removed.
+#
+# vector                  first mismatch on the C harness
+beacon_tones            # tick=1 play_tone_flag=0, expected 2
+bidir_autodetect        # tick=110 dshot_telemetry=1, expected 0
+desync_detection        # tick=13 old_routine=1, expected 0
+edt_armed_throttle_gate # tick=1 newinput=0, expected 1500
+edt_disarm_on_zero      # tick=1 edt_arm_enable=0, expected 1
+edt_voltage_temp        # edt_frame=1606 (AM32: current 3500/50=70), expected 1539 (rm32 sends 3) — suspected rm32 unit bug
+protocol_reconfirm      # tick=6 dshot_output_prescaler=1, expected 3
+sine_changeover         # tick=2 step=6, expected 5
+sine_startup            # tick=1 input=160, expected 0
+temperature_limit       # tick=41 duty_cycle_maximum=2000, expected <2000

@@ -10,7 +10,11 @@ Usage:
         assert state['armed'] == 1
 """
 
+import queue
 import subprocess
+import threading
+
+REPLY_TIMEOUT_S = 5
 import os
 from pathlib import Path
 
@@ -48,24 +52,46 @@ class AM32Harness:
             text=True,
             bufsize=1,  # line buffered
         )
+        # Reader thread: every reply goes through a queue so a harness that
+        # never answers (unknown command -> stderr only) fails the vector
+        # after REPLY_TIMEOUT_S instead of blocking the suite forever.
+        self._q = queue.Queue()
+        threading.Thread(target=self._pump, args=(self.proc.stdout, self._q),
+                         daemon=True).start()
         # Wait for ready marker
-        line = self.proc.stdout.readline().strip()
+        line = self._recv()
         if line != "ready":
             raise RuntimeError(f"Expected 'ready', got '{line}'")
 
     def stop(self):
         if self.proc:
-            self._send("quit")
-            self.proc.wait(timeout=5)
+            try:
+                self._send("quit")
+                self.proc.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                self.proc.kill()
             self.proc = None
 
     def _send(self, cmd):
         self.proc.stdin.write(cmd + "\n")
         self.proc.stdin.flush()
 
+    @staticmethod
+    def _pump(stream, q):
+        for line in stream:
+            q.put(line)
+        q.put(None)
+
     def _recv(self):
-        line = self.proc.stdout.readline().strip()
-        return line
+        try:
+            line = self._q.get(timeout=REPLY_TIMEOUT_S)
+        except queue.Empty:
+            raise TimeoutError(
+                f"harness {self.exe_path} sent no reply in {REPLY_TIMEOUT_S} s"
+            ) from None
+        if line is None:
+            raise RuntimeError(f"harness {self.exe_path} exited")
+        return line.strip()
 
     def _parse_state(self, line):
         """Parse 'key=value key=value ...' into a dict of ints."""
