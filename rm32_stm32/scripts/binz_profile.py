@@ -97,7 +97,11 @@ def main() -> int:
     ts = time.strftime("%Y%m%d_%H%M%S")
     base = pathlib.Path("captures") / a.board / f"profile_{a.name}_{ts}"
     base.parent.mkdir(parents=True, exist_ok=True)
-    bench = spin.Bench(a.port or board["port"], base.with_suffix(".txt"),
+
+    def out(ext: str) -> pathlib.Path:
+        # Not with_suffix: a step name like "s02.1-r1" contains a dot.
+        return base.parent / f"{base.name}{ext}"
+    bench = spin.Bench(a.port or board["port"], out(".txt"),
                        board["baud"], board["need"])
     key = "R" if a.rec == "fast" else "Y"
     meta = {"board": a.board, "name": a.name, "profile": segs, "period_s": period_s, "segments": [], "kill": None}
@@ -198,7 +202,7 @@ def main() -> int:
     if not whole:
         print(f"recorder dump never arrived whole ({len(rows)}/{n} rows) — no CSV written")
         return 1
-    with base.with_suffix(".csv").open("w") as f:
+    with out(".csv").open("w") as f:
         f.write("t_s,duty,ehz,ma,mv,old_routine,dsy4\n")
         for k, ln in enumerate(rows):
             df, ci, ma, mv = (int(x) for x in ln.split()[1:5])
@@ -206,9 +210,9 @@ def main() -> int:
             ehz = round(2e6 / (6 * ci), 1) if ci and duty else 0.0
             f.write(f"{k * period_s:.3f},{duty},{ehz},{ma},{mv},{(df >> 11) & 1},{df >> 12}\n")
     meta["rows"] = len(rows)
-    base.with_suffix(".json").write_text(json.dumps(meta, indent=1))
+    out(".json").write_text(json.dumps(meta, indent=1))
     print(f"{a.name}: {'OK' if ok else 'ABORTED'}; {len(rows)} samples at {period_s * 1000:.0f} ms; "
-          f"{base.with_suffix('.csv')}")
+          f"{out('.csv')}")
     if meta.get("r"):
         r = meta["r"]
         print(f"  r: duty={r.get('duty')} imean_ma={r.get('imean_ma')} dsy={r.get('dsy')}")

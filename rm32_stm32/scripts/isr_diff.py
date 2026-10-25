@@ -93,6 +93,8 @@ def dump_root(funcs, root: str) -> tuple[list[str], list[str]]:
         i += 1
         start, body = funcs[name]
         text.append(f"{label[name]}:")
+        fstart = len(text)
+        movw: dict[str, int] = {}  # register -> text index of its last movw
         for _, mn, ops in body:
             ops = ops.split("@")[0].split(";")[0].strip()
             if mn == ".word":
@@ -115,6 +117,20 @@ def dump_root(funcs, root: str) -> tuple[list[str], list[str]]:
                     return f"<{readable(tgt)}+{off}>"
                 ops = TARGET.sub(sub, ops)
             text.append(f"    {mn} {ops}".rstrip())
+            # v7-M builds addresses as movw lo / movt hi: mask the pair when
+            # it forms a flash/SRAM address (a .word in the literal pool on
+            # v6-M is masked above).
+            m = re.fullmatch(r"(movw|movt)(?:\.w)?\s+(\w+),\s*#(\S+)", f"{mn} {ops}")
+            if m:
+                reg, imm = m.group(2), int(m.group(3), 0)
+                if m.group(1) == "movw":
+                    movw[reg] = len(text) - 1
+                elif reg in movw and movw[reg] >= fstart:
+                    j = movw.pop(reg)
+                    lo = int(re.search(r"#(\S+)", text[j]).group(1), 0)
+                    if is_ram_or_flash((imm << 16) | lo):
+                        text[j] = re.sub(r"#\S+", "#ADDR", text[j])
+                        text[-1] = re.sub(r"#\S+", "#ADDR", text[-1])
     names = [f"{label[n]} {readable(n)}" for n in order]
     return text, names
 

@@ -13,7 +13,9 @@ onto the recorder's sample clock.
 
 --bands groups captures by (board, test name without the run timestamp,
 segment index) and writes min/max per quantity across runs: the S1
-acceptance bands are min..max widened by --widen (default 5 %).
+acceptance bands are min..max widened by --widen (default 5 %), never by
+less than the board's --ma-floor on mA; segments shorter than
+--min-settled seconds get no eHz/mA band (dsy/kill still gate them).
 Refuses captures with no CSV, a kill, or a segment with no samples.
 """
 
@@ -50,6 +52,7 @@ def summarize(js: pathlib.Path, tail: float):
             raise SystemExit(f"{js}: segment {i} ({s['throttle']} %) has no samples")
         segs.append({
             "throttle": s["throttle"],
+            "secs": end - start,
             "duty": statistics.mean(int(r["duty"]) for r in sel),
             "ehz": statistics.mean(float(r["ehz"]) for r in sel),
             "ma": statistics.mean(int(r["ma"]) for r in sel),
@@ -78,7 +81,7 @@ def check(out, bands) -> int:
     test has no band is a failure (never silently skipped)."""
     fails = 0
     for s in out:
-        key = f"{s['board']}/{re.sub(r'^s\d+-', 's00-', s['test'])}"
+        key = f"{s['board']}/{re.sub(r'^s[\d.]+-', 's00-', s['test'])}"
         b = bands.get(key)
         why = []
         if b is None:
@@ -93,6 +96,8 @@ def check(out, bands) -> int:
             else:
                 for g, bg in zip(s["segments"], b["segments"]):
                     for q in ("duty", "ehz", "ma"):
+                        if bg[q] is None:  # not banded (transient segment)
+                            continue
                         lo, hi = bg[q]
                         if not lo <= g[q] <= hi:
                             why.append(f"{g['throttle']}% {q}={g[q]:.1f} outside {lo}..{hi}")
@@ -109,6 +114,10 @@ def main() -> int:
     ap.add_argument("--tail", type=float, default=2.0)
     ap.add_argument("--bands", type=pathlib.Path)
     ap.add_argument("--widen", type=float, default=0.05)
+    ap.add_argument("--ma-floor", action="append", default=[], metavar="BOARD=MA",
+                    help="minimum mA half-widening for a board (its ADC count, e.g. l431=27)")
+    ap.add_argument("--min-settled", type=float, default=0.0,
+                    help="segments shorter than this (s) get no eHz/mA band (never settle)")
     ap.add_argument("--check", type=pathlib.Path,
                     help="verify captures against a saved bands JSON; exit 1 on any miss")
     a = ap.parse_args()
@@ -127,6 +136,7 @@ def main() -> int:
         groups: dict[tuple, list] = {}
         for s in out:
             groups.setdefault((s["board"], s["test"]), []).append(s)
+        floor = {k: float(v) for k, v in (f.split("=") for f in a.ma_floor)}
         bands = {}
         for (board, test), runs in sorted(groups.items()):
             nseg = {len(r["segments"]) for r in runs}
@@ -134,12 +144,19 @@ def main() -> int:
                 raise SystemExit(f"{board}/{test}: runs disagree on segment count {nseg}")
             segb = []
             for k in range(nseg.pop()):
-                b = {"throttle": runs[0]["segments"][k]["throttle"]}
+                b = {"throttle": runs[0]["segments"][k]["throttle"],
+                     "secs": round(runs[0]["segments"][k]["secs"], 2)}
+                transient = b["secs"] < a.min_settled
                 for q in ("duty", "ehz", "ma"):
                     v = [r["segments"][k][q] for r in runs]
-                    lo, hi = min(v), max(v)
-                    b[q] = [round(lo - a.widen * abs(lo), 1), round(hi + a.widen * abs(hi), 1)]
                     b[q + "_runs"] = [round(x, 1) for x in v]
+                    if transient and q != "duty":
+                        b[q] = None
+                        continue
+                    lo, hi = min(v), max(v)
+                    f = floor.get(board, 0.0) if q == "ma" else 0.0
+                    b[q] = [round(lo - max(a.widen * abs(lo), f), 1),
+                            round(hi + max(a.widen * abs(hi), f), 1)]
                 segb.append(b)
             bands[f"{board}/{test}"] = {
                 "runs": [r["file"] for r in runs],

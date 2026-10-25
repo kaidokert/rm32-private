@@ -100,6 +100,17 @@ desyncs where the baseline had zero, every rung reaches Running, WCET not
 worse than baseline. The bands are written into the log at the end of S1
 and do not move afterwards without the operator agreeing.
 
+**Bands v4 (operator, 2026-10-25, during S2.1).** mA bands are min..max
+±max(5 %, 30 mA); built from all 55 s00 runs (6 rounds plus the S2.1
+bisect runs); the 0.35 s walk-down segments keep the duty/dsy/kill gates
+but no eHz/mA band. Rebuild command: `gc_summary.py --bands
+docs/gc_bands_s00.json --ma-floor l431=30 --ma-floor binz=30
+--min-settled 1.0 <runs>` (runs are listed in the JSON). Why: the L431
+current is one ADC count = 26.7 mA and is software-triggered from the main
+loop, so a layout-only change (s00 + 8 jumped-over NOPs) moves the 10 %
+reading 54 → 80 mA; binz's 10 % current spreads 117–170 mA across runs
+(per-run 3-shunt zero); three runs had under-sampled both.
+
 ## 4. Step classes
 
 | Class | Meaning | Bench proof |
