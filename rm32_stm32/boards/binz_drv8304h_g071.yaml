@@ -23,7 +23,7 @@ bootloader: false
 gate_enable_pin: PD1     # DRV8304 ENABLE, high only while armed
 nfault_pin: PB14         # DRV8304 nFAULT, open-drain active low
 current_shunt_channels: [0, 1, 4]   # PA0, PA1, PA4 low-side CSAs
-bench_dir_reversed: true # operator-confirmed rotation (firmware50 Wiring=Reverse)
+bench_dir_reversed: false # operator 2026-10-25: forward, as every rm32 binz qualification actually ran (the flag never applied before ba775b6); firmware50 ran Wiring=Reverse
 bench_pwm_khz: 48       # firmware50's run carrier (AM32 pwm_frequency); 24 kHz ripple on this low-L motor
 bench_fixed_pwm: true    # AM32 variable_pwm=0: hold 48 kHz (variable maps ARR..ARR/2 = 48-96 kHz at pwm_frequency 48)
 bench_sine_start: true   # AM32 sine start: the six-step stalled-rotor kick trips the 500 mA bring-up kill
