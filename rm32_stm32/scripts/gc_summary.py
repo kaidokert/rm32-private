@@ -147,9 +147,7 @@ def main() -> int:
                 "dsy_max": 0, "kills": 0,
                 "mv_max_seen": max(r["mv_max"] for r in runs),
             }
-        a.bands.write_text(json.dumps(bands, indent=1) + "
-", newline="
-")
+        a.bands.write_text(json.dumps(bands, indent=1) + "\n", newline="\n")
         print(f"bands -> {a.bands} ({len(bands)} tests)")
     return 0
 
