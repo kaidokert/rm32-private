@@ -164,3 +164,39 @@ increment.
 | 40 % | 783..865 | 1769 / 1772 / 1760 | 1672..1861 | 1022 / 1018 / 1021 | 967..1073 |
 | 50 % | 969..1071 | 2083 / 2063 / 2084 | 1960..2188 | 1485 / 1487 / 1498 | 1411..1573 |
 | 60 % | 1155..1277 | 2327 / 2330 / 2312 | 2196..2446 | 2062 / 2081 / 2080 | 1959..2185 |
+
+---
+
+## Bands v4 (operator, 2026-10-25, during S2.1) — commit ac9184f
+
+The S1 mA bands were narrower than the instruments: the L431 current is one
+ADC count = 26.7 mA and is software-triggered from main context, so a
+layout-only control image (s00 + 8 jumped-over NOPs) reads 80 instead of
+54 mA at 10 %; binz's 10 % current spreads 117–170 mA across 35 known-good
+segments (per-run 3-shunt zero); the s00 image itself failed the old R3
+25 % band. Re-baselined with s00 rounds 4–6 (24 runs, all clean) plus 7
+bisect s00 runs = 55 runs. mA band = min..max ±max(5 %, 30 mA); the 0.35 s
+walk-down segments keep duty/dsy/kill gates but get no eHz/mA band. eHz
+stays ±5 %. `docs/gc_bands_s00.json` (run list inside). Self-check 55/55.
+
+## S2.1 — saturate the interval count (CODE) — tag gc-s02.1-psu
+
+`isr_logic.rs` bemf_polling and bemf_zero_cross: `count().min(u16::MAX as
+u32) as u16` (the design doc named only the polling site; the zero-cross
+path had the same wrap). Host test with a 70 000-count mock (fails without
+the fix: 4464). Functionally dead on both bench chips (16-bit interval
+counts) — the bench difference is layout only.
+
+| | L431 | binz |
+|---|---|---|
+| ELF sha256 | `613b3ab7d6991e0b…` | `d193f0c32bc16e61…` |
+| text | 54484 (+8) | 56692 (+16) |
+
+Host gate PASS (s02.1). ISR diff vs s00: only the COMP and TIM6 roots
+differ on both chips (the two changed call trees; register allocation
+around the new compare). binz WCET: ADC_COMP 684 → 698 cyc @2ws (+5
+insns), TIM6 5114 → 5118, TIM14 and DMA unchanged.
+
+Bench (v4 bands): 14 runs, all R1–R4 on both boards, `--check` 14/14,
+dsy = 0, no kills, no reboots. Battery: no (no control behaviour change).
+Verdict PASS.

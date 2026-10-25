@@ -1144,6 +1144,32 @@ mod tests {
     }
 
     #[test]
+    fn isr_bemf_zero_cross_saturates_wide_interval_count() {
+        // A 32-bit interval timer past 0xFFFF must saturate, not wrap
+        // 70_000 into 4_464 (a short interval from a long one).
+        let comm = crate::commutation::Commutation::new(); // rising=true
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut comp = MockComp {
+            level: false,
+            mask_called: false,
+            enable_calls: 0,
+        };
+        let mut interval = MockInterval { count: 70_000 };
+        let mut com_timer = MockComTimer::new();
+        bemf.set_filter_level(1);
+
+        assert!(isr_logic::bemf_zero_cross(
+            &comm,
+            &mut bemf,
+            &mut comp,
+            &mut interval,
+            &mut com_timer
+        ));
+        assert_eq!(bemf.this_zc_time(), u16::MAX);
+        assert_eq!(interval.count, 0);
+    }
+
+    #[test]
     fn isr_bemf_zero_cross_filtered_out() {
         let comm = crate::commutation::Commutation::new(); // rising=true
         let mut bemf = crate::control::state::BemfState::default();

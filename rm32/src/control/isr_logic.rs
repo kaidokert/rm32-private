@@ -291,7 +291,9 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     ctx.bemf.update(comp_level, rising);
 
     if ctx.bemf.zero_cross_detected(rising) {
-        let interval_count = ctx.hal.interval().count() as u16;
+        // Saturate, as the action path does above: a timer wider than 16 bits
+        // must not wrap a long interval into a short one.
+        let interval_count = ctx.hal.interval().count().min(u16::MAX as u32) as u16;
         ctx.hal.interval().set_count(0);
         let ci = ctx.shared.commutation_interval();
         let new_ci = ctx.bemf.record_zero_cross(interval_count, ci);
@@ -433,7 +435,7 @@ pub fn bemf_zero_cross<C: hal::Comparator, I: hal::IntervalTimer, T: hal::ComTim
         }
     }
     comp.mask_interrupts();
-    let count = interval.count() as u16;
+    let count = interval.count().min(u16::MAX as u32) as u16;
     interval.set_count(0);
     bemf.record_zc_timing(count);
     com_timer.set_and_enable(bemf.com_timer_delay());
