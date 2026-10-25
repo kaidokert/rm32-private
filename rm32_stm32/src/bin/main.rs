@@ -374,6 +374,11 @@ fn main() -> ! {
     }
 
     isr_state.forward = main_state.config.dir_reversed == 0;
+    // Publish the configured direction to the flag the control tick reads
+    // (AM32 sets `forward` from dir_reversed when it loads the EEPROM).
+    // Previously only the DShot command path published it, so a build
+    // without DShot input (benchuart) always spun forward.
+    isr::shared().set_forward(isr_state.forward);
     isr_state.edt_arm_enable = main_state.config.input_type() == rm32::config::InputType::EdtArm;
     isr_state
         .duty
