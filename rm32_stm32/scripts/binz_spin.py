@@ -81,13 +81,16 @@ def _terminate_as_interrupt(signum, frame):  # noqa: ARG001
 
 
 class Bench:
-    def __init__(self, port: str, log: pathlib.Path) -> None:
+    def __init__(self, port: str, log: pathlib.Path, baud: int = BAUD,
+                 need: tuple[str, ...] = ("i", "b")) -> None:
         import signal
 
         for name in ("SIGTERM", "SIGBREAK", "SIGINT"):
             if hasattr(signal, name):
                 signal.signal(getattr(signal, name), _terminate_as_interrupt)
-        self.s = serial.Serial(port, BAUD, timeout=0.02)
+        self.s = serial.Serial(port, baud, timeout=0.02)
+        # Reply lines `query` waits for (the L431 build answers `i` only).
+        self.need = need
         self.log = log.open("ab")
         self.buf = b""
         self.lines: list[str] = []
@@ -118,7 +121,7 @@ class Bench:
         self.send("i")
         got: dict[str, dict[str, int]] = {}
         end = time.time() + 1.0
-        while time.time() < end and not ("i" in got and "b" in got):
+        while time.time() < end and not all(k in got for k in self.need):
             self.pump(0.05)
             for ln in self.lines:
                 if ln.startswith("i step="):
@@ -130,8 +133,8 @@ class Bench:
                 elif "BENCH KILL" in ln:
                     got["kill"] = {"line": 1}
                     print(f"   !! {ln}")
-        if "i" not in got or "b" not in got:
-            raise RuntimeError("no i/b reply from firmware")
+        if not all(k in got for k in self.need):
+            raise RuntimeError(f"no {'/'.join(self.need)} reply from firmware")
         return got
 
     def stream(self, value: str, secs: float) -> None:

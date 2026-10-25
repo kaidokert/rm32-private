@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""binz recorded throttle profile: the qualification report's data source.
+"""Recorded throttle profile on either bench board: the qualification
+report's data source.
 
     python scripts/binz_profile.py --name step-10-60 --rec fast --profile 10:3,60:4,10:4
+    python scripts/binz_profile.py --board l431 --name step-10-60 --rec fast --profile 10:3,60:4,10:4
     python scripts/binz_profile.py --name ladder --rec slow --profile 10:5,20:5,...,10:5
     python scripts/binz_profile.py --name start1 --rec fast --from-arm --profile 10:4
 
-Arm (zero throttle 6 s), sine-start ramp 1-4 %, the standard walk-in
-5..10 % at 1 s each (as every qualification run; --no-walk skips it), then
+Arm (zero throttle 6 s); on binz the sine-start ramp 1-4 % and the
+standard walk-in 5..10 % at 1 s each (as every qualification run; --no-walk
+skips it; the L431 has no sine start and steps straight to the first
+segment, as every L431 run has); then
 each `throttle%:seconds` segment as an INSTANT setpoint (the firmware's own ramp shapes the response),
 then stop. The firmware's time-series recorder (rm32::bench_rec; `R` = 10 ms,
 `Y` = 50 ms per sample) is armed at the first segment, or at arming with
 --from-arm, and dumped after the stop with `X`. Nothing is sent while the
 bridge drives except setpoints.
 
-Outputs (captures/binz/):
+Outputs (captures/<board>/):
   profile_<name>_<ts>.txt   every line received (the raw capture)
   profile_<name>_<ts>.csv   t_s, duty, ehz, ma, mv, old_routine, dsy4
   profile_<name>_<ts>.json  segments with host start times relative to the
@@ -38,6 +42,15 @@ spin = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(spin)
 
 TICK_S = 50e-6  # control tick
+ROW = re.compile(r"rd \d+ \d+ -?\d+ \d+")
+
+# Per-board link and start preamble. binz: COM41 115200, sine start, `i`
+# answers with i/b lines. L431: COM18 2 Mbaud (benchuart), no sine start,
+# `i` answers with the i line only.
+BOARDS = {
+    "binz": {"port": spin.PORT, "baud": spin.BAUD, "need": ("i", "b"), "sine": True},
+    "l431": {"port": "COM18", "baud": 2_000_000, "need": ("i",), "sine": False},
+}
 
 
 def parse_profile(text: str) -> list[tuple[int, float]]:
@@ -61,25 +74,30 @@ def main() -> int:
     ap.add_argument("--no-walk", action="store_true",
                     help="skip the standard walk-in (5..10 %% at 1 s each) after the sine ramp: "
                          "the first segment is then a direct step from the sine band")
-    ap.add_argument("--port", default=spin.PORT)
+    ap.add_argument("--board", choices=sorted(BOARDS), default="binz")
+    ap.add_argument("--port", help="override the board's default port")
     a = ap.parse_args()
+    board = BOARDS[a.board]
     segs = parse_profile(a.profile)
     period_s = (200 if a.rec == "fast" else 1000) * TICK_S
     span = 2048 * period_s
-    walk = [] if a.no_walk else [(p, 1.0) for p in range(5, 11)]
-    total = sum(s for _, s in segs) + ((3.5 + len(walk)) if a.from_arm else 0.0)
+    ramp = list(spin.SINE_RAMP) if board["sine"] else []
+    walk = [] if a.no_walk or not board["sine"] else [(p, 1.0) for p in range(5, 11)]
+    total = sum(s for _, s in segs) + (sum(s for _, s in ramp + walk) if a.from_arm else 0.0)
     if total > span * 0.98:
         raise SystemExit(f"profile {total:.1f} s exceeds the recorder span {span:.1f} s")
     ts = time.strftime("%Y%m%d_%H%M%S")
-    base = pathlib.Path("captures/binz") / f"profile_{a.name}_{ts}"
+    base = pathlib.Path("captures") / a.board / f"profile_{a.name}_{ts}"
     base.parent.mkdir(parents=True, exist_ok=True)
-    bench = spin.Bench(a.port, base.with_suffix(".txt"))
+    bench = spin.Bench(a.port or board["port"], base.with_suffix(".txt"),
+                       board["baud"], board["need"])
     key = "R" if a.rec == "fast" else "Y"
-    meta = {"name": a.name, "profile": segs, "period_s": period_s, "segments": [], "kill": None}
+    meta = {"board": a.board, "name": a.name, "profile": segs, "period_s": period_s, "segments": [], "kill": None}
     ok = False
     try:
         bench.pump(0.2)
-        if bench.query()["b"]["killed"]:
+        q0 = bench.query()
+        if q0.get("b", q0["i"])["killed"]:
             raise RuntimeError("guard already latched — reset first")
         t0 = None
         bench.phase = "arm"
@@ -87,7 +105,7 @@ def main() -> int:
         if a.from_arm:
             bench.send(key)
             t0 = time.time()
-        for pct, secs in list(spin.SINE_RAMP) + walk:
+        for pct, secs in ramp + walk:
             bench.phase, bench.t_phase = f"sine {pct}", time.time()
             bench.stream(str(pct), secs)
         for i, (thr, secs) in enumerate(segs):
@@ -115,15 +133,24 @@ def main() -> int:
     finally:
         bench.kill()
         bench.pump(0.3)
-    # Read back (also after an abort: the recorder froze at the kill).
+    # Read back (also after an abort: the recorder froze at the kill). The
+    # record stays frozen, so a dump with a lost byte (the L431's CH340 at
+    # 2 Mbaud) is simply requested again; a dump is accepted only whole.
     try:
-        bench.lines.clear()
-        bench.send("X")
-        end = time.time() + 12
-        while time.time() < end and not any(ln.startswith("rec end") for ln in bench.lines):
-            bench.pump(0.2)
-        rows = [ln for ln in bench.lines if ln.startswith("rd ")]
-        head = [ln for ln in bench.lines if ln.startswith("rec n=")]
+        for attempt in range(8):
+            bench.lines.clear()
+            bench.send("X")
+            end = time.time() + 12
+            while time.time() < end and not any(ln.startswith("rec end") for ln in bench.lines):
+                bench.pump(0.2)
+            rows = [ln for ln in bench.lines if ln.startswith("rd ")]
+            head = [ln for ln in bench.lines if ln.startswith("rec n=")]
+            n = int(re.search(r"n=(\d+)", head[-1]).group(1)) if head else -1
+            whole = len(rows) == n and all(ROW.fullmatch(ln) for ln in rows)
+            if whole or not head:
+                break
+            print(f"  dump {attempt + 1}: {len(rows)}/{n} rows, "
+                  f"{sum(not ROW.fullmatch(ln) for ln in rows)} malformed; re-reading")
         q = bench.query()
         meta["r"] = q.get("r")
         meta["b"] = q.get("b")
@@ -136,9 +163,9 @@ def main() -> int:
     if not head:
         print("no recorder dump (firmware without the recorder?)")
         return 1
-    n = int(re.search(r"n=(\d+)", head[-1]).group(1))
-    if len(rows) != n:
-        print(f"WARNING: dump has {len(rows)} rows, header says {n}")
+    if not whole:
+        print(f"recorder dump never arrived whole ({len(rows)}/{n} rows) — no CSV written")
+        return 1
     with base.with_suffix(".csv").open("w") as f:
         f.write("t_s,duty,ehz,ma,mv,old_routine,dsy4\n")
         for k, ln in enumerate(rows):

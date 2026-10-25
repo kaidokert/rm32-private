@@ -9,6 +9,10 @@
 //! `wrapping_sub` consumer would see a ~2^32 elapsed time (the
 //! false-trip-on-underflow class).
 
+/// 80 MHz core clock: cycles per 50 us control tick.
+#[cfg(feature = "stm32l431")]
+pub const CYC_PER_TICK: u32 = 4000;
+
 #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
 #[inline]
 pub fn now_cyc() -> u32 {

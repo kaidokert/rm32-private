@@ -33,13 +33,19 @@ include!(concat!(env!("OUT_DIR"), "/board_config.rs"));
 
 #[entry]
 fn main() -> ! {
-    // binz bench time-series recorder (rm32::bench_rec): 2048 x 8 B = 16 KB,
+    // Bench time-series recorder (rm32::bench_rec): 2048 x 8 B = 16 KB,
     // fed from the main loop on the control-tick clock, dumped after a run.
     // A `static mut` in `#[entry]` is rewritten by cortex-m-rt into a safe
     // `&'static mut` (entry runs once).
-    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    #[cfg(all(
+        feature = "benchuart",
+        any(feature = "stm32g071", feature = "stm32l431")
+    ))]
     static mut REC: rm32::bench_rec::Recorder<2048> = rm32::bench_rec::Recorder::new();
-    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+    #[cfg(all(
+        feature = "benchuart",
+        any(feature = "stm32g071", feature = "stm32l431")
+    ))]
     let rec: &'static mut rm32::bench_rec::Recorder<2048> = REC;
     // Cortex-M PRIMASK is 0 after reset (IRQs enabled). Disable until ISR state
     // is installed and the explicit enable below at the bottom of main.
@@ -595,6 +601,9 @@ fn main() -> ! {
     // Recorder clock: last SysTick value and the sub-tick cycle carry.
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     let (mut rec_syst, mut rec_cyc): (u32, u32) = (0, 0);
+    // L431: last DWT cycle stamp and the sub-tick carry.
+    #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+    let (mut rec_last_cyc, mut rec_cyc): (u32, u32) = (rm32_stm32::bench_clock::now_cyc(), 0);
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     let mut dsy_at_h: u32 = 0;
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
@@ -918,8 +927,34 @@ fn main() -> ! {
                 shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
                 shared.transition(rm32::motor_mode::MotorEvent::Disarm);
                 // Keep the record of what led up to the kill.
-                #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                #[cfg(all(
+                    feature = "benchuart",
+                    any(feature = "stm32g071", feature = "stm32l431")
+                ))]
                 rec.freeze();
+            }
+        }
+        // L431 recorder feed: same Sample as binz, clocked by DWT cycles
+        // (80 MHz, 4000 per 50 us tick). Current is the AM32-filtered
+        // actual_current (mA) — the L431 has no per-ms metered sample.
+        #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
+        {
+            let now = rm32_stm32::bench_clock::now_cyc();
+            rec_cyc += now.wrapping_sub(rec_last_cyc);
+            rec_last_cyc = now;
+            let rec_n = rec_cyc / rm32_stm32::bench_clock::CYC_PER_TICK;
+            rec_cyc %= rm32_stm32::bench_clock::CYC_PER_TICK;
+            if rec_n > 0 {
+                rec.ticks(rec_n, || {
+                    rm32::bench_rec::Sample::pack(
+                        shared.duty_cycle(),
+                        shared.old_routine(),
+                        main_state.dsy_fast as u32,
+                        shared.commutation_interval(),
+                        shared.actual_current() as i32,
+                        shared.battery_voltage(),
+                    )
+                });
             }
         }
         // Gate policy: MOE + driver ENABLE follow armed (no-op on boards
@@ -1379,7 +1414,10 @@ fn main() -> ! {
                         UartCmd::RecArmFast | UartCmd::RecArmSlow => {
                             // Silent (sent while driving): 200 ticks = 10 ms,
                             // 1000 ticks = 50 ms at the 20 kHz control tick.
-                            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                            #[cfg(all(
+                                feature = "benchuart",
+                                any(feature = "stm32g071", feature = "stm32l431")
+                            ))]
                             rec.arm(if matches!(cmd, UartCmd::RecArmFast) {
                                 200
                             } else {
@@ -1388,7 +1426,10 @@ fn main() -> ! {
                         }
                         UartCmd::RecDump => {
                             // After the stop only (the host sends it then).
-                            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+                            #[cfg(all(
+                                feature = "benchuart",
+                                any(feature = "stm32g071", feature = "stm32l431")
+                            ))]
                             {
                                 rec.freeze();
                                 rm32_stm32::dprintln!(
@@ -1408,6 +1449,16 @@ fn main() -> ! {
                                     }
                                     if k % 32 == 0 {
                                         sys.reload_watchdog();
+                                    }
+                                    // L431 bench wire is a CH340 at 2 Mbaud,
+                                    // which drops bytes in long bursts: leave
+                                    // ~250 us of idle line after each row.
+                                    #[cfg(feature = "stm32l431")]
+                                    {
+                                        let t0 = rm32_stm32::bench_clock::now_cyc();
+                                        while rm32_stm32::bench_clock::now_cyc().wrapping_sub(t0)
+                                            < 20_000
+                                        {}
                                     }
                                 }
                                 rm32_stm32::dprintln!("rec end");
