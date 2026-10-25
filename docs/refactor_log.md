@@ -1,0 +1,162 @@
+# Generic-core refactor log
+
+One entry per step (docs/refactor_execution_plan.md §7). Bench captures are
+under `rm32_stm32/captures/<board>/` and gate artifacts under
+`captures/gc/<step>/` (both gitignored); the bands are committed as
+`docs/gc_bands_s00.json`.
+
+---
+
+## S0 / S1 — reference baseline (2026-10-25)
+
+**Tag** `gc-s00-baseline` (c235afa). **Class** baseline. **Supply** shared
+5 A PSU, ~11.65 V rest, both boards on it, separate motors (L431 prop rig
+fastened to a heavy box; binz motor in its box).
+
+**Images** (built by `scripts/gc_gate.sh s00`, `BENCH_SUPPLY=psu`):
+
+| board | sha256 | text / data / bss |
+|---|---|---|
+| L431 (`stm32l431,benchuart`, neutron_l431, reversed) | `c1bb391cc6062c12cee90493663696fa306af91cbf7be97126cb1bc56a9e471f` | 54476 / 1828 / 36196 |
+| binz (`stm32g071,benchuart`, binz_drv8304h_g071, forward) | `d9514648567f08bac816714bc241aa1b37fe0ee59fddb5be1a4d600ad68749c7` | 56676 / 1808 / 20764 |
+
+Public builds (text / data / bss): G071 40636 / 1800 / 1144, F051
+37652 / 1792 / 1144, L431 37440 / 1792 / 1144, G431 35876 / 1796 / 1140.
+
+**Host gate:** PASS — 376 host tests, clippy, 81/81 vectors on the Rust
+harness, AM32 C harness 71/81 with the 10 failures exactly the
+`tests/blackbox/c_known_diffs.txt` list, four public builds + two bench
+images linked (M0 audit on the thumbv6m links), ISR dumps written.
+
+**binz WCET** (`binz_wcet.py`, 2-wait-state fetch model):
+
+| root | prio | insns | AM32 | ratio | cyc@2ws | µs |
+|---|---|---|---|---|---|---|
+| TIM14 (COM) | 0 | 549 | 674 | 0.81 | 909 | 14.2 |
+| ADC_COMP | 0 | 215 | 131 | 1.64 | 684 | 10.7 |
+| TIM6 (tick) | 2 | 2647 | 1637 | 1.62 | 5114 | 79.9 |
+| DMA1_CHANNEL1 | 1 | 455 | – | – | 1409 | 22.0 |
+
+**ISR roots** (isr_diff): L431 COMP, DMA1_CH5, EXTI0, EXTI15_10, LPTIM1,
+TIM1_UP_TIM16, TIM6_DACUNDER, USART2; binz ADC_COMP, DMA1_CHANNEL1,
+EXTI4_15, TIM14, TIM6_DAC_LPTIM1.
+
+**Operator decisions:** 3 runs per test, interleaved L431/binz; bands =
+baseline min..max ±5 %, dsy = 0, zero guard kills, zero reboots. Top rungs
+(agent's call, measured margin to the 4.5 A cutoff): L431 60 %, binz 70 %.
+Exact profiles are in the plan §3 "As run" table.
+
+**Bench results:** 24 band runs (R1–R4 × 3 rounds × 2 boards): every run
+dsy = 0, no guard kill, no reboot; `gc_summary.py --check` 24/24 against
+its own bands (and a narrowed-band negative control fails 3/3). Bus peak
+across all band runs 12.85 V (14 V trip).
+
+- R5 binz coast at 50 %: loop 2070 eHz vs coast 2050 / 2054 eHz
+  (+1.0 % / +0.8 %, firmware50's range ≤37.5 % was +0.6–1.8 %). **2 runs**
+  (round 3 stopped by the operator).
+- R6 idle registers: 2 snapshots per board. Between snapshots only run
+  state differs (binz EXTI edge polarity of the last step, DMA NDTRs;
+  L431 timer CNTs, TIM16.ARR) — configuration registers identical. Step
+  comparisons exclude those run-state registers. **2 runs** (round 3
+  stopped by the operator).
+- Round-3 R4 runs on the two boards overlapped by ~15 s on the shared PSU
+  (a tool background move, not intended); both clean, inside the bands.
+- `old_routine` samples on starts: L431 6–9, binz 19–25 (polling during
+  start-up; logged, not banded).
+
+**Not banded / deferred:** full 60 → 10 % step-down and abrupt stops
+(regenerative pumping of the PSU: 17–19.9 V) → battery batch.
+
+**Found while building the baseline** (each committed or logged):
+`dir_reversed` never applied on benchuart builds (ba775b6; every earlier
+binz qualification ran forward — binz kept forward, 03ce39f); cargo reads
+`.cargo/config.toml` from the cwd, so root-level builds (incl. the
+pre-commit cross-build hooks) link empty ELFs without the M0 audit (gate
+builds from rm32_stm32 and checks text; hooks still open); the AM32 C
+harness hung on unknown commands (reply timeout added); CH340 at 2 Mbaud
+corrupts dump values (per-row majority vote over whole re-reads); current
+unit split (AM32 boards centiamps, bench boards mA; `current_limit * 200`,
+EDT `/1000` vs AM32 `/50`) — open bug, out of this no-control-change
+increment.
+
+### S1 bands (duty / eHz / mA per segment, settled last 2 s)
+
+**binz/s00-r1-ladder** — runs 144040, 145326, 150102; bus max 12107 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 233..257 | 542 / 544 / 544 | 515..571 | 134 / 151 / 155 | 128..163 |
+| 20 % | 418..462 | 1027 / 1030 / 1032 | 976..1083 | 302 / 301 / 310 | 286..326 |
+| 30 % | 603..667 | 1441 / 1443 / 1444 | 1369..1516 | 554 / 555 / 588 | 526..618 |
+| 40 % | 788..870 | 1787 / 1784 / 1785 | 1695..1876 | 880 / 883 / 908 | 836..953 |
+| 50 % | 973..1075 | 2118 / 2129 / 2122 | 2012..2236 | 1400 / 1409 / 1428 | 1330..1499 |
+| 60 % | 1158..1280 | 2466 / 2455 / 2468 | 2332..2592 | 2065 / 1988 / 2042 | 1888..2168 |
+| 70 % | 1343..1485 | 2762 / 2771 / 2780 | 2624..2919 | 2833 / 2832 / 2864 | 2690..3007 |
+
+**binz/s00-r2-start** — runs 144217, 145438, 150214; bus max 11987 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 232..257 | 544 / 544 / 544 | 517..572 | 139 / 138 / 137 | 130..146 |
+
+**binz/s00-r3-step** — runs 144745, 145537, 150310; bus max 12477 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 233..257 | 544 / 544 / 543 | 516..571 | 158 / 138 / 137 | 130..166 |
+| 60 % | 1158..1280 | 2457 / 2462 / 2460 | 2334..2585 | 2057 / 2039 / 2032 | 1930..2160 |
+| 40 % | 788..870 | 1823 / 1831 / 1830 | 1732..1922 | 799 / 807 / 814 | 759..854 |
+| 25 % | 511..565 | 1263 / 1259 / 1259 | 1196..1326 | 373 / 392 / 404 | 354..424 |
+| 15 % | 326..360 | 814 / 817 / 812 | 772..858 | 133 / 202 / 200 | 126..213 |
+| 10 % | 233..257 | 544 / 544 / 543 | 516..571 | 152 / 146 / 136 | 129..160 |
+
+**binz/s00-r4-top** — runs 144911, 145651, 150404; bus max 12131 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 233..257 | 543 / 545 / 543 | 516..572 | 167 / 149 / -114 | -120..175 |
+| 20 % | 418..462 | 1030 / 1029 / 1033 | 977..1085 | 301 / 298 / 42 | 40..316 |
+| 30 % | 603..667 | 1446 / 1445 / 1445 | 1372..1518 | 569 / 569 / 319 | 303..598 |
+| 40 % | 788..870 | 1788 / 1782 / 1790 | 1693..1879 | 886 / 910 / 630 | 598..956 |
+| 50 % | 973..1075 | 2118 / 2136 / 2127 | 2012..2242 | 1381 / 1367 / 1161 | 1103..1450 |
+| 60 % | 1158..1280 | 2467 / 2449 / 2469 | 2327..2592 | 2022 / 2021 / 1729 | 1642..2123 |
+| 70 % | 1343..1485 | 2781 / 2784 / 2791 | 2642..2931 | 2853 / 2822 / 2601 | 2471..2995 |
+
+**l431/s00-r1-ladder** — runs 144555, 145243, 150020; bus max 12352 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 224..248 | 557 / 557 / 555 | 527..585 | 54 / 53 / 54 | 50..57 |
+| 20 % | 410..454 | 980 / 979 / 978 | 929..1029 | 241 / 241 / 243 | 229..255 |
+| 30 % | 597..659 | 1383 / 1389 / 1379 | 1310..1458 | 571 / 544 / 559 | 517..600 |
+| 40 % | 783..865 | 1754 / 1774 / 1752 | 1665..1863 | 1021 / 1010 / 1061 | 959..1114 |
+| 50 % | 969..1071 | 2071 / 2077 / 2066 | 1963..2180 | 1491 / 1487 / 1500 | 1413..1575 |
+| 60 % | 1155..1277 | 2333 / 2338 / 2336 | 2217..2455 | 2086 / 2050 / 2060 | 1947..2191 |
+
+**l431/s00-r2-start** — runs 144641, 145424, 150200; bus max 11755 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 224..248 | 557 / 557 / 557 | 529..585 | 54 / 53 / 53 | 50..56 |
+
+**l431/s00-r3-step** — runs 144520, 145508, 150244; bus max 12847 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 224..248 | 557 / 556 / 557 | 528..585 | 53 / 54 / 56 | 50..58 |
+| 60 % | 1155..1277 | 2331 / 2338 / 2340 | 2214..2457 | 2091 / 2054 / 2075 | 1952..2195 |
+| 40 % | 783..865 | 1768 / 1781 / 1792 | 1680..1881 | 871 / 857 / 846 | 804..914 |
+| 25 % | 504..556 | 1200 / 1210 / 1209 | 1140..1271 | 281 / 265 / 274 | 252..295 |
+| 15 % | 317..351 | 786 / 790 / 790 | 747..830 | 95 / 87 / 87 | 83..99 |
+| 10 % | 224..248 | 557 / 557 / 556 | 529..585 | 54 / 53 / 53 | 50..56 |
+
+**l431/s00-r4-top** — runs 144829, 145614, 150347; bus max 12698 mV
+
+| rung | duty band | eHz runs | eHz band | mA runs | mA band |
+|---|---|---|---|---|---|
+| 10 % | 224..248 | 556 / 556 / 557 | 528..585 | 54 / 53 / 53 | 50..57 |
+| 20 % | 410..454 | 981 / 980 / 982 | 930..1031 | 247 / 246 / 241 | 229..260 |
+| 30 % | 597..659 | 1386 / 1386 / 1382 | 1312..1456 | 566 / 557 / 561 | 529..595 |
+| 40 % | 783..865 | 1769 / 1772 / 1760 | 1672..1861 | 1022 / 1018 / 1021 | 967..1073 |
+| 50 % | 969..1071 | 2083 / 2063 / 2084 | 1960..2188 | 1485 / 1487 / 1498 | 1411..1573 |
+| 60 % | 1155..1277 | 2327 / 2330 / 2312 | 2196..2446 | 2062 / 2081 / 2080 | 1959..2185 |

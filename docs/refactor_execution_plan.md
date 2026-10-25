@@ -60,15 +60,29 @@ binz ..., same session.
 |---|---|---|
 | R1 | Arm, walk-in, ladder 10 → top in 10 % rungs, 5 s each, slow recorder | Retention and speed/current curve |
 | R2 | Start from arm to 10 %, three times | Start reliability |
-| R3 | Step 10 → 60 % → 10 % (fast recorder) | Transient: lock through a big step and the decel |
+| R3 | Step 10 → 60 % up, then walk down 40 / 25 / 15 % at 0.35 s, 10 % 4 s (fast recorder) | Transient: lock through a big up-step and the decel |
 | R4 | Hold the PSU top rung 15 s | Steady-state thermal/current at the supply limit |
 | R5 | binz only: coast-down `C` at 50 % | True rotor speed vs loop estimate |
 | R6 | Idle register snapshot (L431 `dump_l431_regs.py`, binz `binz_regdump.py`) | Peripheral configuration parity |
 
-"Top" per board on this supply is measured in S1, not assumed: binz's
-known PSU top rung is 80 %; the L431's is the highest rung that holds
-under the PSU guard without a guard kill. Both are written into the log
-and become the fixed top for the whole campaign.
+**As run (2026-10-25, fixed for the campaign).** Exact `binz_profile.py`
+profiles — later steps must use these strings so segment counts match the
+bands:
+
+| ID | L431 (`--board l431`) | binz (`--board binz`) |
+|---|---|---|
+| R1 | `--rec slow 10:5,20:5,30:5,40:5,50:5,60:5` | `--rec slow 10:5,20:5,30:5,40:5,50:5,60:5,70:5` |
+| R2 | `--rec fast --from-arm 10:4` | same |
+| R3 | `--rec fast 10:3,60:4,40:0.35,25:0.35,15:0.35,10:4` | same |
+| R4 | `--rec slow 10:2,20:2,30:2,40:2,50:2,60:15` | `--rec slow 10:2,20:2,30:2,40:2,50:2,60:2,70:15` |
+| R5 | — | `binz_coast.py --rung 500 --hold 10` |
+
+Top rungs: L431 60 % (~2.1 A on the prop), binz 70 % (~2.85 A), both well
+under the 4.5 A PSU cutoff. R3 changed from the original 10 → 60 → 10 %
+step: on the PSU the instant step-down regenerates into a supply that
+cannot sink current (19.9 V L431 / 19.5 V binz, both 14 V OV guards
+latched). The full step-down moves to the battery batch. The L431 profile
+stop also walks down 60/40/25/15 (an abrupt stop from 60 % pumped 17 V).
 
 ### What gets recorded per run
 
@@ -79,8 +93,9 @@ count; drops; guard events; reboots; for binz also t6mean / t6max / gaplate
 ### Acceptance bands
 
 Derived from the baseline's own three runs, not chosen in advance: for each
-metric, the pass band is the baseline min..max widened by the run-to-run
-spread. Hard gates that need no band: zero reboots, zero guard kills, zero
+metric, the pass band is the baseline min..max widened by 5 % (operator,
+2026-10-25), per segment for duty / eHz / mA (`gc_summary.py --bands`,
+checked with `gc_summary.py --check docs/gc_bands_s00.json`). Hard gates that need no band: zero reboots, zero guard kills, zero
 desyncs where the baseline had zero, every rung reaches Running, WCET not
 worse than baseline. The bands are written into the log at the end of S1
 and do not move afterwards without the operator agreeing.

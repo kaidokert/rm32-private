@@ -29,6 +29,7 @@ Throttle % is the bench command (values <= 100 are percent).
 from __future__ import annotations
 
 import argparse
+import collections
 import importlib.util
 import json
 import pathlib
@@ -47,9 +48,16 @@ ROW = re.compile(r"rd \d+ \d+ -?\d+ \d+")
 # Per-board link and start preamble. binz: COM41 115200, sine start, `i`
 # answers with i/b lines. L431: COM18 2 Mbaud (benchuart), no sine start,
 # `i` answers with the i line only.
+# `walkdown`: throttle steps (0.35 s each, only those below the last segment)
+# before the stop. The L431 prop at 60 % stopped from full drive pumped the
+# shared PSU bus 11.5 -> 17 V in 100 ms (both boards' OV guards latched,
+# 2026-10-25); its bench scripts always walked down (bench_lib
+# rampdown_kill). binz keeps the abrupt stop every qualification used.
 BOARDS = {
-    "binz": {"port": spin.PORT, "baud": spin.BAUD, "need": ("i", "b"), "sine": True},
-    "l431": {"port": "COM18", "baud": 2_000_000, "need": ("i",), "sine": False},
+    "binz": {"port": spin.PORT, "baud": spin.BAUD, "need": ("i", "b"), "sine": True,
+             "walkdown": ()},
+    "l431": {"port": "COM18", "baud": 2_000_000, "need": ("i",), "sine": False,
+             "walkdown": (60, 40, 25, 15)},
 }
 
 
@@ -121,6 +129,10 @@ def main() -> int:
             bench.phase, bench.t_phase = f"seg {thr}%", time.time()
             bench.stream(str(thr), secs)
         meta["t_stop"] = time.time() - t0
+        for pct in board["walkdown"]:
+            if pct < segs[-1][0]:
+                bench.phase, bench.t_phase = f"walkdown {pct}%", time.time()
+                bench.stream(str(pct), 0.35)
         bench.send("0")
         bench.send("0")
         bench.pump(1.0)
@@ -134,23 +146,43 @@ def main() -> int:
         bench.kill()
         bench.pump(0.3)
     # Read back (also after an abort: the recorder froze at the kill). The
-    # record stays frozen, so a dump with a lost byte (the L431's CH340 at
-    # 2 Mbaud) is simply requested again; a dump is accepted only whole.
+    # record stays frozen, so it is read repeatedly and voted row by row:
+    # the L431's CH340 at 2 Mbaud corrupts bytes, and a byte lost inside a
+    # number (11821 -> 1182) still looks like a valid row. Only dumps with
+    # the header's row count and every row well-formed take part (so rows
+    # align by position); a row is accepted when >= 2 dumps agree on it and
+    # no other value ties. Any row left unresolved -> no CSV.
     try:
-        for attempt in range(8):
+        dumps: list[list[str]] = []
+        whole = False
+        rows: list[str] = []
+        n = -1
+        for attempt in range(12):
             bench.lines.clear()
             bench.send("X")
             end = time.time() + 12
             while time.time() < end and not any(ln.startswith("rec end") for ln in bench.lines):
                 bench.pump(0.2)
-            rows = [ln for ln in bench.lines if ln.startswith("rd ")]
+            got = [ln for ln in bench.lines if ln.startswith("rd ")]
             head = [ln for ln in bench.lines if ln.startswith("rec n=")]
-            n = int(re.search(r"n=(\d+)", head[-1]).group(1)) if head else -1
-            whole = len(rows) == n and all(ROW.fullmatch(ln) for ln in rows)
-            if whole or not head:
+            if not head:
                 break
-            print(f"  dump {attempt + 1}: {len(rows)}/{n} rows, "
-                  f"{sum(not ROW.fullmatch(ln) for ln in rows)} malformed; re-reading")
+            n = int(re.search(r"n=(\d+)", head[-1]).group(1))
+            if len(got) == n and all(ROW.fullmatch(ln) for ln in got):
+                dumps.append(got)
+            if len(dumps) >= 2:
+                voted, unresolved = [], 0
+                for k in range(n):
+                    (v, c), *rest = collections.Counter(d[k] for d in dumps).most_common()
+                    if c >= 2 and (not rest or rest[0][1] < c):
+                        voted.append(v)
+                    else:
+                        unresolved += 1
+                if unresolved == 0:
+                    rows, whole = voted, True
+                    break
+            print(f"  dump {attempt + 1}: {len(dumps)} whole read(s) so far; re-reading")
+        rows = rows or (dumps[-1] if dumps else [])
         q = bench.query()
         meta["r"] = q.get("r")
         meta["b"] = q.get("b")
