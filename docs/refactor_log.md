@@ -60,7 +60,11 @@ across all band runs 12.85 V (14 V trip).
   comparisons exclude those run-state registers. **2 runs** (round 3
   stopped by the operator).
 - Round-3 R4 runs on the two boards overlapped by ~15 s on the shared PSU
-  (a tool background move, not intended); both clean, inside the bands.
+  (a tool background move, not intended). The binz run took its 3-shunt
+  current zero while the L431 drew ~2 A on the shared ground and read
+  ~250 mA low on every rung (peer review); it was replaced by a solo
+  re-run (152204), widening nothing. The L431 overlap run is kept (its
+  current sense has no zero capture; values match rounds 1-2).
 - `old_routine` samples on starts: L431 6–9, binz 19–25 (polling during
   start-up; logged, not banded).
 
@@ -110,17 +114,17 @@ increment.
 | 15 % | 326..360 | 814 / 817 / 812 | 772..858 | 133 / 202 / 200 | 126..213 |
 | 10 % | 233..257 | 544 / 544 / 543 | 516..571 | 152 / 146 / 136 | 129..160 |
 
-**binz/s00-r4-top** — runs 144911, 145651, 150404; bus max 12131 mV
+**binz/s00-r4-top** — runs 144911, 145651, 152204; bus max 12131 mV
 
 | rung | duty band | eHz runs | eHz band | mA runs | mA band |
 |---|---|---|---|---|---|
-| 10 % | 233..257 | 543 / 545 / 543 | 516..572 | 167 / 149 / -114 | -120..175 |
-| 20 % | 418..462 | 1030 / 1029 / 1033 | 977..1085 | 301 / 298 / 42 | 40..316 |
-| 30 % | 603..667 | 1446 / 1445 / 1445 | 1372..1518 | 569 / 569 / 319 | 303..598 |
-| 40 % | 788..870 | 1788 / 1782 / 1790 | 1693..1879 | 886 / 910 / 630 | 598..956 |
-| 50 % | 973..1075 | 2118 / 2136 / 2127 | 2012..2242 | 1381 / 1367 / 1161 | 1103..1450 |
-| 60 % | 1158..1280 | 2467 / 2449 / 2469 | 2327..2592 | 2022 / 2021 / 1729 | 1642..2123 |
-| 70 % | 1343..1485 | 2781 / 2784 / 2791 | 2642..2931 | 2853 / 2822 / 2601 | 2471..2995 |
+| 10 % | 233..257 | 543 / 545 / 542 | 514..572 | 167 / 149 / 141 | 134..175 |
+| 20 % | 418..462 | 1030 / 1029 / 1025 | 974..1082 | 301 / 298 / 292 | 278..316 |
+| 30 % | 603..667 | 1446 / 1445 / 1445 | 1372..1518 | 569 / 569 / 554 | 527..598 |
+| 40 % | 788..870 | 1788 / 1782 / 1780 | 1691..1877 | 886 / 910 / 890 | 842..956 |
+| 50 % | 973..1075 | 2118 / 2136 / 2111 | 2006..2242 | 1381 / 1367 / 1348 | 1281..1450 |
+| 60 % | 1158..1280 | 2467 / 2449 / 2472 | 2327..2595 | 2022 / 2021 / 2003 | 1903..2123 |
+| 70 % | 1343..1485 | 2781 / 2784 / 2792 | 2642..2932 | 2853 / 2822 / 2830 | 2681..2995 |
 
 **l431/s00-r1-ladder** — runs 144555, 145243, 150020; bus max 12352 mV
 
