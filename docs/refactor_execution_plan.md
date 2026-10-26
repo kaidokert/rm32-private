@@ -142,8 +142,22 @@ Design-doc phase numbers in brackets. Each line is one commit.
 |---|---|---|
 | S3.1 | `rm32-harness` crate (move the harness bin, no behaviour change) | HOST |
 | S3.2 | `rm32-bench` crate: `bench_input`, `bench_rec`, `blackbox`, `dump_config` | HOST |
-| S3.3 | `DiagSink` policy; remove `skip_remaining` / `inject_com_skips` from the core; `dbg_*` behind it | CODE (bench builds keep the hooks; production ISR roots lose loads, so the diff is non-empty by design and must show ONLY removals) |
+| S3.3 | `DiagSink` policy; `dbg_*` behind it; the bench `DESYNC_INJECT` caller of `Commutation::inject_skip` (the only remnant of the old `skip_remaining` / `inject_com_skips`) moves out with it | CODE (bench builds keep the hooks; production ISR roots lose loads, so the diff is non-empty by design and must show ONLY removals) |
 | S3.4 | `rm32_stm32` stops enabling `bench-diag` unconditionally | HOST for bench images (they still enable it); size report for production images |
+
+S3 entry conditions (peer review after increment 2, verified 2026-10-25):
+
+- S3.1/S3.2 move tests out of `rm32`: in the same commit, `scripts/gc_gate.sh`
+  (test, clippy, harness build) and `.pre-commit-config.yaml` switch from
+  `-p rm32` to the workspace (or list every crate), and the harness build
+  becomes `-p rm32-harness --bin rm32_harness` (keep the binary name:
+  `tests/blackbox/harness.py` runs `target/release/rm32_harness`). Check the
+  host test count does not drop.
+- S3.4: the `dbg_*` cycle brackets in `rm32_stm32/src/isr_handlers.rs`
+  (TIM6/TIM14/COMP `dbg_*_last_cyc_set`, `dbg_isr_tick_inc`) and
+  `bin/main.rs` (`dbg_main_last_cyc_set`) run on every L431/G431 build;
+  they must be gated with the feature so the four public builds compile
+  and lose them (ISR diff: removals only).
 
 ### S4 — clocks and board constants [phase 3]
 
