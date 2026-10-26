@@ -487,8 +487,9 @@ mod tests {
         let mut armed_timeout = make_armed_timeout();
         let shared = TestShared::new();
         let mut hal = MockMotorHal::new();
-        let interval_ticks =
-            crate::constants::telemetry_interval_ticks(config.telemetry_on_interval);
+        let interval_ticks = crate::constants::telemetry_interval_ticks::<
+            crate::platform::TestPlatform,
+        >(config.telemetry_on_interval);
 
         for _ in 0..interval_ticks - 1 {
             isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
@@ -782,7 +783,7 @@ mod tests {
         };
 
         let step_before = comm.step;
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
@@ -821,7 +822,7 @@ mod tests {
         };
         let step_before = comm.step();
 
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
@@ -857,7 +858,7 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
@@ -890,7 +891,7 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
@@ -932,7 +933,7 @@ mod tests {
                 ..Default::default()
             };
 
-            isr_logic::commutation_timer_expired(
+            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
                 &mut comm,
                 &mut bemf,
                 &shared,
@@ -969,7 +970,7 @@ mod tests {
                 ..Default::default()
             };
 
-            isr_logic::commutation_timer_expired(
+            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
                 &mut comm,
                 &mut bemf,
                 &shared,
@@ -981,9 +982,9 @@ mod tests {
             );
 
             let exit_interval = if bidirectional {
-                crate::constants::OLD_ROUTINE_EXIT_INTERVAL / 2
+                <crate::platform::TestPlatform as crate::constants::Timing>::OLD_ROUTINE_EXIT_INTERVAL / 2
             } else {
-                crate::constants::OLD_ROUTINE_EXIT_INTERVAL
+                <crate::platform::TestPlatform as crate::constants::Timing>::OLD_ROUTINE_EXIT_INTERVAL
             };
             assert!(shared.old_routine());
             assert!(shared.commutation_interval() < exit_interval);
@@ -1010,7 +1011,7 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
@@ -1043,7 +1044,7 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
@@ -1076,7 +1077,7 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
@@ -1110,7 +1111,7 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,

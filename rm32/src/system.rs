@@ -5,6 +5,7 @@
 //! in both contexts, eliminating the "harness vs firmware" divergence
 //! that caused bugs across multiple review rounds.
 
+use crate::constants::Timing;
 use crate::control::input::{self, InputState};
 use crate::hal::{Adc, TelemetryUart};
 use crate::main_state::MainState;
@@ -15,19 +16,21 @@ use embedded_hal::digital::OutputPin;
 /// Main-loop system tick state.
 ///
 /// Owns main-loop state shared by firmware and the host harness.
-pub struct SystemTick {
+pub struct SystemTick<P: Timing> {
     pub input_state: InputState,
     sine_positions: PhasePositions,
     /// Previous-pass `stepper_sine` (entry edge seeds the phase positions).
     sine_active: bool,
+    _platform: core::marker::PhantomData<P>,
 }
 
-impl SystemTick {
+impl<P: Timing> SystemTick<P> {
     pub fn new() -> Self {
         Self {
             input_state: InputState::new(),
             sine_positions: PhasePositions::new(),
             sine_active: false,
+            _platform: core::marker::PhantomData,
         }
     }
 
@@ -35,7 +38,11 @@ impl SystemTick {
     ///
     /// Call this BEFORE the ISR tick (harness) or independently (firmware,
     /// where the ISR tick runs in the actual interrupt).
-    pub fn tick_input<LED: OutputPin>(&mut self, shared: &SharedState, main: &mut MainState<LED>) {
+    pub fn tick_input<LED: OutputPin>(
+        &mut self,
+        shared: &SharedState,
+        main: &mut MainState<P, LED>,
+    ) {
         // Recompute input mode from config + detected protocol each tick.
         // Cheap (a few comparisons) and ensures mode stays in sync with config.
         self.input_state.mode =
@@ -54,7 +61,7 @@ impl SystemTick {
     pub fn tick_main<LED: OutputPin>(
         &self,
         shared: &SharedState,
-        main: &mut MainState<LED>,
+        main: &mut MainState<P, LED>,
         adc: &mut dyn Adc,
         telem: &mut dyn TelemetryUart,
     ) {
@@ -69,7 +76,7 @@ impl SystemTick {
     pub fn run_tick<LED: OutputPin>(
         &mut self,
         shared: &SharedState,
-        main: &mut MainState<LED>,
+        main: &mut MainState<P, LED>,
         adc: &mut dyn Adc,
         telem: &mut dyn TelemetryUart,
         isr_tick: impl FnOnce(),
@@ -86,14 +93,14 @@ impl SystemTick {
     pub fn sync_isr_to_main<LED: OutputPin>(
         &self,
         shared: &SharedState,
-        main: &mut MainState<LED>,
+        main: &mut MainState<P, LED>,
     ) {
         if shared.take_desync_check_pending() {
             main.set_desync_check(true);
         }
     }
 
-    pub fn sync_config_writes<LED: OutputPin>(shared: &SharedState, main: &mut MainState<LED>) {
+    pub fn sync_config_writes<LED: OutputPin>(shared: &SharedState, main: &mut MainState<P, LED>) {
         while let Some((offset, value)) = shared.pop_config_write() {
             if let Some(byte) = main.config.as_bytes_mut().get_mut(offset as usize) {
                 *byte = value;
@@ -121,7 +128,7 @@ impl SystemTick {
         }
         // AM32's stepper reads `input` (post sine-start mapping) — that is
         // rm32's adjusted_input, not the raw newinput.
-        Some(crate::sine::sine_step(
+        Some(crate::sine::sine_step::<P>(
             &mut self.sine_positions,
             shared.adjusted_input(),
             shared.armed(),
@@ -138,7 +145,7 @@ impl SystemTick {
     pub fn apply_sine_changeover<LED: OutputPin>(
         &mut self,
         shared: &SharedState,
-        main: &mut MainState<LED>,
+        main: &mut MainState<P, LED>,
         commutation_interval: u32,
         step: u8,
     ) {
@@ -166,7 +173,7 @@ impl SystemTick {
     }
 }
 
-impl Default for SystemTick {
+impl<P: Timing> Default for SystemTick<P> {
     fn default() -> Self {
         Self::new()
     }
@@ -181,6 +188,9 @@ mod tests {
     use crate::sine::SineStepResult;
 
     use super::*;
+    use crate::platform::TestPlatform;
+
+    type SystemTick = super::SystemTick<TestPlatform>;
 
     struct MockAdc;
 
@@ -206,8 +216,8 @@ mod tests {
         fn send_dma(&mut self, _: &[u8]) {}
     }
 
-    fn main_state() -> MainState {
-        MainState::new(
+    fn main_state() -> MainState<TestPlatform> {
+        MainState::<TestPlatform>::new(
             &BoardConfig::DEFAULT,
             ChipParams {
                 timer1_max_arr: 1999,
@@ -218,7 +228,7 @@ mod tests {
 
     #[test]
     fn config_write_through_reaches_main_copy() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<TestPlatform>();
         let mut main = main_state();
         let offset = core::mem::offset_of!(EepromConfig, dir_reversed) as u8;
 
@@ -237,12 +247,12 @@ mod tests {
 
     #[test]
     fn run_tick_drains_isr_config_writes() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<TestPlatform>();
         let mut main = main_state();
         let mut system = SystemTick::new();
         let offset = core::mem::offset_of!(EepromConfig, dir_reversed) as u8;
 
-        for _ in 0..crate::constants::PID_LOOP_DIVIDER {
+        for _ in 0..<TestPlatform as Timing>::PID_LOOP_DIVIDER {
             shared.one_khz_counter_inc();
         }
         shared.set_send_telemetry(true);
@@ -257,7 +267,7 @@ mod tests {
 
     #[test]
     fn sync_isr_to_main_consumes_pending_desync_check() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<TestPlatform>();
         let mut main = main_state();
         let system = SystemTick::new();
 
@@ -270,7 +280,7 @@ mod tests {
 
     #[test]
     fn tick_sine_runs_only_in_sine_mode() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<TestPlatform>();
         let mut system = SystemTick::new();
         let config = EepromConfig::default();
 
@@ -298,7 +308,7 @@ mod tests {
 
     #[test]
     fn apply_sine_changeover_publishes_handoff_before_exit() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<TestPlatform>();
         let mut main = main_state();
         let mut system = SystemTick::new();
 

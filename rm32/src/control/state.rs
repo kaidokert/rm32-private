@@ -97,7 +97,7 @@ impl DutyState {
 
     /// Apply ramp rate limiting to duty cycle.
     /// `average_interval`: from e_com_time/3, used for RPM-based ramp profile selection.
-    pub(crate) fn ramp_limit(
+    pub(crate) fn ramp_limit<P: crate::constants::Timing>(
         &mut self,
         battery_voltage: u16,
         commutation_interval: u32,
@@ -115,7 +115,7 @@ impl DutyState {
                 let v_change = (RAMP_VOLTAGE_CHANGE_MAX as u32
                     - crate::fast_math::div1400_ramp(numerator))
                     as u8;
-                self.max_change = if commutation_interval > RAMP_FAST_COMMUTATION_THRESHOLD {
+                self.max_change = if commutation_interval > P::RAMP_FAST_COMMUTATION_THRESHOLD {
                     v_change
                 } else {
                     v_change.saturating_mul(3)
@@ -124,7 +124,7 @@ impl DutyState {
                 || self.last < RAMP_STARTUP_THRESHOLD
             {
                 self.max_change = self.max_ramp_startup;
-            } else if average_interval > RAMP_LOW_RPM_INTERVAL {
+            } else if average_interval > P::RAMP_LOW_RPM_INTERVAL {
                 self.max_change = self.max_ramp_low_rpm;
             } else {
                 self.max_change = self.max_ramp_high_rpm;
@@ -873,7 +873,7 @@ mod tests {
         let mut d = ramp_test_duty(400, 500);
         d.apply_max_ramp(7);
 
-        d.ramp_limit(0, 0, 200, 1000, false);
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 200, 1000, false);
 
         assert_eq!(d.cycle(), 400);
 
@@ -881,7 +881,7 @@ mod tests {
         for _ in 0..10 {
             d.increment_ramp_count();
         }
-        d.ramp_limit(0, 0, 200, 1000, false);
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 200, 1000, false);
 
         assert_eq!(d.cycle(), 407);
     }
@@ -891,7 +891,7 @@ mod tests {
         let mut d = ramp_test_duty(400, 500);
         d.apply_max_ramp(30);
 
-        d.ramp_limit(0, 0, 200, 100, false);
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 200, 100, false);
 
         assert_eq!(d.cycle(), 403);
     }
@@ -901,7 +901,7 @@ mod tests {
         let mut d = ramp_test_duty(400, 500);
         d.apply_max_ramp(200);
 
-        d.ramp_limit(0, 0, 50, 1000, false);
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 50, 1000, false);
 
         assert_eq!(d.cycle(), 402);
     }
@@ -1002,7 +1002,7 @@ mod tests {
     fn ramp_profile_low_rpm() {
         let mut d = ramp_test_duty(400, 500);
         // Default: max_ramp_low_rpm=6, max_ramp_high_rpm=16
-        d.ramp_limit(0, 0, 200, 1000, false); // average_interval=1000 > 500
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 200, 1000, false); // average_interval=1000 > 500
         // cycle should be clamped to last + max_ramp_low_rpm = 400 + 6 = 406
         assert_eq!(d.cycle(), 406, "low RPM should use max_ramp_low_rpm=6");
     }
@@ -1011,7 +1011,7 @@ mod tests {
     #[test]
     fn ramp_profile_high_rpm() {
         let mut d = ramp_test_duty(400, 500);
-        d.ramp_limit(0, 0, 200, 100, false); // average_interval=100 <= 500
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 200, 100, false); // average_interval=100 <= 500
         // cycle should be clamped to last + max_ramp_high_rpm = 400 + 16 = 416
         assert_eq!(d.cycle(), 416, "high RPM should use max_ramp_high_rpm=16");
     }
@@ -1020,7 +1020,7 @@ mod tests {
     #[test]
     fn ramp_profile_startup() {
         let mut d = ramp_test_duty(400, 500);
-        d.ramp_limit(0, 0, 50, 1000, false); // zero_crosses=50 < 150
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 50, 1000, false); // zero_crosses=50 < 150
         // cycle should be clamped to last + max_ramp_startup = 400 + 2 = 402
         assert_eq!(d.cycle(), 402, "startup should use max_ramp_startup=2");
     }
@@ -1029,7 +1029,7 @@ mod tests {
     #[test]
     fn ramp_profile_low_duty_uses_startup() {
         let mut d = ramp_test_duty(100, 200);
-        d.ramp_limit(0, 0, 200, 1000, false); // last=100 < 150
+        d.ramp_limit::<crate::platform::TestPlatform>(0, 0, 200, 1000, false); // last=100 < 150
         assert_eq!(d.cycle(), 102, "low duty should use max_ramp_startup=2");
     }
 
@@ -1040,7 +1040,7 @@ mod tests {
     fn ramp_voltage_low_battery_high_change() {
         let mut d = ramp_test_duty(400, 500);
         // battery=800mV (low end), commutation_interval=300 (> 200 threshold)
-        d.ramp_limit(800, 300, 200, 1000, true);
+        d.ramp_limit::<crate::platform::TestPlatform>(800, 300, 200, 1000, true);
         // map(800, 800, 2200, 10, 1) = 10, ci>200 so no 3x
         assert_eq!(d.cycle(), 410, "low voltage should give max_change=10");
     }
@@ -1050,7 +1050,7 @@ mod tests {
     fn ramp_voltage_high_battery_low_change() {
         let mut d = ramp_test_duty(400, 500);
         // battery=2200mV (high end), commutation_interval=300
-        d.ramp_limit(2200, 300, 200, 1000, true);
+        d.ramp_limit::<crate::platform::TestPlatform>(2200, 300, 200, 1000, true);
         // map(2200, 800, 2200, 10, 1) = 1
         assert_eq!(d.cycle(), 401, "high voltage should give max_change=1");
     }
@@ -1060,7 +1060,7 @@ mod tests {
     fn ramp_voltage_fast_commutation_3x() {
         let mut d = ramp_test_duty(400, 500);
         // battery=800mV, commutation_interval=100 (<= 200 threshold) → 3x
-        d.ramp_limit(800, 100, 200, 1000, true);
+        d.ramp_limit::<crate::platform::TestPlatform>(800, 100, 200, 1000, true);
         // map(800, 800, 2200, 10, 1) = 10, ci<=200 so 10*3=30
         assert_eq!(
             d.cycle(),

@@ -112,7 +112,7 @@ pub type TargetIsrState = IsrState<TargetIsrHal>;
 // ============================================================
 
 static ISR_STATE: Mutex<RefCell<Option<TargetIsrState>>> = Mutex::new(RefCell::new(None));
-static SHARED: SharedState = SharedState::new();
+static SHARED: SharedState = SharedState::new::<crate::platform::StmPlatform>();
 
 pub fn shared() -> &'static SharedState {
     &SHARED

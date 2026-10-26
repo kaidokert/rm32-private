@@ -209,7 +209,7 @@ struct Harness {
     telem: MockTelem,
 
     // Main-loop state (uses real MainState)
-    main: rm32::main_state::MainState,
+    main: rm32::main_state::MainState<HarnessPlatform>,
 
     // Harness-level state
     tick_count: u32,
@@ -220,7 +220,7 @@ struct Harness {
     input_pin_high: bool,
 
     // Unified system tick (shared with firmware)
-    system: SystemTick,
+    system: SystemTick<HarnessPlatform>,
     transfer: rm32::transfer::TransferState,
     cmd_proc: rm32::dshot_commands::CommandProcessor,
     edt: rm32::edt::EdtScheduler,
@@ -239,7 +239,7 @@ impl Harness {
     fn new() -> Self {
         let counts = HalCounts::new();
         Self {
-            shared: SharedState::new(),
+            shared: SharedState::new::<HarnessPlatform>(),
             commutation: Commutation::new(),
             bemf: BemfState::with_cpu_mhz(64),
             duty: DutyState::default(),
@@ -523,7 +523,7 @@ impl Harness {
                     );
                 }
                 rm32::sine::SineStepResult::Idle => {
-                    let brake = rm32::system::SystemTick::handle_sine_idle(&self.config, 1999);
+                    let brake = SystemTick::<HarnessPlatform>::handle_sine_idle(&self.config, 1999);
                     self.system.input_state.set_prop_brake_active(brake);
                     self.shared.set_prop_brake_active(brake);
                 }
@@ -682,7 +682,7 @@ impl Harness {
                         &mut self.hal.interval,
                         &mut self.hal.com_timer,
                     );
-                    isr_logic::commutation_timer_expired(
+                    isr_logic::commutation_timer_expired::<HarnessPlatform, _, _, _, _>(
                         &mut self.commutation,
                         &mut self.bemf,
                         &self.shared,

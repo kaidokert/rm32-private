@@ -32,8 +32,6 @@ pub struct Note {
 pub const TONE_BEACON_BASE: u8 = 1; // 1..=5 → beacon tunes 1-5
 pub const TONE_ARMED: u8 = 6; // arming confirmation (play_input tune)
 
-const TICKS_PER_MS: u32 = 20; // 20 kHz tick
-
 /// What the scheduler wants applied to the hardware this tick.
 pub enum ToneAction {
     /// Nothing to do (no tone active).
@@ -146,7 +144,11 @@ impl ToneScheduler {
 
     /// Step one 20 kHz tick. `request`: pending tone id (consumed on
     /// accept). `motor_running`: aborts any active tone immediately.
-    pub fn tick(&mut self, request: u8, motor_running: bool) -> ToneAction {
+    pub fn tick<P: crate::constants::Timing>(
+        &mut self,
+        request: u8,
+        motor_running: bool,
+    ) -> ToneAction {
         if motor_running {
             if self.active {
                 self.active = false;
@@ -163,7 +165,7 @@ impl ToneScheduler {
             self.active = true;
             return match self.note_for() {
                 Some(n) => {
-                    self.ticks_left = n.ms as u32 * TICKS_PER_MS;
+                    self.ticks_left = n.ms as u32 * P::CONTROL_TICKS_PER_MS as u32;
                     ToneAction::StartNote(n)
                 }
                 None => {
@@ -180,7 +182,7 @@ impl ToneScheduler {
         self.note_idx += 1;
         match self.note_for() {
             Some(n) => {
-                self.ticks_left = n.ms as u32 * TICKS_PER_MS;
+                self.ticks_left = n.ms as u32 * P::CONTROL_TICKS_PER_MS as u32;
                 ToneAction::StartNote(n)
             }
             None => {
@@ -203,11 +205,14 @@ mod tests {
     fn beacon2_plays_changed_tone_then_silences() {
         // cmd 2 = playChangedTone: two 150 ms notes (AM32 main.c:1211).
         let mut t = ToneScheduler::default();
-        assert!(matches!(t.tick(2, false), ToneAction::StartNote(_)));
+        assert!(matches!(
+            t.tick::<crate::platform::TestPlatform>(2, false),
+            ToneAction::StartNote(_)
+        ));
         let mut starts = 1;
         let mut done = false;
         for _ in 0..(2 * 150 * 20 + 10) {
-            match t.tick(0, false) {
+            match t.tick::<crate::platform::TestPlatform>(0, false) {
                 ToneAction::StartNote(_) => starts += 1,
                 ToneAction::Silence => {
                     done = true;
@@ -225,7 +230,7 @@ mod tests {
     fn beacon3_sweeps_sixty_notes() {
         let mut t = ToneScheduler::default();
         let mut starts = 0;
-        let mut act = t.tick(3, false);
+        let mut act = t.tick::<crate::platform::TestPlatform>(3, false);
         for _ in 0..(60 * 10 * 20 + 10) {
             if matches!(act, ToneAction::StartNote(_)) {
                 starts += 1;
@@ -233,7 +238,7 @@ mod tests {
             if matches!(act, ToneAction::Silence) {
                 break;
             }
-            act = t.tick(0, false);
+            act = t.tick::<crate::platform::TestPlatform>(0, false);
         }
         assert_eq!(starts, 60);
         assert!(!t.active());
@@ -243,7 +248,7 @@ mod tests {
     fn armed_tune_steps_three_notes() {
         let mut t = ToneScheduler::default();
         let mut starts = 0;
-        let mut act = t.tick(TONE_ARMED, false);
+        let mut act = t.tick::<crate::platform::TestPlatform>(TONE_ARMED, false);
         for _ in 0..(3 * 100 * 20 + 10) {
             if matches!(act, ToneAction::StartNote(_)) {
                 starts += 1;
@@ -251,7 +256,7 @@ mod tests {
             if matches!(act, ToneAction::Silence) {
                 break;
             }
-            act = t.tick(0, false);
+            act = t.tick::<crate::platform::TestPlatform>(0, false);
         }
         assert_eq!(starts, 3);
         assert!(!t.active());
@@ -260,10 +265,19 @@ mod tests {
     #[test]
     fn running_aborts_immediately() {
         let mut t = ToneScheduler::default();
-        assert!(matches!(t.tick(1, false), ToneAction::StartNote(_)));
-        assert!(matches!(t.tick(0, true), ToneAction::Silence));
+        assert!(matches!(
+            t.tick::<crate::platform::TestPlatform>(1, false),
+            ToneAction::StartNote(_)
+        ));
+        assert!(matches!(
+            t.tick::<crate::platform::TestPlatform>(0, true),
+            ToneAction::Silence
+        ));
         assert!(!t.active());
         // And requests while running are ignored.
-        assert!(matches!(t.tick(3, true), ToneAction::Idle));
+        assert!(matches!(
+            t.tick::<crate::platform::TestPlatform>(3, true),
+            ToneAction::Idle
+        ));
     }
 }

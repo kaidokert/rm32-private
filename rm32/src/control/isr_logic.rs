@@ -13,8 +13,6 @@ use crate::motor_mode::MotorEvent;
 use crate::shared_comm::SharedComm;
 
 const COMMUTATE_KICK_DELAY_TICKS: u16 = 1;
-const STARTUP_COMMUTATION_INTERVAL: u32 = 10000;
-const STARTUP_INTERVAL_TIMER_COUNT: u32 = STARTUP_COMMUTATION_INTERVAL / 2;
 
 /// 20kHz control loop tick.
 ///
@@ -32,7 +30,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     // (30 - 1 + interval) ms — the config value doubles as a per-ESC
     // slot offset on shared telemetry wires.
     if ctx.config.telemetry_on_interval != 0 {
-        let limit = telemetry_interval_ticks(ctx.config.telemetry_on_interval);
+        let limit = telemetry_interval_ticks::<H>(ctx.config.telemetry_on_interval);
         if ctx.shared.telem_counter_check_and_inc(limit) {
             ctx.shared.set_send_telemetry(true);
         }
@@ -137,8 +135,10 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.hal.comp().set_step(step, ctx.commutation.rising);
                 ctx.hal.comp().change_input();
                 ctx.shared
-                    .set_commutation_interval(STARTUP_COMMUTATION_INTERVAL);
-                ctx.hal.interval().set_count(STARTUP_INTERVAL_TIMER_COUNT);
+                    .set_commutation_interval(H::STARTUP_COMMUTATION_INTERVAL);
+                ctx.hal
+                    .interval()
+                    .set_count(H::STARTUP_COMMUTATION_INTERVAL / 2);
             }
         } else {
             ctx.shared.set_duty_cycle_setpoint(0);
@@ -173,7 +173,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     if !ctx.shared.armed() {
         if ctx.shared.input_set() && ctx.shared.adjusted_input() == 0 {
             *ctx.armed_timeout_count += 1;
-            if *ctx.armed_timeout_count > ARMING_TIMEOUT_TICKS {
+            if *ctx.armed_timeout_count > H::ARMING_TIMEOUT_TICKS {
                 ctx.shared.transition(MotorEvent::Arm);
                 *ctx.armed_timeout_count = 0;
             }
@@ -189,7 +189,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 
     // Ramp rate limiting
     let average_interval = crate::fast_math::div3_i32(ctx.shared.e_com_time()) as u32;
-    ctx.duty.ramp_limit(
+    ctx.duty.ramp_limit::<H>(
         ctx.shared.battery_voltage(),
         ctx.shared.commutation_interval(),
         ctx.shared.zero_crosses(),
@@ -321,7 +321,7 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 
 /// Commutation timer expired (TIM14/TIM16 ISR body).
 #[allow(clippy::too_many_arguments)]
-pub fn commutation_timer_expired<S, C, Ph, T>(
+pub fn commutation_timer_expired<P, S, C, Ph, T>(
     commutation: &mut Commutation,
     bemf: &mut BemfState,
     shared: &S,
@@ -331,6 +331,7 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     bidirectional: bool,
     strict_changeover: bool,
 ) where
+    P: Timing,
     S: SharedComm,
     C: hal::Comparator,
     Ph: hal::PhaseOutput,
@@ -356,9 +357,9 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     comp.change_input();
 
     let exit_interval = if bidirectional {
-        OLD_ROUTINE_EXIT_INTERVAL / 2
+        P::OLD_ROUTINE_EXIT_INTERVAL / 2
     } else {
-        OLD_ROUTINE_EXIT_INTERVAL
+        P::OLD_ROUTINE_EXIT_INTERVAL
     };
     // The two modes are written as exclusive branches (behaviour identical
     // to the former sequence of independent `if`s, which re-read
@@ -367,7 +368,8 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
     // worst-case path should not pay for both (binz WCET gate).
     if !shared.old_routine() {
         // Interrupt mode.
-        let to_old = crate::fast_math::div3_i32(e_com) as u32 > exit_interval + 500;
+        let to_old = crate::fast_math::div3_i32(e_com) as u32
+            > exit_interval + P::OLD_ROUTINE_REENTRY_MARGIN;
         if to_old {
             shared.set_old_routine_isr0(true);
         }

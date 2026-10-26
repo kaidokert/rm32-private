@@ -217,7 +217,7 @@ fn main() -> ! {
     };
 
     // --- Build main loop state ---
-    let mut main_state = MainState::new(
+    let mut main_state = MainState::<rm32_stm32::platform::StmPlatform>::new(
         &BOARD,
         rm32::main_state::ChipParams {
             timer1_max_arr: Chip::TIM1_AUTORELOAD,
@@ -477,7 +477,7 @@ fn main() -> ! {
 
     // --- Main loop ---
     let shared = isr::shared();
-    let mut system = rm32::system::SystemTick::new();
+    let mut system = rm32::system::SystemTick::<rm32_stm32::platform::StmPlatform>::new();
     let mut log_counter: u32 = 0;
     // Bench safety guard: absolute vbat-sag + overcurrent kill, latched
     // until reset. See rm32_stm32::bench_guard for thresholds/rationale.
@@ -831,7 +831,7 @@ fn main() -> ! {
                     );
                 }
                 rm32::sine::SineStepResult::Idle => {
-                    let brake = rm32::system::SystemTick::handle_sine_idle(
+                    let brake = rm32::system::SystemTick::<rm32_stm32::platform::StmPlatform>::handle_sine_idle(
                         &main_state.config,
                         shared.tim1_arr(),
                     );

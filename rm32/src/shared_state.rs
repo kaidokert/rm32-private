@@ -90,14 +90,9 @@ pub struct SharedState {
     telem_counter: AtomicU16,
 }
 
-impl Default for SharedState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SharedState {
-    pub const fn new() -> Self {
+    /// Boot state; the initial commutation interval is taken in `P`'s timer.
+    pub const fn new<P: crate::constants::Timing>() -> Self {
         Self {
             motor_mode: AtomicU8::new(MotorMode::Disarmed as u8),
             input_set: AtomicBool::new(false),
@@ -114,7 +109,7 @@ impl SharedState {
             config_write_head: AtomicU8::new(0),
             config_write_tail: AtomicU8::new(0),
             zero_crosses: AtomicU32::new(0),
-            commutation_interval: AtomicU32::new(12500),
+            commutation_interval: AtomicU32::new(P::INITIAL_COMMUTATION_INTERVAL),
             newinput: AtomicU16::new(0),
             adjusted_input: AtomicU16::new(0),
             duty_cycle_setpoint: AtomicU16::new(0),
@@ -834,7 +829,7 @@ mod tests {
 
     #[test]
     fn isr_action_handoff_is_clearable() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         assert_eq!(MainControl::isr_action(&shared), IsrAction::None);
         MainControl::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
@@ -846,7 +841,7 @@ mod tests {
 
     #[test]
     fn clear_isr_action_keeps_newer_higher_priority_request() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         MainControl::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
         MainControl::request_isr_action(&shared, IsrAction::AllOff);
@@ -857,7 +852,7 @@ mod tests {
 
     #[test]
     fn changeover_step_handoff_roundtrips() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         assert_eq!(MainControl::changeover_step(&shared), 0);
         MainControl::set_changeover_step(&shared, 5);
@@ -866,7 +861,7 @@ mod tests {
 
     #[test]
     fn config_write_queue_retains_eight_writes() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         for offset in 0..CONFIG_WRITE_QUEUE_CAPACITY {
             assert!(shared.push_config_write(offset, offset + 10));
@@ -881,7 +876,7 @@ mod tests {
 
     #[test]
     fn desync_check_pending_roundtrips() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         assert!(!MainControl::desync_check_pending(&shared));
         MainControl::set_desync_check_pending(&shared, true);
@@ -892,7 +887,7 @@ mod tests {
 
     #[test]
     fn take_desync_check_pending_clears_atomically() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         shared.set_desync_check_pending(true);
 
@@ -902,7 +897,7 @@ mod tests {
 
     #[test]
     fn one_khz_counter_saturates_until_consumed() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         for _ in 0..300 {
             shared.one_khz_counter_inc();
@@ -914,7 +909,7 @@ mod tests {
 
     #[test]
     fn one_khz_counter_dispatches_on_divider_tick() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         for _ in 0..19 {
             shared.one_khz_counter_inc();
@@ -928,7 +923,7 @@ mod tests {
 
     #[test]
     fn telem_counter_dispatches_on_limit_tick() {
-        let shared = SharedState::new();
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
 
         for _ in 0..4 {
             assert!(!shared.telem_counter_check_and_inc(5));

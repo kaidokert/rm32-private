@@ -454,6 +454,38 @@ Judgment calls made without stopping, for review at the end of the goal.
    keeps recurring, the review question is the R3 profile (60 % slam on a
    5 A supply), not the guard.
 
+3. **Timing mechanism (S4.2).** Every clock-unit constant moves into
+   one blanket trait, `constants::Timing: Platform`, written in µs / ms
+   through `us_to_ticks` / `ms_to_control_ticks` and read as `P::NAME`
+   (associated consts: always compile-time). `MainState<P, LED>` and
+   `SystemTick<P>` take the platform as a type parameter; `SharedState::
+   new::<P>()` is a generic const fn (the struct stays non-generic, so the
+   ISR-side `SharedComm` code is untouched). Its `Default` impl is
+   deleted (nothing used it, and it would have had to pick a clock).
+   Free functions that need a clock (`commutation_timer_expired`,
+   `DutyState::ramp_limit`, `sine_step`, `ToneScheduler::tick`,
+   `variable_pwm_mode1/2`, `telemetry_interval_ticks`) take `P`. Legacy
+   symbol mangling keeps generics in the stripped hash, so non-inlined ISR
+   callees keep their names in the ISR diff. Tests use a `#[cfg(test)]
+   TestPlatform` (AM32 clocks); not a default.
+4. **"Disassembly identical" read as ISR roots (S4.2).** All ISR dumps
+   are identical. The main-loop code is not: making `MainState` /
+   `SystemTick` generic moves their codegen into the firmware crate and
+   LLVM inlines differently (text -20..-224 B). Every restated constant
+   is proven equal to AM32's literal by a host test, so the change is
+   inlining only. The goal defines HOST as identical ISR dumps; bench 8/8.
+5. **Scope of S4.2.** Restated: the ten former clock constants, the
+   isr_logic `STARTUP_COMMUTATION_INTERVAL` (+ its /2 timer count),
+   AM32's inline literals (desync stop 1000, filter 500/50/100..500,
+   old-routine re-entry +500, sine changeover 9000, boot interval 12500,
+   variable-PWM breakpoints) and tone's `TICKS_PER_MS`. The dead
+   `INITIAL_COMMUTATION_INTERVAL` (10000, unused) is now the boot value
+   12500 that SharedState actually used. Left for their own steps:
+   capture-timer ticks in transfer.rs (S7.2, `CAPTURE_HZ`), the
+   main-loop counters (`ten_khz_counter > 20000`, LED blink: S4.5), the
+   `e_com >> 1` / `/ 3` conversions (S4.3). `DESYNC_RESET_INTERVAL`'s
+   doc said "5 ms"; it is 2.5 ms (5000 ticks at 2 MHz): doc corrected.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -469,3 +501,16 @@ call (relay, flash, name), so the step loop is one command per hold.
 Bench 8/8 in band. One binz R3 OCFAST trip and one L431 R3 recorder dump
 that never read back whole (CH340 corruption, no kill, dsy=0) were rerun;
 originals in captures/bisect_s04.1/ (Call 2).
+
+## S4.2 -- constants via `us_to_ticks` / `ms_to_control_ticks` (HOST) -- tag gc-s04.2-psu
+
+`rm32::platform::{us_to_ticks, ms_to_control_ticks}` and the blanket
+`constants::Timing` trait (26 constants, documented in physical units
+with AM32's literal quoted); `MainState<P, LED>`, `SystemTick<P>`,
+`SharedState::new::<P>()`. Mechanism and scope: Calls 3-5. New host test
+`am32_clocks_fold_to_am32_literals` (every constant at 20 kHz / 2 MHz ==
+AM32's literal): 385 host tests (was 384).
+
+Gate PASS vs s04.1; ISR dumps identical on all six images. Main-loop
+inlining changed (text G071 -184, F051 -112, L431 -64, G431 -80, binz
+bench -224, L431 bench -20 B; Call 4). Bench 8/8 in band first time.

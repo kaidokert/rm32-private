@@ -260,7 +260,10 @@ pub fn handle_tim6() {
         use rm32::hal::{PhaseOutput as _, PwmOutput as _};
         use rm32::tone::ToneAction;
         let req = shared.take_tone_request();
-        match state.tone.tick(req, shared.running()) {
+        match state
+            .tone
+            .tick::<crate::platform::StmPlatform>(req, shared.running())
+        {
             ToneAction::StartNote(n) => {
                 #[cfg(feature = "debuguart")]
                 bump_single_writer(&TONE_STARTS);
@@ -406,7 +409,7 @@ pub fn handle_tim14() {
         use rm32::hal::IntervalTimer as _;
         crate::edge_probe::tim16_fired(state.hal.interval.count());
     }
-    rm32::control::isr_logic::commutation_timer_expired(
+    rm32::control::isr_logic::commutation_timer_expired::<crate::platform::StmPlatform, _, _, _, _>(
         &mut state.commutation,
         &mut state.bemf,
         shared,
