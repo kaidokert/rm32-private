@@ -62,6 +62,10 @@ def summarize(js: pathlib.Path, tail: float):
     # dsy4 is a 4-bit wrapping counter of desync events.
     dsy_n = sum((b - a) % 16 for a, b in zip(dsy, dsy[1:]))
     mv = [int(r["mv"]) for r in rows if int(r["mv"]) > 0]
+    r = meta.get("r") or ""
+    if isinstance(r, dict):
+        r = " ".join(f"{k}={v}" for k, v in r.items())
+    m = re.search(r"\bi50max=(-?\d+)", r)
     return {
         "board": meta.get("board", "binz"),
         "test": re.sub(r"_\d{8}_\d{6}$", "", js.stem.removeprefix("profile_")),
@@ -72,13 +76,21 @@ def summarize(js: pathlib.Path, tail: float):
         "old_routine": sum(int(r["old_routine"]) for r in driven),
         "mv_min": min(mv) if mv else 0,
         "mv_max": max(mv) if mv else 0,
+        # Peak of shared.actual_current() (the 1 kHz path); None if absent.
+        "i50max": int(m.group(1)) if m else None,
     }
 
 
 def check(out, bands) -> int:
     """A capture passes when it has no kill, no desync, the band's segment
     count, and every segment's duty/eHz/mA inside [lo, hi]. A capture whose
-    test has no band is a failure (never silently skipped)."""
+    test has no band is a failure (never silently skipped).
+
+    binz also checks the 1 kHz current path against the guard's: the r-line
+    `i50max` (peak of `actual_current()`) must be at least the highest
+    settled segment `ma` (the guard's own ADC feed). The bands read only
+    the guard feed, so an `actual_current` defect (S4.4) passed them; a
+    binz run without an r-line `i50max` fails."""
     fails = 0
     for s in out:
         key = f"{s['board']}/{re.sub(r'^s[\d.]+[a-z0-9]*-', 's00-', s['test'])}"
@@ -101,6 +113,13 @@ def check(out, bands) -> int:
                         lo, hi = bg[q]
                         if not lo <= g[q] <= hi:
                             why.append(f"{g['throttle']}% {q}={g[q]:.1f} outside {lo}..{hi}")
+            if s["board"] == "binz" and not s["kill"]:
+                top = max(g["ma"] for g in s["segments"])
+                if s["i50max"] is None:
+                    why.append("no r-line i50max (actual_current unchecked)")
+                elif s["i50max"] < top:
+                    why.append(f"i50max={s['i50max']} < settled ma {top:.0f}"
+                               " (actual_current diverges from the guard feed)")
         print(f"{'PASS' if not why else 'FAIL'}  {s['board']:5} {s['file']}"
               + "".join(f"\n        {w}" for w in why))
         fails += bool(why)

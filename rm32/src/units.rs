@@ -97,10 +97,12 @@ const CURRENT_MV_SCALE: i32 = 3300 / 41; // = 80, matches C
 /// constant-time `__aeabi_lmul`, still no divide): the voltage dividers
 /// over all of `u16`'s pin-mV range need one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AffineDiv {
+pub(crate) struct AffineDiv {
     lin: i32,
     core: MulShift,
     negate: bool,
+    /// The domain [`AffineDiv::new`] proved exact; `apply` beyond it wraps.
+    x_max: u32,
 }
 
 /// `((x * mul + add) >> shift) - sub` = `floor((alpha x + beta) / d)`, in
@@ -192,6 +194,7 @@ impl AffineDiv {
         lin: 0,
         core: MulShift::ZERO,
         negate: false,
+        x_max: u32::MAX,
     };
 
     /// Exact divide-free form of `floor((a * x + b) / d)`, `x <= x_max`.
@@ -205,6 +208,7 @@ impl AffineDiv {
                     lin: 0,
                     core,
                     negate: false,
+                    x_max,
                 };
             }
             if let Some(core) = MulShift::find(a1, b, d, x_max, wide) {
@@ -212,6 +216,7 @@ impl AffineDiv {
                     lin: a / d,
                     core,
                     negate: false,
+                    x_max,
                 };
             }
             // ceil((a2 x - b) / d) = floor((a2 x - b + d - 1) / d)
@@ -220,6 +225,7 @@ impl AffineDiv {
                     lin: a / d + 1,
                     core,
                     negate: true,
+                    x_max,
                 };
             }
             if wide {
@@ -229,9 +235,11 @@ impl AffineDiv {
         }
     }
 
-    /// The quotient for `x <= x_max`.
+    /// The quotient for `x <= x_max` (debug builds assert it; beyond it
+    /// the 32-bit multiply wraps).
     #[inline(always)]
     pub const fn apply(self, x: u32) -> i32 {
+        debug_assert!(x <= self.x_max);
         let c = self.core.apply(x);
         self.lin * x as i32 + if self.negate { -c } else { c }
     }
@@ -240,7 +248,7 @@ impl AffineDiv {
 /// Compile-time ADC conversions of a platform's board constants.
 /// Blanket-implemented; read through [`AdcCount::centivolts`] and
 /// [`AdcCount::milliamps`].
-pub trait AdcScale: Platform + Sized {
+pub(crate) trait AdcScale: Platform + Sized {
     /// Pin mV -> centivolts: `mv * VOLTAGE_DIVIDER_X100 / 1000`.
     const PIN_MV_TO_CV: AffineDiv =
         AffineDiv::new(Self::VOLTAGE_DIVIDER_X100 as i32, 0, 1000, MV_PIN_MAX);
@@ -414,6 +422,16 @@ mod tests {
     /// The S4.4 regression: binz encodes current as metered mA + 2000, so
     /// readings above 4095 are real (S4.4 first shipped a 12-bit domain and
     /// wrapped every current above ~2.1 A modulo 4096 counts).
+    /// `apply` is exact only on the domain `new` proved; debug builds
+    /// refuse anything beyond it (S4.4's defect was a caller outside it).
+    #[test]
+    #[should_panic]
+    fn apply_beyond_proved_domain_asserts() {
+        let f = AffineDiv::new(933, 0, 1000, 4095);
+        assert_eq!(f.apply(4095), 933 * 4095 / 1000);
+        let _ = f.apply(4096);
+    }
+
     #[test]
     fn binz_current_above_12_bits_is_exact() {
         assert_eq!(AdcCount(6800).milliamps::<Binz>(), MilliAmps(4800));

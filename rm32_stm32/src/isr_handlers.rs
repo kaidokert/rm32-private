@@ -257,8 +257,8 @@ pub fn handle_tim6() {
     // idle duty writes would mute it — re-assert the tone duty every
     // tick (one HAL write, constant cost). Aborts instantly on running.
     {
-        use crate::bridge::TimerPwm as _;
-        use rm32::hal::PhaseOutput as _;
+        use rm32::bridge::Bridge as _;
+        use rm32::hal::{MotorHal as _, PhaseOutput as _};
         use rm32::tone::ToneAction;
         let req = shared.take_tone_request();
         match state
@@ -268,15 +268,13 @@ pub fn handle_tim6() {
             ToneAction::StartNote(n) => {
                 #[cfg(feature = "debuguart")]
                 bump_single_writer(&TONE_STARTS);
-                state
-                    .hal
-                    .pwm
-                    .set_auto_reload(crate::mcu::Chip::TIM1_AUTORELOAD);
-                state.hal.pwm.set_prescaler(n.prescaler);
+                let mut bridge = state.hal.bridge();
+                bridge.set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
+                bridge.set_tone_divider(n.prescaler);
                 // AM32 sounds.c setVolume(): CCR = beep_volume(0-11) * 3.
                 let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                state.hal.pwm.set_duty_all(vol);
-                state.hal.phase.com_step(n.step);
+                bridge.set_duty_all(vol);
+                bridge.com_step(n.step);
             }
             ToneAction::Silence => {
                 #[cfg(feature = "debuguart")]
@@ -285,17 +283,15 @@ pub fn handle_tim6() {
                 } else {
                     bump_single_writer(&TONE_ENDS);
                 }
-                state.hal.phase.all_off();
-                state.hal.pwm.set_prescaler(0);
-                state
-                    .hal
-                    .pwm
-                    .set_auto_reload(crate::mcu::Chip::TIM1_AUTORELOAD);
+                let mut bridge = state.hal.bridge();
+                bridge.all_off();
+                bridge.set_tone_divider(0);
+                bridge.set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
             }
             ToneAction::Idle => {
                 if state.tone.active() {
                     let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                    state.hal.pwm.set_duty_all(vol);
+                    state.hal.bridge().set_duty_all(vol);
                 }
             }
         }
@@ -356,7 +352,10 @@ pub fn handle_tim6() {
     // is control, not instrumentation; see crate::comp_gate).
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     t6_cp(3);
-    crate::comp_gate::latch(rm32::fast_math::div3_i32(shared.e_com_time()).max(0) as u32);
+    crate::comp_gate::latch(
+        rm32::platform::e_com_us_to_avg_ticks::<crate::platform::StmPlatform>(shared.e_com_time())
+            .max(0) as u32,
+    );
     // binz bench: measured TIM6 handler wall time — TIM6 counts CPU cycles
     // from its own update (PSC 0, ARR 3199), so CNT at exit is the elapsed
     // time since the tick including entry latency and COM/COMP preemption.

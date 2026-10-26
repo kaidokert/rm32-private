@@ -588,6 +588,21 @@ check name regex widened twice, bands file untouched).
    and `imean` reads lower; a lighter main loop raises it. Direct test,
    proposed not done (firmware change outside the step): print
    `take_mean_ma().1` (the sample count) in the r-line.)
+   (CORRECTED at S5.2f per the increment 4-5a review, verified: there is
+   no idle time in `imean`. The profile sends `H` at the start of segment
+   0 (`binz_profile.py:146`), with the motor already running at 10 %,
+   and `H` calls `take_mean_ma()` (`main.rs:1663`), so the window runs
+   from `H` to motor stop. The weighting is inside the run: at 60 % the
+   ISRs leave the main loop so little CPU that one pass spans 40-90
+   control ticks, `one_khz_counter_check_and_reset` drops the overshoot,
+   and the 1 kHz block adds one sample for a window of many scans, so the
+   CPU-starved 60 % segment is under-sampled relative to the 10-40 %
+   segments. Removing main-loop work raises its weight. Confirmed with no
+   firmware change by `ecom10`, which has the same unweighted main-loop
+   sampling: bis51A 12815.8 +- 12.1, bis51B 12640.4 +- 11.2 (-175, n=8 a
+   side), the direction a heavier 60 % weight gives (its e_com is the
+   shortest) while every settled recorder segment matches. The proposed
+   sample-count test is no longer needed.)
    Also: one aborted A/B run reported "REBOOTED in arm";
    it was the first-boot banner arriving late (run started right after
    flash-binz's reset; one banner, tk=827 at the first `b`). Captures in
@@ -750,6 +765,47 @@ check name regex widened twice, bands file untouched).
     still pass 16/16 under the new pattern. Surfaced by the goal review
     as a possible instrument edit; recorded so it can be checked.
 
+17. **S5.2f (d) LED blink: no change, AM32 does not restart the counter.**
+    The review asked for the counter to restart on entering the blink
+    range "as AM32 does". AM32's source says otherwise: `ledcounter++`
+    runs unconditionally in the 20 kHz routine (`Src/main.c:1769`) and is
+    zeroed only inside the blink branch (`:2412`), so on entering the
+    range AM32 sees whatever the free-running u16 holds (above 4000 in
+    94 % of cases): LED high at once, counter reset. rm32 since S4.5 does
+    the same (its u32 age is always past the half period). Matching AM32
+    means no change. Remaining divergences already noted in Call 10.
+
+18. **S5.2f (e) i50max check: what it catches.** `gc_summary.py` fails a
+    completed binz run whose r-line `i50max` is below its highest settled
+    segment `ma`, or which has no `i50max`. On the S4.4 defect captures it
+    fails R1, R3 and R4 (`i50max=2095` against 3000 / 2177 / 2982 mA) and
+    passes R2, correctly: the start profile never goes above ~2.1 A, where
+    S4.4's wrap began, so `actual_current` was right there. It also fails
+    the discarded first S4.5 round's binz R1 (2095 < 3009). Across all
+    117 other banded binz captures it passes; the tightest margin is
+    +64 mA (R2 runs). Killed runs are already failures and are not
+    checked. The bands file is untouched.
+
+19. **S5.2f (c) tone through `bridge()`: statement order kept.** The first
+    version computed the beep volume before the timer writes; binz's TIM6
+    grew by 6 instructions (removals FAIL), isolated by building the
+    image with fix (a) alone (PASS). Reading `state.config` between the
+    prescaler and duty writes, where the old code read it, gives ISR code
+    identical to S5.2r3 on all six images. (b) also made `AdcScale`
+    `pub(crate)`: its constants have the now crate-private `AffineDiv`
+    type, and nothing outside the core uses it (the public conversions
+    are bounded on `Platform`).
+
+20. **L431 R3 dump lost to serial character drops; run repeated once.**
+    The first S5.2f L431 R3 wrote no CSV: all 12 recorder dumps had 7-11
+    rows with a dropped digit or space (`11650` -> `1650`), different rows
+    each time, and the parser keeps a dump only if every row is
+    well-formed, so the two-read vote never started. Firmware clean
+    (one boot, killed=0, guard=0, dsy=0); not a kill, desync, reboot or
+    band miss, so repeated once (OK). Not new: every L431 R3 since S4.4f
+    needed 4-8 dump attempts. Proposed tool fix, not done in this step:
+    vote row by row over all dumps, ignoring malformed rows.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -904,3 +960,18 @@ Guard-kill bisect for S5.1 done and logged under Call 12 (no regression;
 `ISR removals: PASS` on all six images; no FAIL in any of the 14 gate
 outputs; binz WCET COM 549 insns / 909 cycles, TIM6 2647 (= S5.1). 392
 host tests, blackbox 81/81. Bench 8/8 in band first pass.
+
+## S5.2f -- review fixes (CODE) -- tag gc-s05.2f-psu
+
+From the increment 4-5a review: (a) the COMP gate latch converts e_com
+with `e_com_us_to_avg_ticks::<StmPlatform>` (was `div3_i32`, i.e. a
+2 MHz timer assumed); (b) `AffineDiv` and `AdcScale` are `pub(crate)`,
+`AffineDiv` keeps its proved `x_max` and `apply` debug-asserts it (new
+test, should_panic); (c) the port tone code drives `bridge()` (Call 19);
+(d) LED: no change (Call 17); (e) `gc_summary.py` i50max check (Call
+18); (f) Call 8 corrected. Host tests 392 -> 393; blackbox 81/81.
+
+Gate vs s05.2r3: `ISR diff: identical` and removals PASS on all six
+images; no FAIL in any gate output. Bench R1-R4 once per board, 8/8 in
+band including the new i50max check (L431 R3 repeated once after a
+serial dump failure, Call 20).
