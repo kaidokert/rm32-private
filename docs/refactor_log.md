@@ -580,6 +580,29 @@ Judgment calls made without stopping, for review at the end of the goal.
     S4.5 was re-gated against s04.4f and re-benched from scratch (8/8,
     binz R3 `i50max` 4621). Discarded round in captures/bisect_s04.5/.
 
+12. **binz R3 OCFAST on S5.1, an image byte-identical to S4.5 (Call 2's
+    class; reset + repeat, no re-band).** `objcopy -O binary` of the
+    s04.5 and s05.1 binz ELFs: 57 696 B each, `cmp` identical, so the
+    bisect has no code difference to search. Kill at +0.25 s into the
+    10 -> 60% slam, the same instant as every R3 trip. Predeclared bar:
+    two trips in the next three R3 runs would trigger an ABAB against
+    the s04.3 image; after the latch reset the next three passed
+    (i50max 4655, 4561, 4596). Tally of binz R3 on correct code
+    (excluding S4.4 and the first S4.5 round, Call 9): 3 OCFAST kills in
+    32 runs (s00 first run, S4.1, S5.1), about 9%. The guard (4.8 A fast
+    EWMA) sits inside the R3 slam's own peak distribution (4273..4816);
+    a limits question for the operator, not changed. Two runs went in one
+    command (my one-hold rule; logged in the notebook).
+13. **S5.1 scope.** `rm32::bridge` holds `LegRole` (all five design roles;
+    `LowPwm` is unused until S5.2's proportional brake) and `step_legs`.
+    G071's `PLAN` is built by matching each leg's role; L431's `ROLES`
+    (positions only, independent of drive mode) by `step_roles()` from
+    `step_legs`, keeping the L431 writer's runtime shape so its code is
+    unchanged. The sequential writer's `match step` (bridge-enable boards
+    and F051 / G431) stays as it is: its per-step pin generics cannot read
+    a runtime role array without becoming the per-leg decoder the binz
+    WCET gate rejected; S5.2's `Bridge::com_step` takes it over.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -671,3 +694,16 @@ TIM6 root differs on every image (all other roots byte-identical); net
 instruction change is the moved increment (M4 +2: `add.w` + table
 alignment; M0 +0, register renaming and literal offsets). Bench 8/8 in
 band (second round; first round discarded, Call 11).
+
+## S5.1 -- core `step_legs` const fn; ports build `PLAN` / `ROLES` from it (HOST) -- tag gc-s05.1-psu
+
+New `rm32::bridge::{LegRole, step_legs}` (AM32 `comStep` table) with host
+tests `step_legs_is_am32_comstep` and `invalid_steps_float_everything`:
+392 host tests (390 + 2). G071 `PLAN` and L431 `ROLES` built from it
+(Call 13).
+
+Gate PASS vs s04.5. HOST proof: ISR dumps identical on all six images;
+G071 `PLAN` (288 B, read from the ELF) byte-identical on both G071 images;
+text sizes identical on all six; the binz flash image is byte-identical
+to S4.5's. Bench 8/8 in band (binz R3 run once more after an OCFAST
+trip on the identical image, Call 12).

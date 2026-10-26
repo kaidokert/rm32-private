@@ -50,15 +50,9 @@ pub fn l431_atomic_com_step(step: u8, comp: bool) {
     // (hi_is_gpioa always true; lo: A,B on GPIOB pins 1,0; C on GPIOA pin 7)
     // phase index 0=A,1=B,2=C → (hi_pin@GPIOA, lo_pin, lo_on_gpioa)
     const PINS: [(u32, u32, bool); 3] = [(10, 1, false), (9, 0, false), (8, 7, true)];
-    // per step (1-6): (pwm_phase, low_phase, float_phase)
-    const ROLES: [(usize, usize, usize); 6] = [
-        (0, 1, 2),
-        (2, 1, 0),
-        (2, 0, 1),
-        (1, 0, 2),
-        (1, 2, 0),
-        (0, 2, 1),
-    ];
+    // per step (1-6): (pwm_phase, low_phase, float_phase), from the core's
+    // six-step table
+    const ROLES: [(usize, usize, usize); 6] = step_roles();
     let Some(&(pwm, low, fl)) = ROLES.get((step as usize).wrapping_sub(1)) else {
         return;
     };
@@ -134,6 +128,30 @@ pub fn l431_atomic_com_step(step: u8, comp: bool) {
     }
 }
 
+/// Per step 1..=6, the (driven, low, floating) phase indices of
+/// [`rm32::bridge::step_legs`] (0 = A, 1 = B, 2 = C).
+#[cfg(feature = "stm32l431")]
+const fn step_roles() -> [(usize, usize, usize); 6] {
+    use rm32::bridge::{LegRole, step_legs};
+    let mut roles = [(0, 0, 0); 6];
+    let mut s = 0;
+    while s < 6 {
+        let legs = step_legs(s as u8 + 1, true);
+        let mut idx = 0;
+        while idx < 3 {
+            match legs[idx] {
+                LegRole::PwmComplementary => roles[s].0 = idx,
+                LegRole::LowSolid => roles[s].1 = idx,
+                LegRole::Float => roles[s].2 = idx,
+                _ => panic!("step_legs: unexpected leg role in a commutation step"),
+            }
+            idx += 1;
+        }
+        s += 1;
+    }
+    roles
+}
+
 /// G071 port of the L431 atomic commutation writer (same AM32 G0_A pin map:
 /// A = PA10/PB1, B = PA9/PB0, C = PA8/PA7; G0 GPIO MODER @0x00, BSRR @0x18).
 /// The register images are computed at compile time per (comp, step), so
@@ -146,31 +164,27 @@ pub fn l431_atomic_com_step(step: u8, comp: bool) {
 mod g071_atomic {
     const AF: u32 = 0b10;
     const OUT: u32 = 0b01;
+    use rm32::bridge::{LegRole, step_legs};
+
     /// phase index 0=A,1=B,2=C -> (hi pin @GPIOA, lo pin, lo on GPIOA)
     const PINS: [(u32, u32, bool); 3] = [(10, 1, false), (9, 0, false), (8, 7, true)];
-    /// per step 1..6: (pwm phase, low phase) — the third phase floats.
-    const ROLES: [(usize, usize); 6] = [(0, 1), (2, 1), (2, 0), (1, 0), (1, 2), (0, 2)];
 
     /// [bsrr_a, bsrr_b, moder_a_mask, moder_a_val, moder_b_mask, moder_b_val]
+    /// for step `step_ix + 1` of the core's six-step table.
     const fn plan(step_ix: usize, comp: bool) -> [u32; 6] {
-        let (pwm, low) = ROLES[step_ix];
+        let legs = step_legs(step_ix as u8 + 1, comp);
         let mut r = [0u32; 6];
         let mut idx = 0;
         while idx < 3 {
             let (hi, lo, lo_a) = PINS[idx];
             // (hi_mode, lo_mode, hi_level: 0 none/1 low, lo_level: 0 none/1 low/2 high)
-            let (hi_mode, lo_mode, hi_lvl, lo_lvl) = if idx == pwm {
+            let (hi_mode, lo_mode, hi_lvl, lo_lvl) = match legs[idx] {
                 // driven leg: hi AF; lo AF (complementary) or OUTPUT-low (diode)
-                (
-                    AF,
-                    if comp { AF } else { OUT },
-                    0u32,
-                    if comp { 0u32 } else { 1u32 },
-                )
-            } else if idx == low {
-                (OUT, OUT, 1, 2) // low leg: hi off, low FET on
-            } else {
-                (OUT, OUT, 1, 1) // floating leg: both off
+                LegRole::PwmComplementary => (AF, AF, 0u32, 0u32),
+                LegRole::PwmDiode => (AF, OUT, 0, 1),
+                LegRole::LowSolid => (OUT, OUT, 1, 2), // low leg: hi off, low FET on
+                LegRole::Float => (OUT, OUT, 1, 1),    // floating leg: both off
+                LegRole::LowPwm => (OUT, AF, 1, 0),    // hi off, low PWM
             };
             r[2] |= 0b11 << (hi * 2);
             r[3] |= hi_mode << (hi * 2);
