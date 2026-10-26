@@ -6,8 +6,11 @@
 
 For each capture and each segment: duty, eHz and mA averaged over the
 segment's settled tail (last `--tail` seconds, default 2 s, never more than
-half the segment), plus whole-run bus min/max mV, desync count (dsy4 field
-advances), old_routine samples while driven, guard kill. Segment times come
+half the segment), plus whole-run bus min/max mV, desync counts, old_routine
+samples while driven, guard kill. Two desync counts: `dsy` is the recorder's
+dsy4 field, which carries only the fast-rotor class (`dsy_fast`); `dsy_fw`
+is the firmware's full `desync_events` (i-line `dsy=`), last i-line minus
+first in the run's .txt log (it accumulates from the last flash on binz). Segment times come
 from the host's segment starts relative to the recorder arm (JSON), mapped
 onto the recorder's sample clock.
 
@@ -62,6 +65,14 @@ def summarize(js: pathlib.Path, tail: float):
     # dsy4 is a 4-bit wrapping counter of desync events.
     dsy_n = sum((b - a) % 16 for a, b in zip(dsy, dsy[1:]))
     mv = [int(r["mv"]) for r in rows if int(r["mv"]) > 0]
+    dsy_fw = None
+    txt = js.with_suffix(".txt")
+    if txt.exists():
+        il = [re.search(r" dsy=(\d+)", ln) for ln in txt.open(errors="replace")
+              if ln.startswith("i step")]
+        il = [int(m.group(1)) for m in il if m]
+        if len(il) >= 2:
+            dsy_fw = il[-1] - il[0]
     r = meta.get("r") or ""
     if isinstance(r, dict):
         r = " ".join(f"{k}={v}" for k, v in r.items())
@@ -73,6 +84,8 @@ def summarize(js: pathlib.Path, tail: float):
         "kill": meta.get("kill") or meta.get("kill_line"),
         "segments": segs,
         "dsy": dsy_n,
+        # Full firmware desync count over the run; None without a usable log.
+        "dsy_fw": dsy_fw,
         "old_routine": sum(int(r["old_routine"]) for r in driven),
         "mv_min": min(mv) if mv else 0,
         "mv_max": max(mv) if mv else 0,
@@ -103,6 +116,10 @@ def check(out, bands) -> int:
                 why.append(f"kill: {s['kill']}")
             if s["dsy"] > b["dsy_max"]:
                 why.append(f"dsy={s['dsy']}")
+            if s["dsy_fw"] is None:
+                why.append("no firmware desync count (.txt missing or < 2 i-lines)")
+            elif s["dsy_fw"] > b["dsy_max"]:
+                why.append(f"firmware desyncs={s['dsy_fw']} (all classes)")
             if len(s["segments"]) != len(b["segments"]):
                 why.append(f"{len(s['segments'])} segments, band has {len(b['segments'])}")
             else:
@@ -144,7 +161,7 @@ def main() -> int:
     if a.check:
         return check(out, json.loads(a.check.read_text()))
     for s in out:
-        print(f"{s['board']:5} {s['file']}: dsy={s['dsy']} old={s['old_routine']} "
+        print(f"{s['board']:5} {s['file']}: dsy={s['dsy']} dsy_fw={s['dsy_fw']} old={s['old_routine']} "
               f"bus {s['mv_min']}..{s['mv_max']} mV kill={s['kill'] or 0}")
         for g in s["segments"]:
             print(f"      {g['throttle']:3d}%  duty {g['duty']:7.1f}  {g['ehz']:7.1f} eHz  {g['ma']:6.0f} mA")

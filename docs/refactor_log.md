@@ -850,9 +850,11 @@ check name regex widened twice, bands file untouched).
     count. On binz it accumulates from the last flash, so a run's count is
     the difference from the previous run. Every band check since S1 has
     read the fast class only. The S5.3 battery run is judged on the
-    firmware counter instead. Proposed tool fix, not done in this step:
-    `gc_summary.py` takes the per-run `desync_events` difference from the
-    i-lines and fails any increase.
+    firmware counter instead. Fixed after the batch: `gc_summary.py`
+    reports `dsy_fw` (last i-line `dsy=` minus first, from the run's .txt)
+    and `--check` fails any increase, or a run without the count. All 324
+    PSU gc captures so far have `dsy_fw` = 0, so the blind column hid
+    nothing on the PSU.
 
 26. **L431 orbit-trip wedge on a battery slam: present at
     gc-s00-baseline, so not S5.3's and not the batch's; tagged
