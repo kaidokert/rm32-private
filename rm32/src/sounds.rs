@@ -7,6 +7,10 @@
 use crate::hal::{Bridge, System};
 
 /// Beep volume (0-11 maps to duty 0-33).
+/// Drive mode of the blocking tunes: they play at boot, before the EEPROM
+/// config (and so `comp_pwm`) is loaded, with the driven leg non-complementary.
+const BOOT_COMPLEMENTARY: bool = false;
+
 pub struct Sounds {
     volume: u8,
     tim1_autoreload: u16,
@@ -44,7 +48,7 @@ impl Sounds {
         bridge.set_period(self.tim1_autoreload);
         bridge.set_tone_divider(prescaler);
         bridge.set_duty_all(self.volume as u16);
-        bridge.com_step(step);
+        bridge.com_step(step, BOOT_COMPLEMENTARY);
         sys.delay_millis(duration_ms);
         sys.reload_watchdog();
     }
@@ -103,7 +107,7 @@ impl Sounds {
         cpu_mhz: u32,
     ) {
         let mut full_time_count = 0u32;
-        bridge.com_step(3);
+        bridge.com_step(3, BOOT_COMPLEMENTARY);
 
         let mut i = 4;
         while i < 126 {
@@ -239,7 +243,7 @@ impl Sounds {
         bridge.set_period(reload);
         let scaled_vol = self.volume as u32 * reload as u32 / self.tim1_autoreload as u32;
         bridge.set_duty_all(scaled_vol as u16);
-        bridge.com_step(3);
+        bridge.com_step(3, BOOT_COMPLEMENTARY);
         sys.delay_millis(duration_ms as u32);
     }
 }

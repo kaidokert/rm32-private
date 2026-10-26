@@ -73,14 +73,14 @@ struct MockBridge {
     full_brake: HalCounter,
 }
 impl hal::PhaseOutput for MockBridge {
-    fn com_step(&mut self, _: u8) {}
+    fn com_step(&mut self, _: u8, _: bool) {}
     fn all_off(&mut self) {
         self.all_off.set(self.all_off.get() + 1);
     }
     fn full_brake(&mut self) {
         self.full_brake.set(self.full_brake.get() + 1);
     }
-    fn all_pwm(&mut self) {}
+    fn all_pwm(&mut self, _: bool) {}
     fn proportional_brake(&mut self) {}
 }
 
@@ -686,6 +686,7 @@ impl Harness {
                         &mut self.hal.com_timer,
                         &mut self.hal.comp,
                         &mut self.hal.bridge,
+                        self.config.use_comp_pwm(),
                         self.config.is_bidirectional(),
                         self.config.use_strict_changeover(),
                     );

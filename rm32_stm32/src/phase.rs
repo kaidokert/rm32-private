@@ -254,7 +254,6 @@ type PulseToggleFn = fn(u32);
 /// After monomorphization, all port/pin constants are inlined — zero overhead.
 pub struct PhaseDriver<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin>
 {
-    comp_pwm: bool,
     /// PWM/enable bridge mode: low-side pins are enable (output high/low)
     /// instead of complementary PWM (alternate mode).
     bridge_enable: bool,
@@ -266,34 +265,20 @@ pub struct PhaseDriver<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: G
 impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin>
     PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
-    pub fn new(comp_pwm: bool) -> Self {
+    pub fn new() -> Self {
         Self {
-            comp_pwm,
             bridge_enable: false,
             pulse: None,
             _pins: PhantomData,
         }
     }
 
-    pub fn new_bridge(comp_pwm: bool) -> Self {
+    pub fn new_bridge() -> Self {
         Self {
-            comp_pwm,
             bridge_enable: true,
             pulse: None,
             _pins: PhantomData,
         }
-    }
-
-    /// Wire the LOADED config's comp_pwm into the driver. The per-MCU
-    /// init constructs the driver before the EEPROM config exists, with
-    /// comp_pwm=false as the safe idle default — main MUST call this
-    /// after config load or every commutation runs non-complementary
-    /// (low-side pin left in GPIO-output during the driven phase; the
-    /// freewheel goes through the body diode instead of the low FET).
-    /// That silent mismatch was the 8%-wrong-sided-window disparity vs
-    /// the clone: config said damped PWM, silicon ran undamped.
-    pub fn set_comp_pwm(&mut self, v: bool) {
-        self.comp_pwm = v;
     }
 
     /// Enable RPM pulse output on the given pin.
@@ -308,38 +293,28 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         self.pulse = Some((toggle::<P::Port>, P::BSRR_SET));
     }
 
-    /// Phase PWM: high-side alternate (TIM1), low-side depends on mode.
-    ///
-    /// Normal: low-side alternate (comp_pwm) or output LOW.
-    /// Bridge: enable pin output HIGH (comp_pwm) or no-op.
+    /// The drive mode the core decided (`rm32::bridge::drive_complementary`);
+    /// bench images can force it with the 'D' key (1 = diode, 2 =
+    /// complementary, anything else = the core's decision).
     #[inline]
-    fn effective_comp_pwm(&self) -> bool {
+    fn drive(complementary: bool) -> bool {
         #[cfg(feature = "benchuart")]
         {
             match COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed) {
                 1 => return false,
                 2 => return true,
-                3 => return self.comp_pwm && !crate::isr::shared().old_routine(),
                 _ => {}
             }
         }
-        // AUTO drive mode — KEPT DIVERGENCE, promoted to ALL builds
-        // (Tier B5). AM32 applies complementary drive unconditionally;
-        // rm32 runs complementary only in interrupt mode and DIODE during
-        // polling/recovery: comp drive's synchronous rectification BRAKES
-        // the rotor the polling restart is accelerating, making the churn
-        // attractor self-sustaining (measured twice: sustained-comp fell
-        // into a permanent ~245 Hz churn on the bench campaign, and the
-        // first BF DSHOT300 full ladder under always-comp churned the
-        // ENTIRE envelope at <400 Hz e with 16k desyncs / 99.9%
-        // excursions, where the AUTO benchuart build holds the parity
-        // standard). The 'D' bench lever above can still force either.
-        self.comp_pwm && !crate::isr::shared().old_routine()
+        complementary
     }
 
+    /// Phase PWM: high-side alternate (TIM1), low-side depends on mode.
+    ///
+    /// Normal: low-side alternate (complementary) or output LOW.
+    /// Bridge: enable pin output HIGH (complementary) or no-op.
     #[inline]
-    fn phase_pwm<H: GpioPin, L: GpioPin>(&self) {
-        let comp = self.effective_comp_pwm();
+    fn phase_pwm<H: GpioPin, L: GpioPin>(&self, comp: bool) {
         if self.bridge_enable {
             if comp {
                 L::set_mode(MODE_OUTPUT);
@@ -373,10 +348,23 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     }
 }
 
+impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin> Default
+    for PhaseDriver<AH, AL, BH, BL, CH, CL>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin> PhaseOutput
     for PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
-    fn com_step(&mut self, step: u8) {
+    // Pinned out of line, where it already was before S5.3: shorter now
+    // that the drive mode arrives as an argument, it must not get copied
+    // into each of its callers.
+    #[inline(never)]
+    fn com_step(&mut self, step: u8, complementary: bool) {
+        let comp = Self::drive(complementary);
         // B6: atomic writer always-on for L431 complementary bridges
         // (10-20x fewer deaf windows than the sequential path; the pin
         // map matches the AM32 L431 reference pinout shared by all
@@ -384,7 +372,7 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         // sequential writer — their pin semantics differ.
         #[cfg(feature = "stm32l431")]
         if !self.bridge_enable {
-            l431_atomic_com_step(step, self.effective_comp_pwm());
+            l431_atomic_com_step(step, comp);
             return;
         }
         // G071: same writer, compile-time register images (binz WCET gate).
@@ -393,12 +381,12 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         // compiled in, so it is not on the COM ISR's longest path either.
         #[cfg(all(feature = "stm32g071", not(rm32_bridge_enable)))]
         {
-            g071_atomic::com_step(step, self.effective_comp_pwm());
+            g071_atomic::com_step(step, comp);
             return;
         }
         #[cfg(all(feature = "stm32g071", rm32_bridge_enable))]
         if !self.bridge_enable {
-            g071_atomic::com_step(step, self.effective_comp_pwm());
+            g071_atomic::com_step(step, comp);
             return;
         }
         #[allow(unreachable_code)]
@@ -406,32 +394,32 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
             1 => {
                 Self::phase_float::<CH, CL>();
                 Self::phase_low::<BH, BL>();
-                self.phase_pwm::<AH, AL>();
+                self.phase_pwm::<AH, AL>(comp);
             }
             2 => {
                 Self::phase_float::<AH, AL>();
                 Self::phase_low::<BH, BL>();
-                self.phase_pwm::<CH, CL>();
+                self.phase_pwm::<CH, CL>(comp);
             }
             3 => {
                 Self::phase_float::<BH, BL>();
                 Self::phase_low::<AH, AL>();
-                self.phase_pwm::<CH, CL>();
+                self.phase_pwm::<CH, CL>(comp);
             }
             4 => {
                 Self::phase_float::<CH, CL>();
                 Self::phase_low::<AH, AL>();
-                self.phase_pwm::<BH, BL>();
+                self.phase_pwm::<BH, BL>(comp);
             }
             5 => {
                 Self::phase_float::<AH, AL>();
                 Self::phase_low::<CH, CL>();
-                self.phase_pwm::<BH, BL>();
+                self.phase_pwm::<BH, BL>(comp);
             }
             6 => {
                 Self::phase_float::<BH, BL>();
                 Self::phase_low::<CH, CL>();
-                self.phase_pwm::<AH, AL>();
+                self.phase_pwm::<AH, AL>(comp);
             }
             _ => {}
         }
@@ -449,10 +437,12 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         Self::phase_low::<CH, CL>();
     }
 
-    fn all_pwm(&mut self) {
-        self.phase_pwm::<AH, AL>();
-        self.phase_pwm::<BH, BL>();
-        self.phase_pwm::<CH, CL>();
+    #[inline(never)]
+    fn all_pwm(&mut self, complementary: bool) {
+        let comp = Self::drive(complementary);
+        self.phase_pwm::<AH, AL>(comp);
+        self.phase_pwm::<BH, BL>(comp);
+        self.phase_pwm::<CH, CL>(comp);
     }
 
     fn proportional_brake(&mut self) {

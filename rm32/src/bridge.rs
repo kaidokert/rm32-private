@@ -41,6 +41,30 @@ pub const fn step_legs(step: u8, complementary: bool) -> [LegRole; 3] {
     }
 }
 
+/// The drive-mode decision: whether the driven leg of a commutation step
+/// switches complementary (high and low FET alternate, synchronous
+/// rectification) or diode (low FET off, freewheel through its body diode).
+///
+/// AUTO drive mode, a KEPT DIVERGENCE from AM32: AM32 runs complementary
+/// whenever the config enables it; rm32 runs it only in interrupt mode and
+/// drives diode during polling startup/recovery (`old_routine`).
+/// Complementary drive's synchronous rectification brakes the rotor the
+/// polling restart is accelerating, which made the churn attractor
+/// self-sustaining (measured twice: sustained comp fell into a permanent
+/// ~245 Hz churn on the bench campaign, and the first Betaflight DSHOT300
+/// full ladder under always-comp churned the whole envelope below 400 Hz e
+/// with 16k desyncs, where AUTO holds the parity standard).
+///
+/// `old_routine` is read only when `comp_pwm` is set, as before the
+/// decision moved into the core (one fewer critical section per step on M0).
+#[inline(always)]
+pub fn drive_complementary<S: crate::shared_comm::SharedComm + ?Sized>(
+    comp_pwm: bool,
+    shared: &S,
+) -> bool {
+    comp_pwm && !shared.old_routine()
+}
+
 /// The power stage as the core drives it: the gate legs plus the PWM timer
 /// behind them (AM32's TIM1 period, compare, dead-time and prescaler writes).
 pub trait Bridge: PhaseOutput {
@@ -61,8 +85,8 @@ pub trait Bridge: PhaseOutput {
 /// A `&mut` to a bridge is a bridge (lets a HAL hand out `&mut` its own).
 impl<B: PhaseOutput + ?Sized> PhaseOutput for &mut B {
     #[inline(always)]
-    fn com_step(&mut self, step: u8) {
-        (**self).com_step(step);
+    fn com_step(&mut self, step: u8, complementary: bool) {
+        (**self).com_step(step, complementary);
     }
     #[inline(always)]
     fn all_off(&mut self) {
@@ -73,8 +97,8 @@ impl<B: PhaseOutput + ?Sized> PhaseOutput for &mut B {
         (**self).full_brake();
     }
     #[inline(always)]
-    fn all_pwm(&mut self) {
-        (**self).all_pwm();
+    fn all_pwm(&mut self, complementary: bool) {
+        (**self).all_pwm(complementary);
     }
     #[inline(always)]
     fn proportional_brake(&mut self) {

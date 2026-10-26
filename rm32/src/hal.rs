@@ -19,16 +19,17 @@ pub use crate::bridge::Bridge;
 /// counters and reverse rotation stay meaningful. Code that only commutates
 /// (the commutation-timer path) asks for this much.
 pub trait PhaseOutput {
-    /// Drive commutation step `step` (1..=6, [`crate::bridge::step_legs`]); any other step
-    /// leaves the outputs unchanged. The driven leg's PWM style is still the
-    /// port's decision.
-    fn com_step(&mut self, step: u8);
+    /// Drive commutation step `step` (1..=6, [`crate::bridge::step_legs`])
+    /// with the driven leg complementary or diode
+    /// ([`crate::bridge::drive_complementary`], the core's decision); any
+    /// other step leaves the outputs unchanged.
+    fn com_step(&mut self, step: u8, complementary: bool);
     /// Every leg floating (AM32 `allOff`).
     fn all_off(&mut self);
     /// Every low side on (AM32 `fullBrake`).
     fn full_brake(&mut self);
     /// Every leg driven by PWM (AM32 `allpwm`).
-    fn all_pwm(&mut self);
+    fn all_pwm(&mut self, complementary: bool);
     /// High sides off, low sides PWM (AM32 `proportionalBrake`).
     fn proportional_brake(&mut self);
     /// RPM pulse output on steps 1 and 4 (debug); boards without one ignore it.

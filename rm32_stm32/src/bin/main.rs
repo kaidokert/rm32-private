@@ -158,7 +158,7 @@ fn main() -> ! {
 
     // --- Startup tune (before peripherals move to ISR) ---
     if BOARD.bridge_enable {
-        hal.phase = rm32_stm32::phase::G0APhaseDriver::new_bridge(false);
+        hal.phase = rm32_stm32::phase::G0APhaseDriver::new_bridge();
     }
     {
         let sounds = Sounds::new(Chip::TIM1_AUTORELOAD);
@@ -357,14 +357,11 @@ fn main() -> ! {
 
     // Propagate loaded config to ISR state (still on stack, before move)
     isr_state.config = main_state.config;
-    // comp_pwm reaches the phase driver HERE and nowhere else — the
-    // per-MCU init constructed it with false (safe idle). See
-    // PhaseDriver::set_comp_pwm for the failure mode when this is missed.
-    isr_state
-        .hal
-        .phase
-        .set_comp_pwm(main_state.config.comp_pwm != 0);
-    rm32_stm32::dprintln!("[rm32] comp_pwm wired: {}", main_state.config.comp_pwm != 0);
+    // comp_pwm is read from the config by the core's drive-mode decision
+    // (rm32::bridge::drive_complementary) at every commutation; the port
+    // keeps no copy, so a missed wiring step can no longer leave the
+    // silicon in diode drive while the config says complementary.
+    rm32_stm32::dprintln!("[rm32] comp_pwm: {}", main_state.config.comp_pwm != 0);
     // BENCH: boot in diode drive regardless of config — the complementary
     // spin-up currently churns (comp-on climb is the open divergence);
     // the 'D' command flips drive live once at a clean operating point.

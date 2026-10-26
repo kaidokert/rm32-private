@@ -96,7 +96,10 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     let changeover = ctx.shared.changeover_step();
     if changeover > 0 {
         ctx.commutation.set_step(changeover);
-        ctx.hal.bridge().com_step(changeover);
+        ctx.hal.bridge().com_step(
+            changeover,
+            crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+        );
         ctx.hal.bridge().latch();
         let ci = ctx.shared.commutation_interval();
         ctx.hal.com_timer().set_and_enable(ci as u16);
@@ -134,7 +137,10 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                     .commutation
                     .record_interval::<H>(ctx.shared.commutation_interval() as u16);
                 ctx.shared.set_e_com_time(e_com);
-                ctx.hal.bridge().com_step(step);
+                ctx.hal.bridge().com_step(
+                    step,
+                    crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+                );
                 ctx.hal.comp().set_step(step, ctx.commutation.rising);
                 ctx.hal.comp().change_input();
                 ctx.shared
@@ -152,7 +158,10 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.bemf.reset_for_step();
             }
             if ctx.config.brake_on_stop == 2 {
-                ctx.hal.bridge().com_step(2);
+                ctx.hal.bridge().com_step(
+                    2,
+                    crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+                );
                 let brake_duty = crate::fast_math::div2000_pwm(
                     ctx.config.active_brake_power as u32 * tim1_arr as u32,
                 ) * 10;
@@ -239,7 +248,10 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.hal.com_timer().disable_interrupt();
                 ctx.hal.comp().mask_interrupts();
                 ctx.hal.bridge().set_duty_all(0);
-                ctx.hal.bridge().all_pwm();
+                ctx.hal.bridge().all_pwm(crate::bridge::drive_complementary(
+                    ctx.config.use_comp_pwm(),
+                    ctx.shared,
+                ));
                 ctx.duty.sine_outputs_on = true;
             }
         } else {
@@ -311,7 +323,10 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 .commutation
                 .record_interval::<H>(ctx.shared.commutation_interval() as u16);
             ctx.shared.set_e_com_time(e_com);
-            ctx.hal.bridge().com_step(step);
+            ctx.hal.bridge().com_step(
+                step,
+                crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+            );
             ctx.hal.bridge().pulse_toggle(step);
             ctx.hal.comp().set_step(step, ctx.commutation.rising);
             ctx.hal.comp().change_input();
@@ -334,6 +349,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
     com_timer: &mut T,
     comp: &mut C,
     bridge: &mut B,
+    comp_pwm: bool,
     bidirectional: bool,
     strict_changeover: bool,
 ) where
@@ -357,7 +373,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
     let ci0 = shared.commutation_interval();
     let e_com = commutation.record_interval::<P>(ci0 as u16);
     shared.set_e_com_time(e_com);
-    bridge.com_step(step);
+    bridge.com_step(step, crate::bridge::drive_complementary(comp_pwm, shared));
     bridge.pulse_toggle(step);
     comp.set_step(step, commutation.rising);
     comp.change_input();

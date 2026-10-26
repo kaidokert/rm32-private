@@ -55,7 +55,7 @@ pub fn measure(t_off: u32, phase_inmsel: u32, max_ms: u32) -> CoastTiming {
         use rm32::hal::PhaseOutput as _;
         cortex_m::peripheral::NVIC::mask(crate::pac::Interrupt::TIM14);
         cortex_m::peripheral::NVIC::unpend(crate::pac::Interrupt::TIM14);
-        crate::phase::G0APhaseDriver::new(false).all_off();
+        crate::phase::G0APhaseDriver::new().all_off();
         // SAFETY: EXTI line 18 (COMP2) mask + pending clear, as
         // `G071Exti::mask_and_clear`; the next commutation start re-arms it.
         unsafe {

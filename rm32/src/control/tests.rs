@@ -68,6 +68,7 @@ mod tests {
         last_duty: u16,
         all_off_called: bool,
         com_step_calls: u32,
+        last_complementary: Option<bool>,
         prop_brake_calls: u32,
         order: *const MockOrder,
     }
@@ -77,21 +78,23 @@ mod tests {
                 last_duty: 0,
                 all_off_called: false,
                 com_step_calls: 0,
+                last_complementary: None,
                 prop_brake_calls: 0,
                 order: ptr::null(),
             }
         }
     }
     impl hal::PhaseOutput for MockBridge {
-        fn com_step(&mut self, _: u8) {
+        fn com_step(&mut self, _: u8, complementary: bool) {
             self.com_step_calls += 1;
+            self.last_complementary = Some(complementary);
         }
         fn all_off(&mut self) {
             self.all_off_called = true;
             record_order(self.order, |order| &order.all_off);
         }
         fn full_brake(&mut self) {}
-        fn all_pwm(&mut self) {}
+        fn all_pwm(&mut self, _: bool) {}
         fn proportional_brake(&mut self) {
             self.prop_brake_calls += 1;
             record_order(self.order, |order| &order.prop_brake);
@@ -756,6 +759,49 @@ mod tests {
         );
     }
 
+    /// The COM path hands the bridge the core's drive-mode decision:
+    /// complementary only when the config enables it AND the motor is in
+    /// interrupt mode (AUTO; diode during polling, `old_routine`).
+    #[test]
+    fn isr_commutation_passes_core_drive_decision() {
+        use crate::motor_mode::MotorMode;
+        for (mode, comp_pwm, want) in [
+            (MotorMode::Running, true, true),
+            (MotorMode::Running, false, false),
+            (MotorMode::OldRoutine, true, false),
+            (MotorMode::OldRoutine, false, false),
+        ] {
+            let mut comm = crate::commutation::Commutation::new();
+            let mut bemf = crate::control::state::BemfState::default();
+            let shared = TestShared::new();
+            shared.mode.set(mode);
+            let mut com_timer = MockComTimer::new();
+            let mut comp = MockComp {
+                level: false,
+                mask_called: false,
+                enable_calls: 0,
+            };
+            let mut phase = MockBridge::default();
+            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+                &mut comm,
+                &mut bemf,
+                &shared,
+                &mut com_timer,
+                &mut comp,
+                &mut phase,
+                comp_pwm,
+                false,
+                true,
+            );
+            assert_eq!(phase.com_step_calls, 1, "{mode:?}");
+            assert_eq!(
+                phase.last_complementary,
+                Some(want),
+                "{mode:?} comp_pwm={comp_pwm}"
+            );
+        }
+    }
+
     #[test]
     fn isr_commutation_timer_advances_step() {
         let mut comm = crate::commutation::Commutation::new();
@@ -781,6 +827,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
+            false,
             false,
             true,
         );
@@ -821,6 +868,7 @@ mod tests {
             &mut comp,
             &mut phase,
             false,
+            false,
             true,
         );
 
@@ -857,6 +905,7 @@ mod tests {
             &mut comp,
             &mut phase,
             false,
+            false,
             true,
         );
 
@@ -889,6 +938,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
+            false,
             false,
             true,
         );
@@ -931,6 +981,7 @@ mod tests {
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
+                false,
                 bidirectional,
                 true,
             );
@@ -968,6 +1019,7 @@ mod tests {
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
+                false,
                 bidirectional,
                 false,
             );
@@ -1010,6 +1062,7 @@ mod tests {
             &mut comp,
             &mut phase,
             false,
+            false,
             true,
         );
 
@@ -1044,6 +1097,7 @@ mod tests {
             &mut phase,
             false,
             false,
+            false,
         );
 
         assert!(!shared.old_routine());
@@ -1075,6 +1129,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
+            false,
             false,
             true,
         );
@@ -1109,6 +1164,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
+            false,
             true,
             true,
         );

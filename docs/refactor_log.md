@@ -806,6 +806,43 @@ check name regex widened twice, bands file untouched).
     needed 4-8 dump attempts. Proposed tool fix, not done in this step:
     vote row by row over all dumps, ignoring malformed rows.
 
+21. **S5.3 AUTO drive mode kept (a known divergence, now in one place).**
+    AM32 runs complementary drive whenever the config enables it; rm32
+    runs it only in interrupt mode and drives diode while polling
+    (`old_routine`). S5.3 is "no behaviour change", so the policy moves
+    unchanged into `rm32::bridge::drive_complementary(comp_pwm, shared)`
+    with its rationale; dropping it is a behaviour change for its own
+    step. `old_routine` is still read only when `comp_pwm` is set: the
+    first version read it eagerly, which put one more critical section
+    in binz's TIM6 tree (cpsid 83 -> 84, removals FAIL) and one more per
+    step at runtime when comp_pwm is off.
+
+22. **S5.3 tone: the config bit alone.** The port tone code passes
+    `config.use_comp_pwm()` instead of the core's decision. Same result:
+    `Tone::tick` returns `StartNote` only with the motor not running, and
+    `old_routine` is a running mode, so the decision reduces to the config
+    bit (AM32's tones follow comp_pwm alone too). Calling the core's
+    decision there would add a critical section that cannot change the
+    answer (it was the other +1 cpsid in the first gate). Blocking boot
+    tunes (`Sounds`) pass false: they play before the config is loaded,
+    where the port driver used to hold its constructed `false`.
+
+23. **S5.3 bench 'D' key stays in the port.** The bench override
+    (1 = diode, 2 = complementary, else the core's decision) now
+    overrides the bool the core passes; value 3 ("auto") no longer means
+    anything special because auto IS the core's decision. Boot still
+    stores 3, so bench images behave as before. Production builds have no
+    override.
+
+24. **S5.3 imean reads higher on binz (not banded, explained).** R3
+    imean 908.0 +- 3.0 (S5.2f) vs 923.7 +- 6.7 (S5.3), p=0.039; R1 and R4
+    are higher in all three rounds too (+15, +26 mA). binz TIM6 lost 36
+    instructions, so the main loop gets more of the CPU at 60-70 % and
+    samples those segments more (the Call 8 mechanism, in the expected
+    direction). Every banded metric agrees: 0 of 120 differ after
+    Bonferroni, 1 at raw p < 0.05 (L431 R1 50 % mA -22, one ADC count),
+    against ~6 expected by chance.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -975,3 +1012,41 @@ Gate vs s05.2r3: `ISR diff: identical` and removals PASS on all six
 images; no FAIL in any gate output. Bench R1-R4 once per board, 8/8 in
 band including the new i50max check (L431 R3 repeated once after a
 serial dump failure, Call 20).
+
+## S5.3 -- drive-mode decision into the core (RISKY) -- tag gc-s05.3-psu
+
+The AUTO drive-mode policy (`comp_pwm && !old_routine`) leaves the port's
+`PhaseDriver::effective_comp_pwm` for `rm32::bridge::drive_complementary`
+(Call 21). `PhaseOutput::com_step` and `all_pwm` take the decision as an
+argument; the core computes it at each of its six call sites from
+`config.use_comp_pwm()` and `shared`, and `commutation_timer_expired` takes
+a `comp_pwm` argument (the port passes `state.config.use_comp_pwm()`).
+`PhaseDriver` loses its `comp_pwm` field, `new(bool)`, `set_comp_pwm` and
+the main.rs wiring step: a missed wiring step can no longer leave the
+silicon in diode drive while the config says complementary. Tone: Call
+22. Bench 'D' key: Call 23. `com_step` / `all_pwm` pinned
+`#[inline(never)]` (they were already out of line). Host tests 393 -> 394
+(new: the COM path passes the core decision, 4 mode x config cases);
+blackbox 81/81.
+
+ELF SHA-256 (prefix): binz 9fd764014cc6, l431 33c1dff0b428, pub g071
+3374dc5e2b3b, f051 119513ed111c, l431 2ffbfb6450ce, g431 840bef90dcb1.
+
+Gate vs s05.2f: removals PASS on all six images, no FAIL in any gate
+output. Every ISR root shrank: l431 TIM16 -129 / TIM6 -148, binz TIM14
+-9 / TIM6 -36, pub g071 -1 / -45, f051 -25 / -61, l431 -50 / -62, g431
+-89 / -103 instructions. The removed code is the per-call
+`effective_comp_pwm` (a COMP_PWM_LIVE match plus an `old_routine` read,
+inlined at each `phase_pwm` and twice in `com_step`); `all_pwm` now reads
+`old_routine` once instead of three times. binz static WCET: TIM6 5118
+-> 5080 cycles; TIM14 909 -> 918 (+9 cycles, 0.14 us): the
+`old_routine` read moved from `com_step` into `commutation_timer_expired`
+and the bool crosses as an argument, same work on every path.
+
+Bench (PSU, ABAB, same session): A = S5.2f images (`s53a`), B = S5.3
+(`s53b`), R1-R4 three times per board, order A/B, B/A, A/B; 48/48 OK, no
+kill, desync or reboot, no R3 overcurrent trip; band check 48/48;
+`scripts/ab_segments.py s53a s53b` 0/120 banded metrics significant (Call
+24); `ab_r3_peaks.py s53a s53b`: R3 peak 4351 +- 312 vs 4185 +- 264
+(p=0.52), dwell 2177 vs 2173. RISKY: added to the battery batch, see
+`docs/gc_battery_s05.3.md`.
