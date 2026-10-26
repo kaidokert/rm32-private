@@ -368,3 +368,37 @@ contacts; the binz bands predate the relay. Operator approved a rebuild:
 s03.2c image, v4 recipe, binz/* replaced, l431/* byte-identical.
 Self-check 16/16, s03.2c bisect runs 3/3, pre-relay binz s03.2 runs 1/4
 (falsifier).
+
+## S3.3 -- `DiagSink` (CODE) -- tag gc-s03.3-psu
+
+`rm32::diag::DiagSink`: every hook an `#[inline(always)]` no-op, `()` the
+production sink. The 11 `dbg_*` atomics and their accessors leave
+`SharedState`; the port's `rm32_stm32::diag` holds them behind
+`debuguart` (`BenchDiag`: one counter block, DWT brackets on M4) and
+exposes 0-returning getters in production for the RTT `[loop]` /
+last-words lines. ISR and main-loop cycle brackets, the DShot CRC / bidir
+/ command counters and the binz desync injection (`DESYNC_INJECT` ->
+`Commutation::inject_skip`) all go through `DIAG`. The control-tick count
+stays in `SharedState` as `tick_count` (a clock: G071 bench time derives
+from it), not a diagnostic.
+
+Gate tooling: gc_gate.sh dumps the four public builds' ISR roots too and
+runs `isr_diff.py removals` per image. `removals` judges work, not
+register allocation: fail on a new function, more instructions, more
+calls / barriers / exclusives / IRQ masking, or a new peripheral address.
+Self-test (an image vs itself) passes; the reverse direction (s03.3 ->
+s03.2) fails on every root.
+
+Gate PASS vs s03.2c (s03.2 code + the 48 kHz L431 yaml; ISR-identical to
+s03.2). removals PASS on all four public builds: text -408 (G071), -408
+(F051), -448 (L431), -280 (G431) B; DWT brackets, barriers and counter
+atomics gone from COMP/TIM16/TIM6/DMA/EXTI roots. Bench images grow
+slightly (L431 +176 B, binz +16 B: the counter block is its own base, +2
+instructions in the L431 TIM6/TIM16 roots). Host tests 384 = 384.
+
+Bench (shared motor, relay routed per run): L431 R1-R4 4/4 in its new
+bands; binz R2/R3/R4 pass the relay-path binz bands (rebuilt above). The
+first binz R1 missed low by a constant 40-78 mA at identical eHz (a
+current-zero offset signature); reflashed the same image and repeated:
+in band at every rung. Recorded as an unreproduced outlier
+(captures/bisect_s03.3/), the repeat is the step's R1. Verdict 8/8 PASS.

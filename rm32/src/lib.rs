@@ -14,6 +14,7 @@ pub mod constants;
 pub mod control;
 pub mod crsf;
 pub mod current;
+pub mod diag;
 pub mod dshot;
 pub mod dshot_commands;
 pub mod edt;

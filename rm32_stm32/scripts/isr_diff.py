@@ -22,11 +22,29 @@ normalized assembly:
 root present on one side only is a difference). A HOST-class step must
 diff empty against its predecessor; a commit diffed against itself is
 empty by construction.
+
+`removals` is the CODE-step check ("the diff shows only removals"). A
+removal re-runs register allocation over the whole function, so a line
+diff (and even a per-mnemonic count) grows in places nothing was added.
+The check therefore judges work, per root, and exits 1 on any of:
+
+  * a new root, or a function the old tree did not call (LLVM's per-build
+    `.llvm.<n>` name suffix ignored);
+  * more instructions in the root than before;
+  * more calls (bl/blx), barriers (dmb/dsb/isb), exclusive accesses
+    (ldrex/strex) or interrupt masking (cpsid/cpsie/msr);
+  * a constant that was not there before (peripheral addresses and every
+    other immediate; flash/SRAM pointers are already ADDR).
+
+Other per-mnemonic growth is printed as re-allocation noise for reading.
+
+    python scripts/isr_diff.py removals captures/gc/s03.2b/isr_pub_stm32l431 captures/gc/s03.3/isr_pub_stm32l431
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import difflib
 import pathlib
 import re
@@ -188,6 +206,102 @@ def cmd_diff(a) -> int:
     return 1 if differ else 0
 
 
+_FLAG_S = {"movs", "adds", "subs", "lsls", "lsrs", "asrs", "ands", "orrs", "eors",
+           "muls", "mvns", "rsbs", "bics", "adcs", "sbcs", "rors", "negs"}
+
+
+def mnemonics(path: pathlib.Path) -> collections.Counter:
+    c: collections.Counter = collections.Counter()
+    for ln in path.read_text().splitlines():
+        if not ln.startswith("    ") or not ln.strip():
+            continue
+        m = ln.split()[0]
+        for sfx in (".w", ".n"):
+            if m.endswith(sfx):
+                m = m[: -len(sfx)]
+        if m in _FLAG_S:
+            m = m[:-1]
+        c[m] += 1
+    return c
+
+
+def names(path: pathlib.Path) -> set[str]:
+    # LLVM's per-build `.llvm.<n>` suffix is not a different function.
+    if not path.exists():
+        return set()
+    return {re.sub(r"\.llvm\.\d+$", "", ln.split(None, 1)[1])
+            for ln in path.read_text().splitlines() if " " in ln}
+
+
+_WORK = ("bl", "blx", "dmb", "dsb", "isb", "cpsid", "cpsie", "msr")
+
+
+# APB/AHB1, GPIO (AHB2 on F0/L4/G4), ADC/IOPORT (0x5000_0000), and the
+# system-control space. Not the whole 0x4000_0000 region: jump-table words
+# padded with the Thumb nop 0x46c0 land there.
+_PERIPH = ((0x4000_0000, 0x4010_0000), (0x4800_0000, 0x4801_0000),
+           (0x5000_0000, 0x5007_0000), (0xE000_0000, 0xE010_0000))
+
+
+def _peripheral(v: int) -> bool:
+    return any(lo <= v < hi for lo, hi in _PERIPH)
+
+
+def constants(path: pathlib.Path) -> set[str]:
+    """Peripheral / system-control addresses the root touches: v6-M literal
+    words and v7-M movt high halves. Field offsets, literal-pool and
+    jump-table words move with any layout change and are not work."""
+    c: set[str] = set()
+    for ln in path.read_text().splitlines():
+        parts = ln.split()
+        if len(parts) < 2:
+            continue
+        if parts[0] == ".word" and parts[1] != "ADDR" and _peripheral(int(parts[1], 16)):
+            c.add(parts[1])
+        elif parts[0] == "movt" and parts[-1].startswith("#") and parts[-1] != "#ADDR":
+            hi = int(parts[-1][1:], 0)
+            if _peripheral(hi << 16):
+                c.add(f"0x{hi:04x}xxxx")
+    return c
+
+
+def cmd_removals(a) -> int:
+    da, db = pathlib.Path(a.a), pathlib.Path(a.b)
+    ra = set((da / "roots.txt").read_text().split())
+    rb = set((db / "roots.txt").read_text().split())
+    bad = False
+    for r in sorted(rb - ra):
+        print(f"root {r}: NEW root")
+        bad = True
+    for r in sorted(ra - rb):
+        print(f"root {r}: removed")
+    for r in sorted(ra & rb):
+        x, y = mnemonics(da / f"{r}.s"), mnemonics(db / f"{r}.s")
+        tx, ty = sum(x.values()), sum(y.values())
+        fails = []
+        if ty > tx:
+            fails.append(f"instructions {tx} -> {ty}")
+        for m in sorted(y):
+            if (m in _WORK or m.startswith(("ldrex", "strex"))) and y[m] > x[m]:
+                fails.append(f"{m}: {x[m]} -> {y[m]}")
+        for f in sorted(names(db / f"{r}.names") - names(da / f"{r}.names")):
+            fails.append(f"new function: {f}")
+        cx, cy = constants(da / f"{r}.s"), constants(db / f"{r}.s")
+        for k in sorted(set(cy) - set(cx)):
+            fails.append(f"new constant: {k}")
+        verdict = "same" if x == y and not fails else ("removals only" if not fails else "ADDS")
+        print(f"root {r}: {tx} -> {ty} instructions ({ty - tx:+d}), {verdict}")
+        for f in fails:
+            print(f"    {f}")
+        noise = {m: (x[m], y[m]) for m in y if y[m] > x[m] and not
+                 (m in _WORK or m.startswith(("ldrex", "strex")))}
+        if noise and a.verbose:
+            print("    re-allocation: " + ", ".join(f"{m} {o}->{n}" for m, (o, n) in sorted(noise.items())))
+        bad |= bool(fails)
+    print("ISR removals: " + ("FAIL" if bad else "PASS"))
+    return 1 if bad else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -198,8 +312,12 @@ def main() -> int:
     f.add_argument("a")
     f.add_argument("b")
     f.add_argument("--summary", action="store_true", help="per-root counts only")
+    rm = sp.add_parser("removals")
+    rm.add_argument("a")
+    rm.add_argument("b")
+    rm.add_argument("-v", "--verbose", action="store_true", help="print re-allocation noise")
     a = ap.parse_args()
-    return cmd_dump(a) if a.cmd == "dump" else cmd_diff(a)
+    return {"dump": cmd_dump, "diff": cmd_diff, "removals": cmd_removals}[a.cmd](a)
 
 
 if __name__ == "__main__":

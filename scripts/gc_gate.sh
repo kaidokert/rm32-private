@@ -90,6 +90,10 @@ for fam in "stm32g071 thumbv6m-none-eabi" "stm32f051 thumbv6m-none-eabi" \
     run "build $1 (public)" xbuild "$1" "$2"
     check_elf "rm32_stm32/target/$2/release/rm32_firmware"
     { printf '%s public: ' "$1"; arm-none-eabi-size "rm32_stm32/target/$2/release/rm32_firmware" | tail -1; } >> "$out/sizes.txt"
+    # Keep each production image: its ISR roots are what a CODE step that
+    # removes bench hooks must show only removals on.
+    cp "rm32_stm32/target/$2/release/rm32_firmware" "$out/pub_$1.elf"
+    run "ISR dump $1 (public)" $cap python rm32_stm32/scripts/isr_diff.py dump --elf "$out/pub_$1.elf" --out "$out/isr_pub_$1"
 done
 
 # PSU bench images — the binaries every bench run of this step flies.
@@ -111,10 +115,19 @@ run "ISR dump binz" $cap python rm32_stm32/scripts/isr_diff.py dump --elf "$out/
 sha256sum "$out"/l431.elf "$out"/binz.elf | sed "s#$out/##" > "$out/elf.sha256"
 
 if [ -n "$prev" ]; then
-    for b in l431 binz; do
+    for b in l431 binz pub_stm32g071 pub_stm32f051 pub_stm32l431 pub_stm32g431; do
+        if [ ! -d "captures/gc/$prev/isr_$b" ]; then
+            echo "ISR diff $b vs $prev ($step): no baseline dump in $prev"
+            continue
+        fi
         printf 'ISR diff %s vs %s (%s): ' "$b" "$prev" "$step"
         python rm32_stm32/scripts/isr_diff.py diff --summary "captures/gc/$prev/isr_$b" "$out/isr_$b" \
             | tee "$out/isr_diff_$b.txt" | tail -1
+        # CODE steps: every ISR-root change must be a removal (HOST steps:
+        # the diff above is already identical, so this passes trivially).
+        printf '    removals: '
+        python rm32_stm32/scripts/isr_diff.py removals "captures/gc/$prev/isr_$b" "$out/isr_$b" \
+            | tee "$out/isr_removals_$b.txt" | tail -1
     done
 fi
 

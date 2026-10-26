@@ -93,6 +93,7 @@ pub mod comparator;
 pub mod dbg_frame_history;
 #[cfg(feature = "debuguart")]
 pub mod debug_uart;
+pub mod diag;
 #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
 pub mod sector_hist;
 #[cfg(all(

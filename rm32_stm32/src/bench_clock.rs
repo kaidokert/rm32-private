@@ -2,7 +2,7 @@
 //! bench guard debounce, report pacing).
 //!
 //! M4 (L431/G431): DWT.CYCCNT. M0+ (G071) has no cycle counter: derive the
-//! timestamp from the TIM6 control-tick count (`dbg_isr_tick`, 20 kHz) as
+//! timestamp from the TIM6 control-tick count (`isr::tick_count`, 20 kHz) as
 //! ticks * cycles-per-tick. 50 µs resolution, and strictly monotonic — the
 //! timer's CNT is deliberately NOT folded in: a CNT wrap observed before
 //! the ISR bumps the tick count would step time backwards, and every
@@ -27,7 +27,5 @@ pub const CYC_PER_TICK: u32 = 3200;
 #[cfg(feature = "stm32g071")]
 #[inline]
 pub fn now_cyc() -> u32 {
-    crate::isr::shared()
-        .dbg_isr_tick()
-        .wrapping_mul(CYC_PER_TICK)
+    crate::isr::tick_count().wrapping_mul(CYC_PER_TICK)
 }

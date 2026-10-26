@@ -105,6 +105,13 @@ pub fn shared() -> &'static SharedState {
     &SHARED
 }
 
+/// Control-tick count (one per TIM6 update, 20 kHz); on M0+ (no DWT)
+/// `bench_clock` derives time from it.
+#[inline(always)]
+pub fn tick_count() -> u32 {
+    SHARED.tick_count()
+}
+
 /// Battery voltage in millivolts for the bench/debug consumers (guard,
 /// recorder, UART lines). The core measures centivolts (AM32's unit), so
 /// this has 10 mV resolution.

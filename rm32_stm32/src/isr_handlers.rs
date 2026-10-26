@@ -4,6 +4,7 @@
 //! `#[interrupt]` wrappers in `interrupts_g071.rs` / `interrupts_f051.rs`
 //! just clear the flag and call these.
 
+use crate::diag::{DIAG, DiagSink, IsrSite};
 use crate::isr::{self, TargetIsrState};
 use crate::mcu::ChipConfig;
 use rm32::hal::{DshotOutputPrescaler, InputCapture};
@@ -209,8 +210,7 @@ pub fn handle_tim6() {
     // measurement. Previously: rprintln heartbeat every 20000 ticks +
     // fetch_max CAS + dbg_isr_tick_inc inside the bracket added ~30-50
     // cycles of measurement overhead per tick.
-    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
-    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    let cyc_start = DIAG.stamp();
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
     let tim6_comms_entry =
         crate::mcu_l431::interrupts::LEAN_COMMS.load(core::sync::atomic::Ordering::Relaxed);
@@ -223,7 +223,7 @@ pub fn handle_tim6() {
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
     {
         use core::sync::atomic::Ordering;
-        if shared.dbg_isr_tick() % 10_000 == 0 {
+        if isr::tick_count() % 10_000 == 0 {
             let h = SR_HEAD.load(Ordering::Relaxed) as usize % SR_N;
             SR_CI[h].store(
                 shared.commutation_interval().min(65535) as u16,
@@ -312,10 +312,8 @@ pub fn handle_tim6() {
     #[cfg(all(feature = "benchuart", feature = "stm32l431"))]
     crate::mcu_l431::adc::wax_tick(state.commutation.step(), !comp_at_pre_zc_level());
 
-    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
-        let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
-        shared.dbg_tim6_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+        let cycles = DIAG.bracket(IsrSite::Tick, cyc_start);
         // Split by preemption: a commutation firing DURING this tick
         // (LEAN_COMMS advanced) inflates wall-time by ~one TIM16 handler.
         // Clean = control-tick OWN work; preempted = own + commutation.
@@ -328,13 +326,11 @@ pub fn handle_tim6() {
             } else {
                 crate::bench_hist::Site::Tim6
             };
-            crate::bench_hist::record(site, cyc_end.wrapping_sub(cyc_start));
+            crate::bench_hist::record(site, cycles);
         }
         #[cfg(all(feature = "benchuart", feature = "stm32g431"))]
-        crate::bench_hist::record(
-            crate::bench_hist::Site::Tim6,
-            cyc_end.wrapping_sub(cyc_start),
-        );
+        crate::bench_hist::record(crate::bench_hist::Site::Tim6, cycles);
+        let _ = cycles;
     }
     // 20 kHz gate latch (AM32-verbatim staleness for the COMP gate),
     // CLAMPED to AM32's average_interval domain (main.c clamps
@@ -357,7 +353,7 @@ pub fn handle_tim6() {
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     t6_cp(3);
     crate::comp_gate::latch(rm32::fast_math::div3_i32(shared.e_com_time()).max(0) as u32);
-    shared.dbg_isr_tick_inc();
+    shared.tick_count_inc();
     // binz bench: measured TIM6 handler wall time — TIM6 counts CPU cycles
     // from its own update (PSC 0, ARR 3199), so CNT at exit is the elapsed
     // time since the tick including entry latency and COM/COMP preemption.
@@ -397,31 +393,12 @@ pub static T6_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::
 #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
 pub static T6_OVR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// Bench desync injection (binz `K`): consumed by the next commutation.
-#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
-pub static DESYNC_INJECT: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-/// Injections actually consumed by the commutation ISR.
-#[cfg(all(feature = "benchuart", feature = "stm32g071"))]
-pub static INJECT_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-
 /// Commutation timer expired (TIM14 ISR body).
 pub fn handle_tim14() {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
-    #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
-    if DESYNC_INJECT.load(core::sync::atomic::Ordering::Relaxed) {
-        DESYNC_INJECT.store(false, core::sync::atomic::Ordering::Relaxed);
-        state.commutation.inject_skip();
-        INJECT_N.store(
-            INJECT_N
-                .load(core::sync::atomic::Ordering::Relaxed)
-                .wrapping_add(1),
-            core::sync::atomic::Ordering::Relaxed,
-        );
-    }
-    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
-    let cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+    DIAG.on_com_step(&mut state.commutation);
+    let cyc_start = DIAG.stamp();
     // Edge probe: interval count at TIM16 entry, BEFORE any step logic —
     // vs the scheduled wait+1 this is the commutation fire latency.
     #[cfg(feature = "zctrace")]
@@ -468,28 +445,21 @@ pub fn handle_tim14() {
             }
         }
     }
-    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
-        let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
-        shared.dbg_tim14_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+        let cycles = DIAG.bracket(IsrSite::Commutation, cyc_start);
         #[cfg(all(
             feature = "benchuart",
             any(feature = "stm32l431", feature = "stm32g431")
         ))]
-        crate::bench_hist::record(
-            crate::bench_hist::Site::Tim16,
-            cyc_end.wrapping_sub(cyc_start),
-        );
+        crate::bench_hist::record(crate::bench_hist::Site::Tim16, cycles);
+        let _ = cycles;
     }
 }
 
 /// BEMF zero-cross detected (COMP ISR body).
 pub fn handle_comp() {
     let state = ISR_LOCAL.get();
-    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
-    let (shared, cyc_start) = (isr::shared(), unsafe {
-        (*cortex_m::peripheral::DWT::PTR).cyccnt.read()
-    });
+    let cyc_start = DIAG.stamp();
     let accepted = rm32::control::isr_logic::bemf_zero_cross(
         &state.commutation,
         &mut state.bemf,
@@ -529,18 +499,14 @@ pub fn handle_comp() {
             );
         }
     }
-    #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
     {
-        let cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
-        shared.dbg_comp_last_cyc_set(cyc_end.wrapping_sub(cyc_start));
+        let cycles = DIAG.bracket(IsrSite::ZeroCross, cyc_start);
         #[cfg(all(
             feature = "benchuart",
             any(feature = "stm32l431", feature = "stm32g431")
         ))]
-        crate::bench_hist::record(
-            crate::bench_hist::Site::Comp,
-            cyc_end.wrapping_sub(cyc_start),
-        );
+        crate::bench_hist::record(crate::bench_hist::Site::Comp, cycles);
+        let _ = cycles;
     }
 }
 
@@ -728,8 +694,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
             // decoded command frame and publish the last cmd id. Rides the
             // post-detection-idle dbg fields in the [loop] line
             // (bidir_evt = count, hi_pin_n = last cmd).
-            shared.dbg_bidir_evt_inc();
-            shared.dbg_set_high_pin_n(cmd as u8);
+            DIAG.dshot_command(cmd as u8);
             shared.set_newinput(0);
             if telemetry {
                 shared.set_send_telemetry(true);
@@ -815,7 +780,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     }
     if actions.bidir_detected {
         shared.set_dshot_telemetry(true);
-        shared.dbg_bidir_evt_inc();
+        DIAG.bidir_detected();
         // BENCH: auto-start EDT at bidir commit. Production activation is
         // AM32-verbatim (DSHOT cmd 13, 6x, while armed+stopped) — but BF
         // sends its enable burst at motor-init and at FLIGHT-ARM, and the
@@ -830,19 +795,12 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     // crc_pass: a Throttle/Command return means decode_frame produced a valid
     //   frame (CRC matched, fields parsed). crc_fail: dshot mode active but
     //   action came back None (BadCrc or InvalidTiming inside decode_frame).
-    shared.dbg_set_high_pin_n(actions.high_pin_count);
     let crc_pass = matches!(
         actions.action,
         rm32::transfer::TransferAction::DshotThrottle { .. }
             | rm32::transfer::TransferAction::DshotCommand { .. }
     );
-    let is_dshot_none =
-        matches!(actions.action, rm32::transfer::TransferAction::None) && shared.dshot();
-    if crc_pass {
-        shared.dbg_crc_pass_inc();
-    } else if is_dshot_none {
-        shared.dbg_crc_fail_inc();
-    }
+    DIAG.input_frame(&actions, crc_pass, || shared.dshot());
     // Push frame snapshot to ring buffer for main-loop dump (debuguart only).
     // Only push when dshot mode is set, otherwise the buffer fills with pre-
     // detection garbage. Cheap critical section, ~52 bytes copied.

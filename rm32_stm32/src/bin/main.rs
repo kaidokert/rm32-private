@@ -15,6 +15,7 @@ use rm32::hal::{PwmOutput, System, TelemetryUart as _};
 use rm32::ws2812::LedStatus;
 
 use rm32::main_state::MainState;
+use rm32_stm32::diag::DiagSink as _;
 use rm32_stm32::init::InitResult;
 use rm32_stm32::isr::{self, IsrState};
 use rm32_stm32::mcu::FlashStorage;
@@ -647,8 +648,7 @@ fn main() -> ! {
         // the 50 µs TIM6 period is spent doing main work vs sleeping in wfi.
         // Excludes wfi (DWT keeps counting but main is asleep — that delta
         // is "until next IRQ", not work).
-        #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
-        let main_cyc_start = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+        let main_cyc_start = rm32_stm32::diag::DIAG.stamp();
         log_counter = log_counter.wrapping_add(1);
         // Heartbeat suppressed while the motor runs (comp-degradation
         // suspect test: the first [loop] print lands ~5 s after boot —
@@ -676,16 +676,17 @@ fn main() -> ! {
             let cyc_k = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() } / 1000;
             #[cfg(not(any(feature = "stm32l431", feature = "stm32g431")))]
             let cyc_k: u32 = 0;
-            let isr_tick = shared.dbg_isr_tick();
+            let isr_tick = isr::tick_count();
             // Last-tick ISR duration (cycles). /80 ≈ µs at 80 MHz. A SAMPLE
             // from the most recent ISR, not a max — read at random points
             // across many ticks to see typical-vs-spike distribution.
-            let t6_last = shared.dbg_tim6_last_cyc();
-            let t14_last = shared.dbg_tim14_last_cyc();
-            let comp_last = shared.dbg_comp_last_cyc();
-            let dma_last = shared.dbg_dma_last_cyc();
-            let exti_last = shared.dbg_exti_last_cyc();
-            let main_last = shared.dbg_main_last_cyc();
+            use rm32_stm32::diag::{IsrSite, last_cycles};
+            let t6_last = last_cycles(IsrSite::Tick);
+            let t14_last = last_cycles(IsrSite::Commutation);
+            let comp_last = last_cycles(IsrSite::ZeroCross);
+            let dma_last = last_cycles(IsrSite::InputDma);
+            let exti_last = last_cycles(IsrSite::InputFrame);
+            let main_last = last_cycles(IsrSite::MainLoop);
             rm32_stm32::dprintln!(
                 "[loop n={} cyc_k={} isr_tick={} t6={} t14={} comp={} dma={} exti={} main={}] proto={} mode={:?} newinput={} adj={} duty_set={} duty={} sig_to={} bemf_to_hap={} bemf_to={} zc={} ito={} stuck_prot={} hi_pin_n={} bidir_evt={} crc_pass={} crc_fail={} vbat_mv={} i_ma={} dmax={} ecom={} degC={}",
                 log_counter / 100_000,
@@ -709,10 +710,10 @@ fn main() -> ! {
                 shared.zero_crosses(),
                 shared.interval_timer_count(),
                 main_state.config.stuck_rotor_protection,
-                shared.dbg_high_pin_n(),
-                shared.dbg_bidir_evt(),
-                shared.dbg_crc_pass(),
-                shared.dbg_crc_fail(),
+                rm32_stm32::diag::high_pin_count(),
+                rm32_stm32::diag::bidir_events(),
+                rm32_stm32::diag::crc_pass(),
+                rm32_stm32::diag::crc_fail(),
                 isr::vbat_mv(),
                 shared.actual_current(),
                 shared.duty_maximum(),
@@ -1016,7 +1017,7 @@ fn main() -> ! {
             }
             was_running = running;
             rm32_stm32::sector_hist::drain();
-            let tk = shared.dbg_isr_tick();
+            let tk = isr::tick_count();
             let gap = tk.wrapping_sub(loop_last_tk);
             loop_last_tk = tk;
             // Time-series recorder, clocked by the free-running SysTick (CPU
@@ -1301,14 +1302,14 @@ fn main() -> ! {
                                     bench_guard.rest_peak_mv(),
                                     bench_guard.latched().is_some() as u8,
                                     shared.forward() as u8,
-                                    shared.dbg_isr_tick(),
+                                    isr::tick_count(),
                                     i50_max,
                                     i50_over_ms,
                                     bench_guard.current_ewmas().0,
                                     bench_guard.current_ewmas().1,
                                     // mean e_com in 0.1 us; eHz = 1e7 / ecom10 (host side)
                                     ecom_sum.saturating_mul(10).checked_div(ecom_n).unwrap_or(0),
-                                    rm32_stm32::isr_handlers::INJECT_N
+                                    rm32_stm32::diag::INJECT_N
                                         .load(core::sync::atomic::Ordering::Relaxed),
                                     rm32_stm32::isr_handlers::T6_MAX
                                         .load(core::sync::atomic::Ordering::Relaxed),
@@ -1506,7 +1507,7 @@ fn main() -> ! {
                             // Silent (no TX while driving): one-shot flag
                             // consumed by the next commutation ISR.
                             #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
-                            rm32_stm32::isr_handlers::DESYNC_INJECT
+                            rm32_stm32::diag::DESYNC_INJECT
                                 .store(true, core::sync::atomic::Ordering::Relaxed);
                         }
                         UartCmd::DriveToggle => {
@@ -1904,9 +1905,9 @@ fn main() -> ! {
                     shared.dshot_telemetry() as u8,
                     shared.armed() as u8,
                     shared.signal_timeout(),
-                    shared.dbg_crc_pass(),
-                    shared.dbg_crc_fail(),
-                    shared.dbg_high_pin_n(),
+                    rm32_stm32::diag::crc_pass(),
+                    rm32_stm32::diag::crc_fail(),
+                    rm32_stm32::diag::high_pin_count(),
                     shared.newinput(),
                     shared.input_set() as u8,
                 );
@@ -1988,11 +1989,7 @@ fn main() -> ! {
             );
         }
         sys.reload_watchdog();
-        #[cfg(any(feature = "stm32l431", feature = "stm32g431"))]
-        {
-            let main_cyc_end = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
-            shared.dbg_main_last_cyc_set(main_cyc_end.wrapping_sub(main_cyc_start));
-        }
+        rm32_stm32::diag::DIAG.bracket(rm32_stm32::diag::IsrSite::MainLoop, main_cyc_start);
         // Spin instead of wfi — matches AM32's free-running main loop
         // (main.c:1843, no sleep). wfi was an invented Rust-embedded
         // idiom that gated main rate to the ISR rate, which (a) created
