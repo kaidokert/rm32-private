@@ -17,6 +17,9 @@ binz_probe=0483:374b:066CFF343433464757233430
 if [ "$board" = flash-binz ]; then
     probe-rs download --chip STM32G071RBTx --probe $binz_probe "$elf/binz.elf"
     probe-rs reset --chip STM32G071RBTx --probe $binz_probe
+    # Wait out the boot (tones, config dump): a run started sooner sees the
+    # boot banner during arm and aborts as a reboot.
+    python -c "import time; time.sleep(6)"
     exit 0
 fi
 r=${3:?b1..b3}

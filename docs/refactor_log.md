@@ -843,6 +843,56 @@ check name regex widened twice, bands file untouched).
     Bonferroni, 1 at raw p < 0.05 (L431 R1 50 % mA -22, one ADC count),
     against ~6 expected by chance.
 
+25. **The pass bar's `dsy` column counts only fast desyncs.** The recorder
+    packs `main_state.dsy_fast` into `dsy4`, which `gc_summary.py` reports
+    as `dsy`. Slow-demote, current-demote and polling desyncs never reach
+    it. The firmware's own `desync_events` (i-line `dsy=`) is the full
+    count. On binz it accumulates from the last flash, so a run's count is
+    the difference from the previous run. Every band check since S1 has
+    read the fast class only. The S5.3 battery run is judged on the
+    firmware counter instead. Proposed tool fix, not done in this step:
+    `gc_summary.py` takes the per-run `desync_events` difference from the
+    i-lines and fails any increase.
+
+26. **L431 orbit-trip wedge on a battery slam: present at
+    gc-s00-baseline, so not S5.3's and not the batch's; tagged
+    gc-s05.3-ok on that basis (operator to review).** On a 15 -> 100 %
+    slam the L431 legitimately draws ~12.7 A while accelerating, above
+    the wrong-phase-orbit line (8.5 A at 100 % duty scaled to ~11 A at
+    10.6 V) for 30-40 ms. The trip needs more than 30 ms, and the
+    transient exemption depends on where the 100 ms duty snapshot falls.
+    So it trips on about a third of slams: replaying the recorded runs
+    through the trip logic at all 100 snapshot phases gives 26-34
+    tripping phases on both sides (`scripts/orbit_replay.py`), and 10 of
+    30 slams this session tripped. At 100 % input the trip stops the
+    motor. The restart then re-locks (4 of 10 trips, back to 3530 eHz)
+    or wedges: duty kicked back to 170-400 by repeated slow-demote
+    desyncs, ~850 of them, ~160 eHz until the end of the run, even after
+    the drop to 15 %. Bisect on 48 kHz battery images (the L431 carrier
+    since fc3818c; `scripts/gc_l431_k48_image.sh` adds it to older tags):
+    the first single-trip-per-image pass pointed at S3.4, but S3.3 and
+    S3.4 have identical ISR addresses and RAM layout, and S3.3 then
+    wedged on its next trip. gc-s00-baseline wedged on its third trip
+    (slam 6). Recovery is chance on every image. Both mechanisms are
+    rm32 divergences from AM32 (the orbit trip; the restart at the 48 kHz
+    carrier, which the L431 cannot start at low duty). They belong in
+    the questionable pile (desync/orbit policy), not in this refactor.
+
+27. **S5.3 battery batch: three runs repeated once.** binz A b1 (round 1)
+    aborted as a reboot because the run began while the flash's boot was
+    still in progress (`gc_battery.sh flash-binz` now waits 6 s). L431 B b2
+    and A b2 (round 2) wrote no CSV: the recorder dump never arrived whole
+    (the Call 20 transport problem). The firmware log for both was clean
+    (no kill, no reboot, desyncs 0, counters like the other b2 runs).
+    Their captures are kept under `captures/{binz,l431}/aborted/`.
+
+28. **binz 5 -> 100 % slams desync and re-climb: pre-existing.** Round 2's
+    b1 had 20 (A) and 37 (B) slow-demote desyncs at the slam, then held
+    100 % settled. The 2026-10-07 qualification run `slam5-100` did the
+    same (`dsy=12`, all slow-demote, 11 polling samples at the slam).
+    `docs/gc_battery_s05.3.md` wrongly said that run had dsy=0: it read
+    the fast-only column (Call 25).
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -1050,3 +1100,28 @@ kill, desync or reboot, no R3 overcurrent trip; band check 48/48;
 24); `ab_r3_peaks.py s53a s53b`: R3 peak 4351 +- 312 vs 4185 +- 264
 (p=0.52), dwell 2177 vs 2173. RISKY: added to the battery batch, see
 `docs/gc_battery_s05.3.md`.
+
+## S5.3 battery batch -- tag gc-s05.3-ok (on 6fbd0a7)
+
+3S battery, both boards on one pack, `docs/gc_battery_s05.3.md`: A =
+gc-s05.2f-psu (`batt53a`), B = gc-s05.3-psu (`batt53b`), battery-guard
+images, rounds A/B, B/A, A/B, binz b1-b3 then L431 b1-b3, one run per
+command; 36 runs plus three repeats (Call 27).
+
+- Every run completed: no guard kill, one boot, 100 % reached and held
+  except one L431 b2 run on each side.
+- 100 %: binz settled eHz within -0.5 / -0.2 / -0.2 % of A and mA within
+  -1.0 / -1.2 / -1.1 % (b1 / b2 / b3, n = 3 a side); L431 b1 and b3
+  within 0.3 %.
+- `ab_segments.py batt53a batt53b`: 99 metrics, 0 significant after
+  Bonferroni, 2 at raw p < 0.05 (~5 expected).
+- The bar as written was not met, on either side: L431 B b2 (round 2)
+  orbit-tripped at the slam and wedged (848 desyncs); A did the same in a
+  follow-up (`orb53a-s5`, 860). Bisect: present at gc-s00-baseline (Call
+  26). binz b1 desyncs on both sides, also pre-existing (Call 28). The
+  bar's dsy column was blind to all of these (Call 25).
+
+Verdict: no S5.3 difference on battery; the failures are pre-existing and
+logged as Calls 25, 26 and 28 for the operator. Bisect images (L431, 48 kHz, battery):
+battb00k48 878475ea34f8, bk-s03.1 f928153b3209, bk-s03.3 8119f935b7b1,
+bk-s03.4 afa1d2c84e8c, bk-s04.1 679aa19a749e.

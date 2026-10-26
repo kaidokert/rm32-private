@@ -45,10 +45,11 @@ def welch(a, b):
 def collect(tag):
     out = {}
     for board in ("l431", "binz"):
-        for js in sorted(pathlib.Path(f"captures/{board}").glob(f"profile_{tag}-r*.json")):
+        for js in sorted(pathlib.Path(f"captures/{board}").glob(f"profile_{tag}-[rb][0-9]*.json")):
             s = summarize(js, 2.0)
             if s["kill"]:
                 sys.exit(f"refuse: {js.name} was killed ({s['kill']})")
+            # PSU rounds are <tag>-rN-..., battery runs <tag>-bN-...
             rnd = s["test"].split("-")[1]
             out.setdefault((board, rnd), []).append(s)
     return out

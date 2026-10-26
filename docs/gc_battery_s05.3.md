@@ -82,3 +82,13 @@ Pass gives `gc-s05.3-ok` on 6fbd0a7 and the step log gets a battery entry.
 - F051 / G431: no bench; build- and ISR-gated only.
 - Production (DSHOT input, no benchuart) builds: the 'D' bench override
   is absent there; the core's decision is used directly.
+
+## Result (2026-10-26)
+
+Run in full: see the refactor log entry "S5.3 battery batch" and Calls
+25-28. No S5.3 difference (0/99 significant; binz 100 % within 1.2 %). The
+pass bar was not met on either side because of failures that predate the
+batch: the L431 orbit-trip wedge on a 15 -> 100 % slam (present at
+gc-s00-baseline) and binz slam5 desyncs. Correction to "Profiles" above:
+the 2026-10-07 `slam5-100` run had dsy=12, not 0 (fast-only column, Call
+25). Tagged gc-s05.3-ok.
