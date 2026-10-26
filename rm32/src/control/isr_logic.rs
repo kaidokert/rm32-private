@@ -24,6 +24,9 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     // keeps the 1 kHz rate correct regardless of main-loop iteration
     // rate.
     ctx.shared.one_khz_counter_inc();
+    // Free-running tick count: the main loop's 1 s (consumed current) and
+    // LED blink periods (AM32's `tenkhzcounter++` / `ledcounter++` here).
+    ctx.shared.tick_count_inc();
 
     // AM32 interval telemetry (): with
     // telemetry_on_interval set, fire send_telemetry every

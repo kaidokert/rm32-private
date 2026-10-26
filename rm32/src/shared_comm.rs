@@ -178,6 +178,12 @@ pub trait IsrTiming {
         false
     }
 
+    /// Advance the free-running control-tick count (TIM6 ISR side, once per
+    /// tick). The main loop measures its 1 s and LED periods against it, as
+    /// AM32's main loop polls `tenkhzcounter` / `ledcounter`, which
+    /// `tenKhzRoutine` increments.
+    fn tick_count_inc(&self);
+
     /// ISR-side (20 kHz): increment the interval-telemetry counter; if it
     /// has exceeded `limit`, reset it and return true (fire telemetry).
     /// Matches AM32's `telem_ms_count` block at .

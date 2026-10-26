@@ -28,6 +28,7 @@ pub struct TestShared {
     pub auto_advance: Cell<u8>,
     pub interval_timer_count: Cell<u32>,
     pub one_khz_counter: Cell<u8>,
+    pub tick_count: Cell<u32>,
     pub telem_counter: Cell<u16>,
     pub prop_brake_active: Cell<bool>,
     pub isr_action: Cell<IsrAction>,
@@ -65,6 +66,7 @@ impl TestShared {
             auto_advance: Cell::new(0),
             interval_timer_count: Cell::new(0),
             one_khz_counter: Cell::new(0),
+            tick_count: Cell::new(0),
             telem_counter: Cell::new(0),
             prop_brake_active: Cell::new(false),
             isr_action: Cell::new(IsrAction::None),
@@ -138,6 +140,9 @@ impl IsrTiming for TestShared {
     fn one_khz_counter_inc(&self) {
         self.one_khz_counter
             .set(self.one_khz_counter.get().saturating_add(1));
+    }
+    fn tick_count_inc(&self) {
+        self.tick_count.set(self.tick_count.get().wrapping_add(1));
     }
     fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
         if self.one_khz_counter.get() >= divider {

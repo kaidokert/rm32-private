@@ -556,6 +556,30 @@ Judgment calls made without stopping, for review at the end of the goal.
    `i50max` 3452 / 4461 / 3601 (back in family). Process gap worth a
    look: no band covers `actual_current` itself.
 
+10. **S4.5 counter source: the existing `tick_count`, advanced in the
+    core.** AM32 increments `tenkhzcounter` / `ledcounter` in
+    `tenKhzRoutine` and its main loop polls and resets them. Rather than
+    add two ISR-side counters, the port's existing `tick_count_inc()`
+    moves from `handle_tim6` into core `ten_khz_tick` (new required
+    `IsrTiming::tick_count_inc`), so the harness advances it too
+    (`do_tick_runs_shared_pipeline` asserts it), and the main loop keeps
+    epochs: `now - epoch > TICK_HZ` (AM32 `> LOOP_FREQUENCY_HZ`, reset on
+    sample) and the LED's `> HALF` / `> 2*HALF`. No new ISR work: the
+    TIM6 diff is that one atomic increment moving, +1 address `add.w` on
+    M4 (+2 jump-table half-words on L431), register renaming only on M0.
+    `LED_BLINK_HALF_PERIOD` becomes `Timing::LED_BLINK_HALF_PERIOD` =
+    ms(100), still u16, == 2000 at 20 kHz (host-tested). Noticed, NOT
+    changed (out of S4.5's scope, would change behaviour): AM32 blinks at
+    `2000 >> forward` (twice as fast reversed); AM32 accumulates consumed
+    charge as `(actual_current << 16) / 360` (mAh in Q16) where rm32 adds
+    raw mA per second and reports `/ 1000` with a "uAh -> mAh" comment
+    that does not match.
+11. **First S4.5 round discarded, not counted.** It ran on top of the S4.4
+    defect (Call 9): binz R3 OCFAST at +0.25 s into the 60% slam, R4 hit
+    the latched guard. The bisect showed the cause in S4.4, not S4.5;
+    S4.5 was re-gated against s04.4f and re-benched from scratch (8/8,
+    binz R3 `i50max` 4621). Discarded round in captures/bisect_s04.5/.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -631,3 +655,19 @@ Gate PASS vs s04.4; ISR dumps identical on all six images. Soft-division
 call counts unchanged on every M0 image; `__aeabi_lmul` binz 2 -> 3,
 public G071 / F051 unchanged. Bench 8/8 in band; binz `i50max` 3452 (R1),
 4461 (R3), 3601 (R4) -- the S4.4 2095 ceiling is gone.
+
+## S4.5 -- main-loop-rate counters onto the control tick (CODE) -- tag gc-s04.5-psu
+
+`MainState::ten_khz_counter` / `led_counter` (incremented per main-loop
+pass) become `consumed_epoch` / `led_epoch` measured against
+`SharedState::tick_count`, whose increment moves into core `ten_khz_tick`
+(Call 10). New test `consumed_current_samples_once_per_second_of_control_ticks`
+(25 000 loop passes without ticks never sample; TICK_HZ+1 ticks sample
+once) and a harness assert that the tick count advances: 390 host tests
+(389 + 1). Blackbox vectors 81/81.
+
+Gate PASS vs s04.4f. Intended ISR change shown, nothing else: only the
+TIM6 root differs on every image (all other roots byte-identical); net
+instruction change is the moved increment (M4 +2: `add.w` + table
+alignment; M0 +0, register renaming and literal offsets). Bench 8/8 in
+band (second round; first round discarded, Call 11).

@@ -155,9 +155,6 @@ pub const SINE_FAST_STEP_DELAY: u16 = 80;
 /// Sine mode step delay at medium throttle (µs).
 pub const SINE_MEDIUM_STEP_DELAY: u16 = 120;
 
-/// Custom LED blink half-period (main loop ticks).
-pub const LED_BLINK_HALF_PERIOD: u16 = 2000;
-
 /// Custom LED high-throttle threshold (above this = solid on).
 pub const LED_HIGH_THROTTLE: u16 = 1947;
 
@@ -278,6 +275,9 @@ pub trait Timing: Platform + Sized {
     /// (100 and 250 ticks).
     const VARIABLE_PWM2_LO: u32 = us_to_ticks::<Self>(50);
     const VARIABLE_PWM2_HI: u32 = us_to_ticks::<Self>(125);
+
+    /// Custom LED blink half-period: 100 ms (AM32 `ledcounter > 2000`).
+    const LED_BLINK_HALF_PERIOD: u16 = ms_to_control_ticks::<Self>(100) as u16;
 }
 
 impl<P: Platform> Timing for P {}
@@ -321,6 +321,7 @@ mod timing_tests {
         assert_eq!(P::VARIABLE_PWM1_HI, 200);
         assert_eq!(P::VARIABLE_PWM2_LO, 100);
         assert_eq!(P::VARIABLE_PWM2_HI, 250);
+        assert_eq!(P::LED_BLINK_HALF_PERIOD, 2000);
         assert_eq!(super::telemetry_interval_ticks::<P>(1), 600);
     }
 }

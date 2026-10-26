@@ -356,7 +356,6 @@ pub fn handle_tim6() {
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     t6_cp(3);
     crate::comp_gate::latch(rm32::fast_math::div3_i32(shared.e_com_time()).max(0) as u32);
-    shared.tick_count_inc();
     // binz bench: measured TIM6 handler wall time — TIM6 counts CPU cycles
     // from its own update (PSC 0, ARR 3199), so CNT at exit is the elapsed
     // time since the tick including entry latency and COM/COMP preemption.

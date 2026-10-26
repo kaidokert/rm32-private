@@ -164,13 +164,14 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     pub needs_reset: bool,
     /// Custom LED pin (NoLed if board has no custom LED)
     pub(crate) led: LED,
-    pub(crate) led_counter: u16,
+    /// Control tick at the start of the current LED blink period.
+    pub(crate) led_epoch: u32,
     /// The platform whose clocks the tick-unit constants are taken in.
     _platform: core::marker::PhantomData<P>,
     /// TIM1 max auto-reload (from PWM frequency config, overwritten by apply_motor_config)
     pub(crate) timer1_max_arr: u16,
-    /// Main-loop tick counter for consumed current accumulation
-    pub(crate) ten_khz_counter: u32,
+    /// Control tick of the last consumed-current sample (1 s period).
+    pub(crate) consumed_epoch: u32,
     // 1 kHz dispatch counter lives on SharedState (ISR increments at
     // tick rate, main reads + resets), matching AM32's
     // `one_khz_loop_counter` placement.
@@ -224,9 +225,9 @@ impl<P: Timing> MainState<P, NoLed> {
             just_armed: false,
             needs_reset: false,
             led: NoLed,
-            led_counter: 0,
+            led_epoch: 0,
             _platform: core::marker::PhantomData,
-            ten_khz_counter: 0,
+            consumed_epoch: 0,
         }
     }
 }
@@ -651,13 +652,12 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             shared.set_send_telemetry(false);
         }
 
-        // Consumed current accumulation (1s interval at ~20kHz)
-        // TODO: counter incremented in main loop (variable rate), not ISR.
-        // Matches C firmware behavior but integration is approximate.
-        self.ten_khz_counter += 1;
-        if self.ten_khz_counter > 20000 {
+        // Consumed current accumulation, one sample per second of control
+        // ticks (AM32: `tenkhzcounter > LOOP_FREQUENCY_HZ`, counter reset).
+        let now = shared.tick_count();
+        if now.wrapping_sub(self.consumed_epoch) > P::TICK_HZ {
             self.measurements.consumed_current += self.measurements.actual_current.0 as i32;
-            self.ten_khz_counter = 0;
+            self.consumed_epoch = now;
         }
 
         // Variable PWM — adjust tim1_arr based on commutation speed
@@ -743,15 +743,15 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
         // Custom LED: blink with throttle, solid when high
         {
             let input = shared.adjusted_input();
-            self.led_counter = self.led_counter.wrapping_add(1);
+            let led_age = now.wrapping_sub(self.led_epoch);
             if (47..1947).contains(&input) {
-                if self.led_counter > crate::constants::LED_BLINK_HALF_PERIOD {
+                if led_age > P::LED_BLINK_HALF_PERIOD as u32 {
                     let _ = self.led.set_high();
                 } else {
                     let _ = self.led.set_low();
                 }
-                if self.led_counter > crate::constants::LED_BLINK_HALF_PERIOD * 2 {
-                    self.led_counter = 0;
+                if led_age > P::LED_BLINK_HALF_PERIOD as u32 * 2 {
+                    self.led_epoch = now;
                 }
             } else if input > crate::constants::LED_HIGH_THROTTLE {
                 let _ = self.led.set_high();
@@ -1271,6 +1271,29 @@ mod tests {
         );
 
         assert!(shared.armed());
+    }
+
+    #[test]
+    fn consumed_current_samples_once_per_second_of_control_ticks() {
+        use crate::platform::Platform;
+        use crate::shared_state::SharedState;
+
+        let shared = SharedState::new::<TestPlatform>();
+        let mut main = make_test_main_state();
+        main.measurements.actual_current = crate::units::MilliAmps(1000);
+        // Main-loop iterations alone never sample: the period is control
+        // ticks (AM32 `tenkhzcounter`), not loop passes (S4.5).
+        for _ in 0..25_000 {
+            main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        }
+        assert_eq!(main.measurements.consumed_current, 0);
+        for _ in 0..=<TestPlatform as Platform>::TICK_HZ {
+            shared.tick_count_inc();
+        }
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        assert_eq!(main.measurements.consumed_current, 1000);
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        assert_eq!(main.measurements.consumed_current, 1000);
     }
 
     #[test]

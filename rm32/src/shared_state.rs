@@ -621,6 +621,9 @@ impl crate::shared_comm::MotorState for SharedState {
 }
 
 impl crate::shared_comm::IsrTiming for SharedState {
+    fn tick_count_inc(&self) {
+        SharedState::tick_count_inc(self);
+    }
     fn zero_crosses(&self) -> u32 {
         self.zero_crosses()
     }

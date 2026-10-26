@@ -960,6 +960,8 @@ mod tests {
 
         assert_eq!(harness.tick_count, 1);
         assert_eq!(harness.shared.signal_timeout(), 1);
+        // The main loop's 1 s / LED periods run on the shared tick count.
+        assert_eq!(harness.shared.tick_count(), 1);
     }
 
     #[test]
