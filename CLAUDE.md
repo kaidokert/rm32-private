@@ -31,10 +31,12 @@
   the public-burn-down accounting: measured from the
   `public-ultimate-squash` projection, NOT the raw branch. Quote both
   numbers when asked for "the diff".
-- Bench observability is quarantined behind rm32's default-on
-  `bench-diag` cargo feature (shared_state `dbg_*`, transfer
-  `high_pin_count`). `cargo check -p rm32 --no-default-features` builds
-  the exact public surface — keep it compiling.
+- Bench observability: rm32's `DiagSink` (`rm32/src/diag.rs`, `()` in
+  production) with the counters in `rm32_stm32::diag` behind `debuguart`;
+  rm32's default-on `bench-diag` feature now gates only transfer
+  `high_pin_count`, and `rm32_stm32` enables it only via `debuguart`
+  (gc S3.3/S3.4). `cargo check -p rm32 --no-default-features` builds the
+  exact public surface — keep it compiling.
 - Merge protocol: tag `pre-main-merge-YYYYMMDD` → push tag to private →
   merge `origin/main` → prefer THEIRS for reviewed re-landings of our
   own machinery (dedup ours) → host tests + blackbox vectors → commit

@@ -402,3 +402,27 @@ first binz R1 missed low by a constant 40-78 mA at identical eHz (a
 current-zero offset signature); reflashed the same image and repeated:
 in band at every rung. Recorded as an unreproduced outlier
 (captures/bisect_s03.3/), the repeat is the step's R1. Verdict 8/8 PASS.
+
+## S3.4 -- `bench-diag` only in debug builds (HOST bench / size report) -- tag gc-s03.4-psu
+
+`rm32_stm32` depends on rm32 with `default-features = false`; `debuguart`
+(and so `benchuart`) enables `rm32/bench-diag`. That feature now gates
+only `TransferActions::high_pin_count` (read by the debuguart DiagSink);
+a duplicated cfg attribute in transfer.rs removed. `CLAUDE.md`'s
+observability note updated.
+
+Gate PASS vs s03.3c. Bench images: ISR identical (binz flash-identical;
+L431 differs only in link order -- one `Display::fmt` instance moved,
+same functions and sizes). Production size report: text G071 +8, F051
++16, L431 -24, G431 -24 B. `removals` passes on L431/G431 and fails on
+G071/F051 by +5 instructions in EXTI4_15: dropping the u8 field re-runs
+register allocation on M0 (3 extra spill ldr/str, 2 alignment nops), no
+new call, barrier, atomic or peripheral access. The plan classes S3.4 as
+HOST for bench images + a size report for production, so this is
+recorded, not gated. Host tests 384.
+
+Bench R1-R4 both boards 8/8 in band, dsy=0, no kills.
+
+Increment 3 closed: S3.1-S3.4 tagged. Bench code is out of the core
+(harness and bench crates, DiagSink) and production builds carry none of
+it.

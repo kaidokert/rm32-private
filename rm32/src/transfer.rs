@@ -207,7 +207,6 @@ impl TransferState {
                 frametime,
                 bidir_detected: false,
                 #[cfg(feature = "bench-diag")]
-                #[cfg(feature = "bench-diag")]
                 high_pin_count: self.high_pin_count,
             };
         }

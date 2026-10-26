@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rm32 = { path = "../rm32", features = ["bench-diag"] }
+# rm32's bench-diag (default-on for host tests) only in debug builds: see
+# the `debuguart` feature below.
+rm32 = { path = "../rm32", default-features = false }
 rm32-bench = { path = "../rm32-bench" }
 # >= 0.7.8: with cortex-m 0.7.7 (everything else unchanged) the G071 image
 # watchdog-loops at `interrupt::enable()` (core stuck in TIM6 with TIM6
@@ -58,7 +60,7 @@ stm32g431 = ["dep:stm32g4xx-hal"]
 # Bench-debug: hijack the AM32 KISS telemetry pin (PB6 / USART1 TX on L431)
 # for a plaintext debug log at 115200 8N1. Wire a USB-serial dongle to PB6
 # and tail the port. Persistent across resets, survives panics.
-debuguart = []
+debuguart = ["rm32/bench-diag"]
 
 # Bench control: UART throttle on PA2 (USART2 RX @2M via SWAP) replacing
 # the DShot/PWM input-capture path, + debuguart TX bumped to 2M push-pull.
