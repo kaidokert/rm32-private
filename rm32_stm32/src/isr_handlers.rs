@@ -257,7 +257,8 @@ pub fn handle_tim6() {
     // idle duty writes would mute it — re-assert the tone duty every
     // tick (one HAL write, constant cost). Aborts instantly on running.
     {
-        use rm32::bridge::Bridge as _;
+        use crate::bridge::TimerPwm as _;
+        use rm32::bridge::BridgeLegs as _;
         use rm32::tone::ToneAction;
         let req = shared.take_tone_request();
         match state
@@ -269,13 +270,13 @@ pub fn handle_tim6() {
                 bump_single_writer(&TONE_STARTS);
                 state
                     .hal
-                    .bridge
-                    .set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
-                state.hal.bridge.set_tone_divider(n.prescaler);
+                    .pwm
+                    .set_auto_reload(crate::mcu::Chip::TIM1_AUTORELOAD);
+                state.hal.pwm.set_prescaler(n.prescaler);
                 // AM32 sounds.c setVolume(): CCR = beep_volume(0-11) * 3.
                 let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                state.hal.bridge.set_duty_all(vol);
-                state.hal.bridge.com_step(n.step);
+                state.hal.pwm.set_duty_all(vol);
+                state.hal.phase.com_step(n.step);
             }
             ToneAction::Silence => {
                 #[cfg(feature = "debuguart")]
@@ -284,17 +285,17 @@ pub fn handle_tim6() {
                 } else {
                     bump_single_writer(&TONE_ENDS);
                 }
-                state.hal.bridge.all_off();
-                state.hal.bridge.set_tone_divider(0);
+                state.hal.phase.all_off();
+                state.hal.pwm.set_prescaler(0);
                 state
                     .hal
-                    .bridge
-                    .set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
+                    .pwm
+                    .set_auto_reload(crate::mcu::Chip::TIM1_AUTORELOAD);
             }
             ToneAction::Idle => {
                 if state.tone.active() {
                     let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                    state.hal.bridge.set_duty_all(vol);
+                    state.hal.pwm.set_duty_all(vol);
                 }
             }
         }
@@ -414,7 +415,7 @@ pub fn handle_tim14() {
         shared,
         &mut state.hal.com_timer,
         &mut state.hal.comp,
-        &mut state.hal.bridge,
+        &mut state.hal.phase,
         state.config.is_bidirectional(),
         state.config.use_strict_changeover(),
     );

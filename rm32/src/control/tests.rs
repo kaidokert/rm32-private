@@ -82,7 +82,7 @@ mod tests {
             }
         }
     }
-    impl hal::Bridge for MockBridge {
+    impl hal::BridgeLegs for MockBridge {
         fn com_step(&mut self, _: u8) {
             self.com_step_calls += 1;
         }
@@ -96,6 +96,9 @@ mod tests {
             self.prop_brake_calls += 1;
             record_order(self.order, |order| &order.prop_brake);
         }
+    }
+
+    impl hal::Bridge for MockBridge {
         fn set_duty_all(&mut self, d: u16) {
             self.last_duty = d;
             record_order(self.order, |order| &order.set_duty);
@@ -153,7 +156,7 @@ mod tests {
         const USE_NTC: bool = false;
     }
     impl hal::MotorHal for MockMotorHal {
-        type Bridge = MockBridge;
+        type Bridge<'a> = &'a mut MockBridge;
         type Comp = MockComp;
         type Interval = MockInterval;
         type Com = MockComTimer;

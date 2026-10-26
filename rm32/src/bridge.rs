@@ -39,12 +39,11 @@ pub const fn step_legs(step: u8, complementary: bool) -> [LegRole; 3] {
     }
 }
 
-/// The power stage as the core drives it: the six gate legs plus the PWM
-/// timer behind them (AM32 `comStep` / `allOff` / `fullBrake` / ... and the
-/// TIM1 period, compare, dead-time and prescaler writes). Semantic methods,
-/// not raw leg roles, so harness counters and reverse rotation stay
-/// meaningful.
-pub trait Bridge {
+/// The gate legs: AM32 `comStep` / `allOff` / `fullBrake` / `allpwm` /
+/// `proportionalBrake`. Semantic methods, not raw leg roles, so harness
+/// counters and reverse rotation stay meaningful. Code that only commutates
+/// (the commutation-timer path) asks for this much.
+pub trait BridgeLegs {
     /// Drive commutation step `step` (1..=6, [`step_legs`]); any other step
     /// leaves the outputs unchanged. The driven leg's PWM style is still the
     /// port's decision.
@@ -57,6 +56,14 @@ pub trait Bridge {
     fn all_pwm(&mut self);
     /// High sides off, low sides PWM (AM32 `proportionalBrake`).
     fn proportional_brake(&mut self);
+    /// RPM pulse output on steps 1 and 4 (debug); boards without one ignore it.
+    #[inline(always)]
+    fn pulse_toggle(&mut self, _step: u8) {}
+}
+
+/// The power stage as the core drives it: the gate legs plus the PWM timer
+/// behind them (AM32's TIM1 period, compare, dead-time and prescaler writes).
+pub trait Bridge: BridgeLegs {
     /// Same compare value on all three phases.
     fn set_duty_all(&mut self, compare: u16);
     /// Per-phase compare values (sine start).
@@ -69,9 +76,61 @@ pub trait Bridge {
     fn set_dead_time_override(&mut self, dto: u16);
     /// Tone prescaler (AM32 `TIM1->PSC` in sounds); 0 restores motor PWM.
     fn set_tone_divider(&mut self, div: u16);
-    /// RPM pulse output on steps 1 and 4 (debug); boards without one ignore it.
+}
+
+/// A `&mut` to a bridge is a bridge (lets a HAL hand out `&mut` its own).
+impl<B: BridgeLegs + ?Sized> BridgeLegs for &mut B {
     #[inline(always)]
-    fn pulse_toggle(&mut self, _step: u8) {}
+    fn com_step(&mut self, step: u8) {
+        (**self).com_step(step);
+    }
+    #[inline(always)]
+    fn all_off(&mut self) {
+        (**self).all_off();
+    }
+    #[inline(always)]
+    fn full_brake(&mut self) {
+        (**self).full_brake();
+    }
+    #[inline(always)]
+    fn all_pwm(&mut self) {
+        (**self).all_pwm();
+    }
+    #[inline(always)]
+    fn proportional_brake(&mut self) {
+        (**self).proportional_brake();
+    }
+    #[inline(always)]
+    fn pulse_toggle(&mut self, step: u8) {
+        (**self).pulse_toggle(step);
+    }
+}
+
+impl<B: Bridge + ?Sized> Bridge for &mut B {
+    #[inline(always)]
+    fn set_duty_all(&mut self, compare: u16) {
+        (**self).set_duty_all(compare);
+    }
+    #[inline(always)]
+    fn set_phase_duties(&mut self, a: u16, b: u16, c: u16) {
+        (**self).set_phase_duties(a, b, c);
+    }
+    #[inline(always)]
+    fn set_period(&mut self, period: u16) {
+        (**self).set_period(period);
+    }
+    #[inline(always)]
+    fn latch(&mut self) {
+        (**self).latch();
+    }
+    #[inline(always)]
+    fn set_dead_time_override(&mut self, dto: u16) {
+        (**self).set_dead_time_override(dto);
+    }
+    #[inline(always)]
+    fn set_tone_divider(&mut self, div: u16) {
+        (**self).set_tone_divider(div);
+    }
 }
 
 #[cfg(test)]

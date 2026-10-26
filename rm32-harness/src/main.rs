@@ -72,7 +72,7 @@ struct MockBridge {
     all_off: HalCounter,
     full_brake: HalCounter,
 }
-impl hal::Bridge for MockBridge {
+impl hal::BridgeLegs for MockBridge {
     fn com_step(&mut self, _: u8) {}
     fn all_off(&mut self) {
         self.all_off.set(self.all_off.get() + 1);
@@ -82,6 +82,9 @@ impl hal::Bridge for MockBridge {
     }
     fn all_pwm(&mut self) {}
     fn proportional_brake(&mut self) {}
+}
+
+impl hal::Bridge for MockBridge {
     fn set_duty_all(&mut self, d: u16) {
         self.duty = d;
         self.duty_count += 1;
@@ -145,7 +148,7 @@ impl rm32::platform::Platform for MockMotorHal {
 }
 
 impl hal::MotorHal for MockMotorHal {
-    type Bridge = MockBridge;
+    type Bridge<'a> = &'a mut MockBridge;
     type Comp = MockComp;
     type Interval = MockInterval;
     type Com = MockComTimer;
@@ -848,6 +851,7 @@ impl Harness {
 
 #[cfg(test)]
 mod tests {
+    use rm32::hal::BridgeLegs as _;
     use rm32::hal::Comparator as _;
 
     use super::*;

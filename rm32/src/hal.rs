@@ -12,7 +12,7 @@ pub use embedded_hal::digital::InputPin;
 pub use embedded_hal::pwm::SetDutyCycle;
 
 /// The power stage (gate legs + PWM timer): see [`crate::bridge`].
-pub use crate::bridge::Bridge;
+pub use crate::bridge::{Bridge, BridgeLegs};
 
 /// Comparator (BEMF sensing) interface
 pub trait Comparator {
@@ -56,12 +56,16 @@ pub trait ComTimer {
 /// Reduces generic parameter count from 5 to 1 in ISR function signatures.
 /// Implementors provide the concrete MCU-specific types.
 pub trait MotorHal: crate::platform::Platform {
-    type Bridge: Bridge;
+    /// The bridge as a view borrowed from the HAL (a port may build it from
+    /// separate peripherals without moving them).
+    type Bridge<'a>: Bridge
+    where
+        Self: 'a;
     type Comp: Comparator;
     type Interval: IntervalTimer;
     type Com: ComTimer;
 
-    fn bridge(&mut self) -> &mut Self::Bridge;
+    fn bridge(&mut self) -> Self::Bridge<'_>;
     fn comp(&mut self) -> &mut Self::Comp;
     fn interval(&mut self) -> &mut Self::Interval;
     fn com_timer(&mut self) -> &mut Self::Com;

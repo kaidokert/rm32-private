@@ -25,14 +25,14 @@ where
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: crate::bridge::PhaseGates,
+    PH: rm32::bridge::BridgeLegs,
 {
-    /// TIM1 + gate pins (`pwm`, `phase`) as the core's `Bridge`.
-    pub bridge: crate::bridge::StmBridge<P, PH>,
+    pub pwm: P,
     pub input: I,
     pub comp: C,
     pub interval: IT,
     pub com_timer: CT,
+    pub phase: PH,
 }
 
 impl<P, I, C, IT, CT, PH> rm32::platform::Platform for IsrHal<P, I, C, IT, CT, PH>
@@ -42,7 +42,7 @@ where
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: crate::bridge::PhaseGates,
+    PH: rm32::bridge::BridgeLegs,
 {
     const TICK_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TICK_HZ;
     const TIMER_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TIMER_HZ;
@@ -62,15 +62,22 @@ where
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: crate::bridge::PhaseGates,
+    PH: rm32::bridge::BridgeLegs,
 {
-    type Bridge = crate::bridge::StmBridge<P, PH>;
+    type Bridge<'a>
+        = crate::bridge::StmBridge<'a, P, PH>
+    where
+        Self: 'a;
     type Comp = C;
     type Interval = IT;
     type Com = CT;
 
-    fn bridge(&mut self) -> &mut Self::Bridge {
-        &mut self.bridge
+    #[inline(always)]
+    fn bridge(&mut self) -> crate::bridge::StmBridge<'_, P, PH> {
+        crate::bridge::StmBridge {
+            pwm: &mut self.pwm,
+            phase: &mut self.phase,
+        }
     }
     fn comp(&mut self) -> &mut C {
         &mut self.comp

@@ -431,25 +431,34 @@ it.
 
 Judgment calls made without stopping, for review at the end of the goal.
 
-**Summary for review (goal closed at gc-s05.2-psu).** Tags: gc-s04.1..5,
-gc-s04.4f, gc-s05.1, gc-s05.2 (all -psu). Host tests 384 -> 392.
+**Summary for review (goal closed at gc-s05.2r2-psu).** Tags: gc-s04.1..5,
+gc-s04.4f, gc-s05.1, gc-s05.2 (superseded, Call 15), gc-s05.2r2 (all
+-psu). Host tests 384 -> 392.
 Needs a decision:
 - Call 9 -- S4.4 shipped a defect (binz current wrapped above ~2.1 A on
   the 1 kHz path) that the bands could not see; fixed in S4.4f. Proposal:
   a band (or gate check) on `actual_current` / `i50max`, which caught it.
-- Calls 2 + 12 -- binz R3 slam trips the 4.8 A OCFAST guard about 1 run
-  in 11 (3/32 on correct code; the slam's own peaks are 4.3..4.8 A).
-  Limits untouched; each trip was reset + repeated after a byte-identical
-  or code-identical check. Operator call: guard level vs R3 profile.
+- Call 15 -- the first S5.2 commit (gc-s05.2-psu) went out with ISR
+  removals FAIL on all six images, logged as "Gate PASS". Reworked as
+  S5.2r2: ISR code identical on all six; the removals check still prints
+  FAIL, only because deleting `PhaseOutput` renames the five gate methods
+  the ISRs call. Decide whether that rename is the accepted S5.2 delta.
+- Calls 2 + 12 -- binz R3 slam trips the 4.8 A OCFAST guard ~1 run in 11.
+  Now bisected properly (Call 12): baseline vs S5.1 ABAB, 8 a side, 0/8
+  trips each, peak guard EWMA 4423 vs 4406 mA (p=0.89). The trip risk is
+  present at the baseline; operator call on guard level vs R3 profile.
+- Call 8 -- binz r-line `imean` is +46 mA on S5.1 vs baseline at equal
+  in-run current (ABAB p<1e-4); the same image moves ~110 mA between
+  sessions. Mechanism read from code (main-loop dispatch weighting), not
+  yet verified; proposed test: print the sample count in the r-line.
 - Call 10 (noted, not changed) -- AM32 divergences: LED blink ignores
   `>> forward`; consumed charge uses raw mA per second, not AM32's Q16
   mAh, with a mislabelled `/ 1000`.
-- Call 8 -- binz `imean` wanders +-40 mA step to step, unbanded,
-  unexplained after the main-loop theory failed (S5.2).
 Accept or veto: Calls 1, 3, 7, 13, 14 (mechanisms: `Platform`, `Timing`,
-`AffineDiv` with the 64-bit fallback, `step_legs`, `Bridge` / `StmBridge`
-and its three deviations from the design sketch); Call 4 (HOST read as
-identical ISR roots); Calls 5, 6 (scope); Call 11 (discarded round).
+`AffineDiv` with the 64-bit fallback, `step_legs`, `Bridge` /
+`BridgeLegs` / borrowed `StmBridge`); Call 4 (HOST read as identical ISR
+roots); Calls 5, 6 (scope); Call 11 (discarded round); Call 16 (band
+check name regex widened twice, bands file untouched).
 
 1. **Platform mechanism (S4.1).** `rm32::platform::Platform` carries the
    clocks (`TICK_HZ`, `TIMER_HZ`); `MotorHal: Platform` is a supertrait so
@@ -548,13 +557,22 @@ identical ISR roots); Calls 5, 6 (scope); Call 11 (discarded round).
    rode on the wrapped current; with the fix imean is 1204 / 906 / 1930 vs
    S4.3 1172 / 864 / 1882 and buggy S4.4 1216 / 919 / 1950, so ~+30..+50
    remains. The main-loop reading still fits; it is not directly tested.)
-   (Amended again after S5.2: imean r1 by step s04.4f 1204, s04.5 1201,
-   s05.1 1193, s05.2 1156; r4 1930, 1925, 1943, 1897. S5.2 removed no
-   main-loop work I can name, yet imean fell back to S4.3's level. The
-   main-loop explanation is therefore NOT supported as stated; imean
-   moves +-40 mA step to step for reasons not identified. It is not a
-   banded metric and the recorder's time-mean stays flat; open question,
-   not acted on.)
+   (A second amendment after the first S5.2 bench called the main-loop
+   reading refuted, from single runs in separate sessions. RETRACTED: the
+   Call 12 ABAB shows the same image (s00 binz, sha-verified) reads
+   imean 862 +- 8 today against 735..766 when the bands were built, so
+   one run per session cannot resolve a 40 mA step. Interleaved, 8 a
+   side: s05.1 908 +- 8 vs s00 862 +- 8, +46 mA, p<1e-4, while the guard
+   EWMA (dwell mean -15 mA, peak p=0.89) and `i50max` (p=0.89) do not
+   move: the motor draws the same current. Mechanism, read from code and
+   NOT yet verified: `imean` is the mean of one sample per 1 kHz dispatch
+   since the pre-arm `b` query, and that dispatch runs in the main loop
+   (`one_khz_counter_check_and_reset`), firing when the ISR's counter
+   reaches 20 and resetting it. A slower main loop overshoots 20 by a few
+   ticks, so the run phase contributes fewer samples than the idle phase
+   and `imean` reads lower; a lighter main loop raises it. Direct test,
+   proposed not done (firmware change outside the step): print
+   `take_mean_ma().1` (the sample count) in the r-line.)
    Also: one aborted A/B run reported "REBOOTED in arm";
    it was the first-boot banner arriving late (run started right after
    flash-binz's reset; one banner, tk=827 at the first `b`). Captures in
@@ -620,6 +638,21 @@ identical ISR roots); Calls 5, 6 (scope); Call 11 (discarded round).
     EWMA) sits inside the R3 slam's own peak distribution (4273..4816);
     a limits question for the operator, not changed. Two runs went in one
     command (my one-hold rule; logged in the notebook).
+    **Bisect done after the goal review** (the reset + repeat above was
+    not one: the known-good end was never re-confirmed on the bench).
+    Endpoints A = gc-s00-baseline binz image, B = the s05.1 binz image
+    that tripped (sha1 8f0fc79f / 8aa76a9c, copied to captures/gc/bis51A,
+    bis51B). Binz R3 only, ABBA-interleaved, 8 a side, a flash before
+    every run (clears the latch). Predeclared bar: B trips >= 4/8 with A
+    0/8, or B's mean peak guard EWMA above A's at p < 0.05 (Welch, two
+    sided), means a regression to bisect through the intermediate tags.
+    Result (`scripts/ab_r3_peaks.py bis51A bis51B`): trips 0/8 and 0/8;
+    peak guard EWMA 4423 +- 227 vs 4406 +- 253 mA (p=0.89), `i50max`
+    4600 vs 4586 (p=0.89), dwell mean 2194 vs 2179 (p=0.08). Bar not met:
+    both ends draw from the same peak distribution (4130..4751 mA, 49..670
+    mA under the line), so the trip risk predates the refactor and there
+    is no interval to bisect. The ABAB also exposed Call 8's `imean`
+    shift cleanly (+46 mA, see there).
 13. **S5.1 scope.** `rm32::bridge` holds `LegRole` (all five design roles;
     `LowPwm` is unused until S5.2's proportional brake) and `step_legs`.
     G071's `PLAN` is built by matching each leg's role; L431's `ROLES`
@@ -630,7 +663,7 @@ identical ISR roots); Calls 5, 6 (scope); Call 11 (discarded round).
     a runtime role array without becoming the per-leg decoder the binz
     WCET gate rejected; S5.2's `Bridge::com_step` takes it over.
 
-14. **S5.2 shape.** Core: `rm32::bridge::Bridge` (re-exported as
+14. **S5.2 shape (as first committed; S5.2r2 reshaped it, below).** Core: `rm32::bridge::Bridge` (re-exported as
     `hal::Bridge`) with the design's semantic methods; `MotorHal` exposes
     `bridge()` instead of `pwm()` + `phase()`; `PwmOutput` / `PhaseOutput`
     are deleted from the core. Deviations from the design sketch, all
@@ -649,6 +682,48 @@ identical ISR roots); Calls 5, 6 (scope); Call 11 (discarded round).
     calls `set_phase_duties`. Harness and core tests use one `MockBridge`
     each, keeping the HAL counters (`all_off`, `full_brake`, order
     recorder).
+    **S5.2r2 shape.** Owning `StmBridge` moved TIM1 and the gate driver
+    into a new `IsrHal` field and passed a two-pointer struct to the COM
+    path, which changed ISR code (Call 15). Now: (d) the core splits the
+    gate methods into `BridgeLegs`, and `Bridge: BridgeLegs` adds the
+    timer methods; `commutation_timer_expired` asks for `BridgeLegs` only
+    (it never touches the timer), so the port passes `&mut hal.phase`
+    exactly as S5.1 did, and `PhaseDriver` implements the core's
+    `BridgeLegs` directly (the port-internal `PhaseGates` is gone);
+    (e) `MotorHal::Bridge<'a>` is a generic associated type and
+    `bridge()` returns a view borrowed from the HAL: the port's
+    `StmBridge<'a, P, PH>` holds `&mut` TIM1 and `&mut` gates, so
+    `IsrHal` keeps S5.1's fields and layout; mocks use `&'a mut
+    MockBridge` through a blanket `impl Bridge for &mut B`. (f) The
+    port's own tone code keeps calling its TIM1 / gate types directly (as
+    in S5.1); only core code goes through `bridge()`.
+
+15. **First S5.2 commit superseded (gc-s05.2-psu stays, not moved).**
+    Its gate printed `ISR removals: FAIL` on all six images and I logged
+    "Gate PASS", arguing the diff was harmless (regalloc, one merged
+    store). S5.2 is not one of the goal's exceptions (S4.4 divisions,
+    S4.5 counters), so that was a condition not met, caught by the goal
+    review. Reworked (Call 14 d-f) and re-gated twice: s05.2r (borrowed
+    view only) still changed the COM root; s05.2r2 is ISR-identical on
+    all six images by `isr_diff` (instruction counts equal, every root).
+    Its removals check still prints FAIL: the five gate methods the ISRs
+    call (`com_step`, `all_off`, `all_pwm`, `proportional_brake`, the COM
+    root's `com_step`) are now mangled under `rm32::bridge::BridgeLegs`
+    instead of `rm32::hal::PhaseOutput`. Deleting `PhaseOutput` is the
+    step itself, so the names cannot stay; the bodies are identical. Not
+    worked around by editing the gate. Flash images are not
+    byte-identical: main-loop code changed (`play_startup` through the
+    view) and handlers shifted (vector table). The tag was pushed, so it
+    is not moved (no force-push); gc-s05.2r2-psu is the S5.2 of record.
+
+16. **Band-check name regex widened twice; no band changed.**
+    `gc_summary.py` maps a run name to its band row by rewriting the
+    step prefix to `s00-`. S4.4f needed one trailing letter
+    (`[a-z]?`), S5.2r2 a letter and digit (`[a-z0-9]*`). Line 84 is the
+    only line touched both times; `docs/gc_bands_s00.json` is unchanged
+    since 13d609c (before this increment), and the s05.2 and s04.4f runs
+    still pass 16/16 under the new pattern. Surfaced by the goal review
+    as a possible instrument edit; recorded so it can be checked.
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
@@ -755,7 +830,10 @@ text sizes identical on all six; the binz flash image is byte-identical
 to S4.5's. Bench 8/8 in band (binz R3 run once more after an OCFAST
 trip on the identical image, Call 12).
 
-## S5.2 -- `Bridge` trait replaces `PwmOutput` + `PhaseOutput` (CODE) -- tag gc-s05.2-psu
+## S5.2 -- `Bridge` trait replaces `PwmOutput` + `PhaseOutput` (CODE) -- tag gc-s05.2-psu -- SUPERSEDED by S5.2r2 (Call 15)
+
+(As first logged. "Gate PASS" below hid `ISR removals: FAIL` on all six
+images; the shown diff was not limited to the intended change.)
 
 Core `Bridge` trait; `MotorHal::bridge()`; isr_logic, sounds and
 `commutation_timer_expired` drive the bridge; method renames per the
@@ -774,3 +852,22 @@ one store that disappeared (binz COM, `rising` flag at `[r0, #22]`) is
 tail-merged into the shared store both wrap branches now jump to. binz
 WCET: COM 906 cycles @2ws (was 909), TIM6 unchanged. Text -8..-96 B.
 Bench 8/8 in band first pass.
+
+## S5.2r2 -- `Bridge` rework: ISR-identical (CODE) -- tag gc-s05.2r2-psu
+
+Port files that touch `IsrHal` restored from S5.1 and re-applied
+minimally (Call 14 d-f): core `BridgeLegs` + `Bridge: BridgeLegs`, GAT
+borrowed `StmBridge` view, COM path on `BridgeLegs`. 392 host tests
+(unchanged count), blackbox 81/81.
+
+Gate vs s05.1: `ISR diff: identical` on all six images, every root's
+instruction count equal (binz TIM14 1491, TIM6 3768; G071 1447/3583;
+F051 1885/4020; L431 1539/3150; G431 1475/3083; L431 bench 1700/3449).
+`ISR removals: FAIL` on all six, caused only by the trait-path rename of
+five gate methods (Call 15). Bench 8/8 in band first pass (band-check
+regex, Call 16). Intermediate s05.2r (borrowed view without the trait
+split) was gated, not benched: it still changed the COM root (+3 L431,
++8 binz instructions) through the two-pointer argument.
+
+Guard-kill bisect for S5.1 done and logged under Call 12 (no regression;
+16 ABAB runs, 0 trips); `imean` finding under Call 8.

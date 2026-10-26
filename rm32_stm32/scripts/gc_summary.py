@@ -81,7 +81,7 @@ def check(out, bands) -> int:
     test has no band is a failure (never silently skipped)."""
     fails = 0
     for s in out:
-        key = f"{s['board']}/{re.sub(r'^s[\d.]+[a-z]?-', 's00-', s['test'])}"
+        key = f"{s['board']}/{re.sub(r'^s[\d.]+[a-z0-9]*-', 's00-', s['test'])}"
         b = bands.get(key)
         why = []
         if b is None:
