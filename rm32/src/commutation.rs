@@ -31,7 +31,10 @@ impl Commutation {
     ///
     /// Returns the updated e_com_time for publishing to SharedComm.
     #[inline(always)]
-    pub(crate) fn record_interval(&mut self, commutation_interval: u16) -> i32 {
+    pub(crate) fn record_interval<P: crate::platform::Platform>(
+        &mut self,
+        commutation_interval: u16,
+    ) -> i32 {
         // Running sum of the six slots (binz WCET: the 6-term re-sum ran on
         // every commutation in the priority-0 ISR). `step` is 1..=6 by
         // construction; `& 7` and the 8-slot array keep the index in range
@@ -41,7 +44,7 @@ impl Commutation {
         let old = self.intervals[k];
         self.intervals[k] = commutation_interval;
         self.interval_sum = self.interval_sum - old as u32 + commutation_interval as u32;
-        ((self.interval_sum + 4) >> 1) as i32
+        crate::platform::six_intervals_to_us::<P>(self.interval_sum)
     }
 
     /// Bench fault injection: advance one extra step, so the next

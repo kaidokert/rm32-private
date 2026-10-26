@@ -344,7 +344,8 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
         let e_com_time = shared.e_com_time();
 
         // Average interval
-        self.timing.average_interval = (e_com_time / 3) as u32;
+        self.timing.average_interval =
+            crate::platform::e_com_us_to_avg_ticks::<P>(e_com_time) as u32;
 
         // BEMF timeout clearing — check whether the user has released the throttle.
         // For unidirectional: newinput == 0 means stick centered.

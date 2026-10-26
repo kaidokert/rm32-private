@@ -486,6 +486,13 @@ Judgment calls made without stopping, for review at the end of the goal.
    `e_com >> 1` / `/ 3` conversions (S4.3). `DESYNC_RESET_INTERVAL`'s
    doc said "5 ms"; it is 2.5 ms (5000 ticks at 2 MHz): doc corrected.
 
+6. **Main-loop `e_com_time / 3` (S4.3).** `MainState`'s plain `/ 3`
+   (a real division in main-loop code) now goes through
+   `e_com_us_to_avg_ticks`, i.e. `div3_i32`. `div3_i32` is exact for every
+   `i32` (host-tested against `/ 3` over +-200 000 plus the extremes), so
+   the value is unchanged and the 1 kHz path loses a divide. The bench
+   `[loop]` print's `/ 3` in the port is bench-only code and left alone.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -514,3 +521,16 @@ AM32's literal): 385 host tests (was 384).
 Gate PASS vs s04.1; ISR dumps identical on all six images. Main-loop
 inlining changed (text G071 -184, F051 -112, L431 -64, G431 -80, binz
 bench -224, L431 bench -20 B; Call 4). Bench 8/8 in band first time.
+
+## S4.3 -- `six_intervals_to_us` / `e_com_us_to_avg_ticks` (HOST) -- tag gc-s04.3-psu
+
+`rm32::platform::six_intervals_to_us::<P>` (AM32's `(sum + 4) >> 1` at
+2 MHz, keeping AM32's +4 bias) replaces the bare shift in
+`Commutation::record_interval` (now generic over `P`);
+`e_com_us_to_avg_ticks::<P>` (AM32's `/ 3`, divide-free) replaces the two
+`div3_i32(e_com)` calls in isr_logic and the main loop's `/ 3` (Call 6).
+Non-2 MHz branches are const-folded away on every current port. New host
+test `two_mhz_conversions_are_am32_arithmetic`: 386 host tests.
+
+Gate PASS vs s04.2; ISR dumps identical on all six images (main-loop text
+-48..+120 B from inlining). Bench 8/8 in band first time.

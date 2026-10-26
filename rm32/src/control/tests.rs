@@ -908,7 +908,7 @@ mod tests {
 
     fn seed_slow_commutation_history(comm: &mut crate::commutation::Commutation) {
         for _ in 0..5 {
-            comm.record_interval(4000);
+            comm.record_interval::<crate::platform::TestPlatform>(4000);
             comm.advance();
         }
     }

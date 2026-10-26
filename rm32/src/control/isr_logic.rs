@@ -129,7 +129,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 let step = ctx.commutation.advance();
                 let e_com = ctx
                     .commutation
-                    .record_interval(ctx.shared.commutation_interval() as u16);
+                    .record_interval::<H>(ctx.shared.commutation_interval() as u16);
                 ctx.shared.set_e_com_time(e_com);
                 ctx.hal.phase().com_step(step);
                 ctx.hal.comp().set_step(step, ctx.commutation.rising);
@@ -188,7 +188,8 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     }
 
     // Ramp rate limiting
-    let average_interval = crate::fast_math::div3_i32(ctx.shared.e_com_time()) as u32;
+    let average_interval =
+        crate::platform::e_com_us_to_avg_ticks::<H>(ctx.shared.e_com_time()) as u32;
     ctx.duty.ramp_limit::<H>(
         ctx.shared.battery_voltage(),
         ctx.shared.commutation_interval(),
@@ -303,7 +304,7 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             let step = ctx.commutation.advance();
             let e_com = ctx
                 .commutation
-                .record_interval(ctx.shared.commutation_interval() as u16);
+                .record_interval::<H>(ctx.shared.commutation_interval() as u16);
             ctx.shared.set_e_com_time(e_com);
             ctx.hal.phase().com_step(step);
             ctx.hal.phase().pulse_toggle(step);
@@ -349,7 +350,7 @@ pub fn commutation_timer_expired<P, S, C, Ph, T>(
         commutation.set_desync_check(false);
     }
     let ci0 = shared.commutation_interval();
-    let e_com = commutation.record_interval(ci0 as u16);
+    let e_com = commutation.record_interval::<P>(ci0 as u16);
     shared.set_e_com_time(e_com);
     phase.com_step(step);
     phase.pulse_toggle(step);
@@ -368,7 +369,7 @@ pub fn commutation_timer_expired<P, S, C, Ph, T>(
     // worst-case path should not pay for both (binz WCET gate).
     if !shared.old_routine() {
         // Interrupt mode.
-        let to_old = crate::fast_math::div3_i32(e_com) as u32
+        let to_old = crate::platform::e_com_us_to_avg_ticks::<P>(e_com) as u32
             > exit_interval + P::OLD_ROUTINE_REENTRY_MARGIN;
         if to_old {
             shared.set_old_routine_isr0(true);
