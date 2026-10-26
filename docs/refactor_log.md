@@ -419,7 +419,7 @@ G071/F051 by +5 instructions in EXTI4_15: dropping the u8 field re-runs
 register allocation on M0 (3 extra spill ldr/str, 2 alignment nops), no
 new call, barrier, atomic or peripheral access. The plan classes S3.4 as
 HOST for bench images + a size report for production, so this is
-recorded, not gated. Host tests 384.
+recorded, not gated. Operator confirmed the HOST classification. Host tests 384.
 
 Bench R1-R4 both boards 8/8 in band, dsy=0, no kills.
 
