@@ -279,3 +279,21 @@ boards 8/8 in the v4 bands, dsy = 0, no kills. Verdict PASS.
 Open from this increment: G071/F051 `asm::delay` ~3x long (binz tune
 1776 ms; needs a timer delay), current-unit split (cA vs mA), sine
 changeover gaps above, MV_PER_COUNT truncation (≤ 1 pin-mV vs AM32).
+
+---
+
+## S3.1 — `rm32-harness` crate (HOST) — tag gc-s03.1-psu
+
+`rm32/src/bin/harness.rs` → `rm32-harness/src/main.rs` (git mv, no code
+change); new workspace member `rm32-harness`, binary still `rm32_harness`
+(`tests/blackbox/harness.py` unchanged). Entry condition met in the same
+commit: `scripts/gc_gate.sh` and `.pre-commit-config.yaml` test and clippy
+the whole workspace (`cargo test --workspace`, `cargo clippy --workspace`),
+harness built with `-p rm32-harness`. Host tests 384 before and after
+(377 lib + 7 harness). `--all-targets` was tried for clippy and dropped:
+test code was never clippy-clean (41 errors) — same lib+bin coverage as
+before, now workspace-wide.
+
+Gate PASS (s03.1); ISR diff identical; flash images byte-identical to
+s02.4. Bench R1–R4 both boards 8/8 in the v4 bands, dsy = 0, no kills.
+Verdict PASS.

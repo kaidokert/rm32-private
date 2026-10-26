@@ -75,9 +75,9 @@ c_vectors() {
     echo "C harness: $(echo "$got" | grep -c .) failures, all known"
 }
 
-run "host tests (cargo test -p rm32)" $cap cargo test -q -p rm32
-run "clippy rm32" $cap cargo clippy -q -p rm32 -- -D warnings
-run "rust harness build" $cap cargo build -q --release -p rm32 --bin rm32_harness
+run "host tests (cargo test --workspace)" $cap cargo test -q --workspace
+run "clippy workspace" $cap cargo clippy -q --workspace -- -D warnings
+run "rust harness build" $cap cargo build -q --release -p rm32-harness --bin rm32_harness
 run "blackbox vectors (Rust harness)" $cap python -m pytest tests/blackbox/test_vectors.py -q -p no:cacheprovider
 run "blackbox vectors (C harness vs known diffs)" c_vectors
 
