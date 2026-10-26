@@ -26,14 +26,13 @@ struct MockComp {
     level: bool,
     mask_interrupts: HalCounter,
 }
-impl hal::Comparator for MockComp {
-    fn output_level(&self) -> bool {
+impl hal::BemfSensor for MockComp {
+    fn level(&self) -> bool {
         self.level
     }
-    fn set_step(&mut self, _: u8, _: bool) {}
-    fn change_input(&mut self) {}
-    fn enable_interrupts(&mut self) {}
-    fn mask_interrupts(&mut self) {
+    fn select_phase(&mut self, _: hal::Phase, _: bool) {}
+    fn enable_irq(&mut self) {}
+    fn mask_irq(&mut self) {
         self.mask_interrupts.set(self.mask_interrupts.get() + 1);
     }
 }
@@ -149,14 +148,14 @@ impl rm32::platform::Platform for MockMotorHal {
 
 impl hal::MotorHal for MockMotorHal {
     type Bridge<'a> = &'a mut MockBridge;
-    type Comp = MockComp;
+    type Bemf = MockComp;
     type Interval = MockInterval;
     type Com = MockComTimer;
 
     fn bridge(&mut self) -> &mut MockBridge {
         &mut self.bridge
     }
-    fn comp(&mut self) -> &mut MockComp {
+    fn bemf(&mut self) -> &mut MockComp {
         &mut self.comp
     }
     fn interval(&mut self) -> &mut MockInterval {
@@ -852,7 +851,7 @@ impl Harness {
 
 #[cfg(test)]
 mod tests {
-    use rm32::hal::Comparator as _;
+    use rm32::hal::BemfSensor as _;
     use rm32::hal::PhaseOutput as _;
 
     use super::*;
@@ -928,7 +927,7 @@ mod tests {
 
         harness.hal.bridge.all_off();
         harness.hal.bridge.full_brake();
-        harness.hal.comp.mask_interrupts();
+        harness.hal.comp.mask_irq();
 
         assert_eq!(harness.hal_counts.all_off.get(), 1);
         assert_eq!(harness.hal_counts.full_brake.get(), 1);

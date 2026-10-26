@@ -523,9 +523,9 @@ pub fn handle_comp() {
 /// rejects). COMP-ISR context only (touches `ISR_LOCAL`).
 #[cfg(any(feature = "stm32l431", feature = "stm32g071"))]
 pub fn comp_at_pre_zc_level() -> bool {
-    use rm32::hal::Comparator as _;
+    use rm32::hal::BemfSensor as _;
     let state = ISR_LOCAL.get();
-    state.hal.comp.output_level() == state.commutation.rising()
+    state.hal.comp.level() == state.commutation.rising()
 }
 
 /// EDT-debug: typed frames sent + last 12-bit value (heartbeat consumer).

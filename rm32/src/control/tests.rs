@@ -50,17 +50,19 @@ mod tests {
         level: bool,
         mask_called: bool,
         enable_calls: u32,
+        last_phase: Option<(hal::Phase, bool)>,
     }
-    impl hal::Comparator for MockComp {
-        fn output_level(&self) -> bool {
+    impl hal::BemfSensor for MockComp {
+        fn level(&self) -> bool {
             self.level
         }
-        fn set_step(&mut self, _: u8, _: bool) {}
-        fn change_input(&mut self) {}
-        fn enable_interrupts(&mut self) {
+        fn select_phase(&mut self, phase: hal::Phase, rising: bool) {
+            self.last_phase = Some((phase, rising));
+        }
+        fn enable_irq(&mut self) {
             self.enable_calls += 1;
         }
-        fn mask_interrupts(&mut self) {
+        fn mask_irq(&mut self) {
             self.mask_called = true;
         }
     }
@@ -160,14 +162,14 @@ mod tests {
     }
     impl hal::MotorHal for MockMotorHal {
         type Bridge<'a> = &'a mut MockBridge;
-        type Comp = MockComp;
+        type Bemf = MockComp;
         type Interval = MockInterval;
         type Com = MockComTimer;
 
         fn bridge(&mut self) -> &mut MockBridge {
             &mut self.bridge
         }
-        fn comp(&mut self) -> &mut MockComp {
+        fn bemf(&mut self) -> &mut MockComp {
             &mut self.comp
         }
         fn interval(&mut self) -> &mut MockInterval {
@@ -185,6 +187,7 @@ mod tests {
                     level: false,
                     mask_called: false,
                     enable_calls: 0,
+                    last_phase: None,
                 },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer::new(),
@@ -780,6 +783,7 @@ mod tests {
                 level: false,
                 mask_called: false,
                 enable_calls: 0,
+                last_phase: None,
             };
             let mut phase = MockBridge::default();
             isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
@@ -803,6 +807,69 @@ mod tests {
     }
 
     #[test]
+    fn floating_phase_matches_am32_change_comp_input() {
+        use hal::Phase;
+        // AM32 changeCompInput: step 1/4 -> C, 2/5 -> A, 3/6 -> B; the
+        // ports' old mux tables sent 0 and 7 to C. Values >= 8 (never
+        // produced by Commutation) wrap modulo 8.
+        let want = [
+            Phase::C, // 0
+            Phase::C,
+            Phase::A,
+            Phase::B,
+            Phase::C,
+            Phase::A,
+            Phase::B,
+            Phase::C, // 7
+        ];
+        for step in 0..=255u8 {
+            assert_eq!(
+                hal::floating_phase(step),
+                want[(step % 8) as usize],
+                "step {step}"
+            );
+        }
+    }
+
+    #[test]
+    fn isr_commutation_selects_floating_phase_of_new_step() {
+        for forward in [true, false] {
+            let mut comm = crate::commutation::Commutation::new();
+            comm.forward = forward;
+            for _ in 0..12 {
+                let mut bemf = crate::control::state::BemfState::default();
+                let shared = TestShared::new();
+                shared.mode.set(crate::motor_mode::MotorMode::Running);
+                let mut com_timer = MockComTimer::new();
+                let mut comp = MockComp {
+                    level: false,
+                    mask_called: false,
+                    enable_calls: 0,
+                    last_phase: None,
+                };
+                let mut phase = MockBridge::default();
+                isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+                    &mut comm,
+                    &mut bemf,
+                    &shared,
+                    &mut com_timer,
+                    &mut comp,
+                    &mut phase,
+                    false,
+                    false,
+                    true,
+                );
+                assert_eq!(
+                    comp.last_phase,
+                    Some((hal::floating_phase(comm.step()), comm.rising)),
+                    "forward={forward} step={}",
+                    comm.step()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn isr_commutation_timer_advances_step() {
         let mut comm = crate::commutation::Commutation::new();
         let mut bemf = crate::control::state::BemfState::default();
@@ -813,6 +880,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -853,6 +921,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -891,6 +960,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -925,6 +995,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -968,6 +1039,7 @@ mod tests {
                 level: false,
                 mask_called: false,
                 enable_calls: 0,
+                last_phase: None,
             };
             let mut phase = MockBridge {
                 all_off_called: false,
@@ -1006,6 +1078,7 @@ mod tests {
                 level: false,
                 mask_called: false,
                 enable_calls: 0,
+                last_phase: None,
             };
             let mut phase = MockBridge {
                 all_off_called: false,
@@ -1048,6 +1121,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -1082,6 +1156,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -1116,6 +1191,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -1151,6 +1227,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut phase = MockBridge {
             all_off_called: false,
@@ -1181,6 +1258,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut interval = MockInterval { count: 500 };
         let mut com_timer = MockComTimer::new();
@@ -1205,6 +1283,7 @@ mod tests {
             level: false,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut interval = MockInterval { count: 70_000 };
         let mut com_timer = MockComTimer::new();
@@ -1229,6 +1308,7 @@ mod tests {
             level: true,
             mask_called: false,
             enable_calls: 0,
+            last_phase: None,
         };
         let mut interval = MockInterval { count: 0 };
         let mut com_timer = MockComTimer::new();

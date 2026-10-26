@@ -22,7 +22,7 @@ pub struct IsrHal<P, I, C, IT, CT, PH>
 where
     P: crate::bridge::TimerPwm,
     I: hal::InputCapture,
-    C: hal::Comparator,
+    C: hal::BemfSensor,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
     PH: rm32::hal::PhaseOutput,
@@ -39,7 +39,7 @@ impl<P, I, C, IT, CT, PH> rm32::platform::Platform for IsrHal<P, I, C, IT, CT, P
 where
     P: crate::bridge::TimerPwm,
     I: hal::InputCapture,
-    C: hal::Comparator,
+    C: hal::BemfSensor,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
     PH: rm32::hal::PhaseOutput,
@@ -59,7 +59,7 @@ impl<P, I, C, IT, CT, PH> hal::MotorHal for IsrHal<P, I, C, IT, CT, PH>
 where
     P: crate::bridge::TimerPwm,
     I: hal::InputCapture,
-    C: hal::Comparator,
+    C: hal::BemfSensor,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
     PH: rm32::hal::PhaseOutput,
@@ -68,7 +68,7 @@ where
         = crate::bridge::StmBridge<'a, P, PH>
     where
         Self: 'a;
-    type Comp = C;
+    type Bemf = C;
     type Interval = IT;
     type Com = CT;
 
@@ -79,7 +79,7 @@ where
             phase: &mut self.phase,
         }
     }
-    fn comp(&mut self) -> &mut C {
+    fn bemf(&mut self) -> &mut C {
         &mut self.comp
     }
     fn interval(&mut self) -> &mut IT {

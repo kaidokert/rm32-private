@@ -400,11 +400,6 @@ pub const BOARD: rm32::board::BoardConfig = rm32::board::BoardConfig {{
     dual_adc: {dual_adc},
     bridge_enable: {bridge_enable},
     custom_led: {custom_led},
-    bemf_pins: rm32::board::BemfPins {{
-        phase_a: {bemf_a:#010x},
-        phase_b: {bemf_b:#010x},
-        phase_c: {bemf_c:#010x},
-    }},
 }};
 
 /// rm32_stm32-only board extensions (see rm32_stm32::board_ext).
@@ -416,6 +411,11 @@ pub const BOARD_EXT: rm32_stm32::board_ext::BoardExt = rm32_stm32::board_ext::Bo
     bench_sine_start: {bench_sine_start},
     bench_pwm_khz: {bench_pwm_khz},
     bench_fixed_pwm: {bench_fixed_pwm},
+    bemf_pins: rm32_stm32::board_ext::BemfPins {{
+        phase_a: {bemf_a:#010x},
+        phase_b: {bemf_b:#010x},
+        phase_c: {bemf_c:#010x},
+    }},
 }};
 "#,
         board_path = board_path,

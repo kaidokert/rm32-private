@@ -38,22 +38,59 @@ pub trait PhaseOutput {
 }
 
 /// Comparator (BEMF sensing) interface
-pub trait Comparator {
-    fn output_level(&self) -> bool;
+/// A motor phase.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Phase {
+    A,
+    B,
+    C,
+}
+
+/// The phase left floating (and so sensed for BEMF) in commutation step
+/// `step` (AM32 `changeCompInput`): 1|4 -> C, 2|5 -> A, 3|6 -> B, and 0 or
+/// 7 -> C as the ports' mux tables did. `Commutation` keeps `step` in
+/// 1..=6; larger values wrap modulo 8.
+///
+/// A branch-free table: a `match` compiles to a bit-test chain on M0.
+#[inline(always)]
+pub const fn floating_phase(step: u8) -> Phase {
+    const TABLE: [Phase; 8] = [
+        Phase::C,
+        Phase::C,
+        Phase::A,
+        Phase::B,
+        Phase::C,
+        Phase::A,
+        Phase::B,
+        Phase::C,
+    ];
+    TABLE[(step & 7) as usize]
+}
+
+/// BEMF sensing: the comparator's phase routing and its edge interrupt.
+///
+/// Routing and interrupt gating are separate calls: the polling path
+/// (`old_routine`) re-routes every step while the edge interrupt stays
+/// masked.
+pub trait BemfSensor {
+    /// Route the comparator to `phase` and arm the edge for the motor's
+    /// `rising` BEMF. Does not unmask. Board/MCU polarity (AM32
+    /// `INVERTED_EXTI`, G431 pin routing) is the port's business.
+    fn select_phase(&mut self, phase: Phase, rising: bool);
+    fn enable_irq(&mut self);
+    fn mask_irq(&mut self);
+    /// Comparator output level.
+    fn level(&self) -> bool;
     /// One read of the zero-cross persistence filter (`bemf_zero_cross`).
-    /// Defaults to `output_level`; a port overrides it when its inlined read
-    /// is much faster than the reference's, so the filter's TIME window
+    /// Defaults to `level`; a port overrides it when its inlined read is
+    /// much faster than the reference's, so the filter's TIME window
     /// (filter_level reads) matches the reference rather than only its
     /// read count.
     #[inline]
     fn filter_read(&self) -> bool {
-        self.output_level()
+        self.level()
     }
-    /// Set the commutation step and rising/falling edge for BEMF sensing.
-    fn set_step(&mut self, step: u8, rising: bool);
-    fn change_input(&mut self);
-    fn enable_interrupts(&mut self);
-    fn mask_interrupts(&mut self);
 }
 
 /// Debug pulse output — toggles a GPIO on commutation for RPM measurement.
@@ -84,12 +121,12 @@ pub trait MotorHal: crate::platform::Platform {
     type Bridge<'a>: Bridge
     where
         Self: 'a;
-    type Comp: Comparator;
+    type Bemf: BemfSensor;
     type Interval: IntervalTimer;
     type Com: ComTimer;
 
     fn bridge(&mut self) -> Self::Bridge<'_>;
-    fn comp(&mut self) -> &mut Self::Comp;
+    fn bemf(&mut self) -> &mut Self::Bemf;
     fn interval(&mut self) -> &mut Self::Interval;
     fn com_timer(&mut self) -> &mut Self::Com;
 }

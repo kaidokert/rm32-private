@@ -29,7 +29,10 @@ diff (and even a per-mnemonic count) grows in places nothing was added.
 The check therefore judges work, per root, and exits 1 on any of:
 
   * a new root, or a function the old tree did not call (LLVM's per-build
-    `.llvm.<n>` name suffix ignored);
+    `.llvm.<n>` name suffix ignored). `--rename OLD=NEW` (repeatable,
+    substrings of the names) declares a rename: a new function matching
+    NEW is accepted only while a function matching OLD has left the same
+    root's tree. The work checks below still apply in full;
   * more instructions in the root than before;
   * more calls (bl/blx), barriers (dmb/dsb/isb), exclusive accesses
     (ldrex/strex) or interrupt masking (cpsid/cpsie/msr);
@@ -284,14 +287,21 @@ def cmd_removals(a) -> int:
         for m in sorted(y):
             if (m in _WORK or m.startswith(("ldrex", "strex"))) and y[m] > x[m]:
                 fails.append(f"{m}: {x[m]} -> {y[m]}")
-        for f in sorted(names(db / f"{r}.names") - names(da / f"{r}.names")):
-            fails.append(f"new function: {f}")
+        na, nb = names(da / f"{r}.names"), names(db / f"{r}.names")
+        gone = na - nb
+        renamed = []
+        for f in sorted(nb - na):
+            ren = [o for o, n in a.rename if n in f and any(o in g for g in gone)]
+            if ren:
+                renamed.append(f"renamed: {ren[0]} -> {f}")
+            else:
+                fails.append(f"new function: {f}")
         cx, cy = constants(da / f"{r}.s"), constants(db / f"{r}.s")
         for k in sorted(set(cy) - set(cx)):
             fails.append(f"new constant: {k}")
         verdict = "same" if x == y and not fails else ("removals only" if not fails else "ADDS")
         print(f"root {r}: {tx} -> {ty} instructions ({ty - tx:+d}), {verdict}")
-        for f in fails:
+        for f in renamed + fails:
             print(f"    {f}")
         noise = {m: (x[m], y[m]) for m in y if y[m] > x[m] and not
                  (m in _WORK or m.startswith(("ldrex", "strex")))}
@@ -316,6 +326,8 @@ def main() -> int:
     rm.add_argument("a")
     rm.add_argument("b")
     rm.add_argument("-v", "--verbose", action="store_true", help="print re-allocation noise")
+    rm.add_argument("--rename", action="append", default=[], type=lambda v: tuple(v.split("=", 1)),
+                    metavar="OLD=NEW", help="declared rename (substrings of function names)")
     a = ap.parse_args()
     return {"dump": cmd_dump, "diff": cmd_diff, "removals": cmd_removals}[a.cmd](a)
 

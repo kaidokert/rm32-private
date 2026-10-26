@@ -8,7 +8,7 @@ use crate::commutation::Commutation;
 use crate::constants::*;
 use crate::control::context::MotorContext;
 use crate::control::state::{BemfState, DutyState};
-use crate::hal::{self, Bridge, ComTimer, Comparator, IntervalTimer, MotorHal, PhaseOutput};
+use crate::hal::{self, BemfSensor, Bridge, ComTimer, IntervalTimer, MotorHal, PhaseOutput};
 use crate::motor_mode::MotorEvent;
 use crate::shared_comm::SharedComm;
 
@@ -41,7 +41,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 
     if !ctx.shared.running() {
         // Keep COMP masked while phases are not commutating.
-        ctx.hal.comp().mask_interrupts();
+        ctx.hal.bemf().mask_irq();
     }
 
     let action = ctx.shared.isr_action();
@@ -49,7 +49,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     match action {
         crate::shared_comm::IsrAction::AllOff => {
             ctx.hal.bridge().all_off();
-            ctx.hal.comp().mask_interrupts();
+            ctx.hal.bemf().mask_irq();
             ctx.shared
                 .clear_isr_action(crate::shared_comm::IsrAction::AllOff);
             return;
@@ -103,9 +103,8 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         ctx.hal.bridge().latch();
         let ci = ctx.shared.commutation_interval();
         ctx.hal.com_timer().set_and_enable(ci as u16);
-        ctx.hal.comp().set_step(changeover, ctx.commutation.rising);
-        ctx.hal.comp().change_input();
-        ctx.hal.comp().enable_interrupts();
+        route_bemf(ctx.hal.bemf(), ctx.commutation);
+        ctx.hal.bemf().enable_irq();
         ctx.shared.set_changeover_step(0);
     }
     // Sync direction from shared (main loop may flip for bidirectional)
@@ -141,8 +140,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                     step,
                     crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
                 );
-                ctx.hal.comp().set_step(step, ctx.commutation.rising);
-                ctx.hal.comp().change_input();
+                route_bemf(ctx.hal.bemf(), ctx.commutation);
                 ctx.shared
                     .set_commutation_interval(H::STARTUP_COMMUTATION_INTERVAL);
                 ctx.hal
@@ -246,7 +244,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         if input < SINE_SLOW_STEP_THROTTLE {
             if !ctx.duty.sine_outputs_on {
                 ctx.hal.com_timer().disable_interrupt();
-                ctx.hal.comp().mask_interrupts();
+                ctx.hal.bemf().mask_irq();
                 ctx.hal.bridge().set_duty_all(0);
                 ctx.hal.bridge().all_pwm(crate::bridge::drive_complementary(
                     ctx.config.use_comp_pwm(),
@@ -301,10 +299,21 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     ctx.shared.clear_isr_action(action);
 }
 
+/// Route the comparator to the phase floating in the current commutation
+/// step, armed for its BEMF edge. Out of line, with the port's
+/// `select_phase` inlined into this one copy: callers pass two pointers, as
+/// the old `set_step` + `change_input` pair cost them two stores. Computing
+/// the phase at each call site cost the M0 commutation ISR more (binz TIM14
+/// +2 to +20 instructions, S6.1).
+#[inline(never)]
+fn route_bemf<B: BemfSensor>(sensor: &mut B, commutation: &Commutation) {
+    sensor.select_phase(hal::floating_phase(commutation.step), commutation.rising);
+}
+
 /// BEMF polling (old_routine path).
 fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
-    ctx.hal.comp().mask_interrupts();
-    let comp_level = ctx.hal.comp().output_level();
+    ctx.hal.bemf().mask_irq();
+    let comp_level = ctx.hal.bemf().level();
     let rising = ctx.commutation.rising;
     ctx.bemf.update(comp_level, rising);
 
@@ -328,8 +337,7 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
             );
             ctx.hal.bridge().pulse_toggle(step);
-            ctx.hal.comp().set_step(step, ctx.commutation.rising);
-            ctx.hal.comp().change_input();
+            route_bemf(ctx.hal.bemf(), ctx.commutation);
             ctx.bemf.reset_for_step();
             ctx.shared.increment_zero_crosses();
         } else {
@@ -355,13 +363,13 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
 ) where
     P: Timing,
     S: SharedComm,
-    C: hal::Comparator,
+    C: hal::BemfSensor,
     B: hal::PhaseOutput,
     T: hal::ComTimer,
 {
     com_timer.disable_interrupt();
     if !shared.running() {
-        comp.mask_interrupts();
+        comp.mask_irq();
         return;
     }
 
@@ -375,8 +383,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
     shared.set_e_com_time(e_com);
     bridge.com_step(step, crate::bridge::drive_complementary(comp_pwm, shared));
     bridge.pulse_toggle(step);
-    comp.set_step(step, commutation.rising);
-    comp.change_input();
+    route_bemf(comp, commutation);
 
     let exit_interval = if bidirectional {
         P::OLD_ROUTINE_EXIT_INTERVAL / 2
@@ -403,7 +410,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
         // both BEMF paths ran concurrently during old_routine —
         // double-commutation risk and inconsistent interval updates.
         if !to_old {
-            comp.enable_interrupts();
+            comp.enable_irq();
         }
         bemf.reset_after_commutation();
         shared.increment_zero_crosses_isr0();
@@ -428,7 +435,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
             shared.transition_isr0(MotorEvent::BemfLocked);
             // Changeover: arm the interrupt path now (AM32 zcfoundroutine
             // enables comparator interrupts at this exact transition).
-            comp.enable_interrupts();
+            comp.enable_irq();
         }
     }
 }
@@ -436,7 +443,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
 /// BEMF zero-cross detected (COMP ISR body).
 ///
 /// **IMPORTANT for porting**: the noise-filter loop below early-returns
-/// BEFORE `comp.mask_interrupts()` (which is the only path that clears the
+/// BEFORE `comp.mask_irq()` (which is the only path that clears the
 /// EXTI pending bit on most MCUs). If the platform ISR wrapper relies on
 /// this function to ack the EXTI line, the early-return causes NVIC to
 /// re-fire the COMP ISR forever → ISR storm → main-loop starvation.
@@ -447,7 +454,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
 /// ack when the gate is open or the edge is pre-ZC noise, and leave it
 /// pending ("camp") until the gate opens otherwise. See each port's
 /// `interrupts.rs`.
-pub fn bemf_zero_cross<C: hal::Comparator, I: hal::IntervalTimer, T: hal::ComTimer>(
+pub fn bemf_zero_cross<C: hal::BemfSensor, I: hal::IntervalTimer, T: hal::ComTimer>(
     commutation: &Commutation,
     bemf: &mut BemfState,
     comp: &mut C,
@@ -459,7 +466,7 @@ pub fn bemf_zero_cross<C: hal::Comparator, I: hal::IntervalTimer, T: hal::ComTim
             return false;
         }
     }
-    comp.mask_interrupts();
+    comp.mask_irq();
     let count = interval.count().min(u16::MAX as u32) as u16;
     interval.set_count(0);
     bemf.record_zc_timing(count);

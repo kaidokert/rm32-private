@@ -114,6 +114,13 @@ run "ISR dump L431" $cap python rm32_stm32/scripts/isr_diff.py dump --elf "$out/
 run "ISR dump binz" $cap python rm32_stm32/scripts/isr_diff.py dump --elf "$out/binz.elf" --out "$out/isr_binz"
 sha256sum "$out"/l431.elf "$out"/binz.elf | sed "s#$out/##" > "$out/elf.sha256"
 
+# Declared renames for the removals check: GC_RENAME="old=new[,old=new]"
+# (substrings of function names; see isr_diff.py removals --rename).
+renames=""
+if [ -n "${GC_RENAME:-}" ]; then
+    for r in $(echo "$GC_RENAME" | tr ',' ' '); do renames="$renames --rename $r"; done
+    echo "declared renames: $GC_RENAME"
+fi
 if [ -n "$prev" ]; then
     for b in l431 binz pub_stm32g071 pub_stm32f051 pub_stm32l431 pub_stm32g431; do
         if [ ! -d "captures/gc/$prev/isr_$b" ]; then
@@ -126,7 +133,7 @@ if [ -n "$prev" ]; then
         # CODE steps: every ISR-root change must be a removal (HOST steps:
         # the diff above is already identical, so this passes trivially).
         printf '    removals: '
-        python rm32_stm32/scripts/isr_diff.py removals "captures/gc/$prev/isr_$b" "$out/isr_$b" \
+        python rm32_stm32/scripts/isr_diff.py removals $renames "captures/gc/$prev/isr_$b" "$out/isr_$b" \
             | tee "$out/isr_removals_$b.txt" | tail -1
     done
 fi

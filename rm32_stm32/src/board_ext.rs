@@ -13,6 +13,28 @@ pub struct PinRef {
     pub pin: u8,
 }
 
+/// BEMF comparator pin mapping: MCU-specific packed register values
+/// (moved here from `rm32::board`; the core names phases, the port routes
+/// them).
+///
+/// Each field is a pre-computed value that the per-MCU `set_inmsel()` writes
+/// to the comparator register(s). The encoding is MCU-specific:
+/// - L431: `(inmesel << 8) | inmsel_3bit` — set_inmsel unpacks both fields
+/// - G071: 4-bit INMSEL value (set_inmsel shifts left by 4)
+/// - F051: full lower-16-bit CSR value including COMP1_EN
+/// - G431: `(config << 16) | comp_selector` for dual-comp routing
+///
+/// Values are computed by build.rs from symbolic pin names in the board YAML.
+///
+/// TODO: replace this packed representation with typed comparator routes:
+/// https://github.com/kaidokert/rm32/issues/42
+#[derive(Clone, Copy, Debug)]
+pub struct BemfPins {
+    pub phase_a: u32,
+    pub phase_b: u32,
+    pub phase_c: u32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BoardExt {
     /// Gate-driver ENABLE (active high). Driven low at boot; the main loop
@@ -30,6 +52,8 @@ pub struct BoardExt {
     pub bench_pwm_khz: u8,
     /// Bench baseline: fixed carrier (AM32 variable_pwm = 0).
     pub bench_fixed_pwm: bool,
+    /// BEMF comparator pin mapping (from the board YAML).
+    pub bemf_pins: BemfPins,
 }
 
 #[cfg(feature = "stm32g071")]

@@ -131,7 +131,7 @@ fn main() -> ! {
         mut sys,
         mut adc,
         mut telem,
-    } = rm32_stm32::init::init(BOARD.dead_time, BOARD.bemf_pins);
+    } = rm32_stm32::init::init(BOARD.dead_time, BOARD_EXT.bemf_pins);
 
     // Re-arm USART1 after the clock tree shuffle (and in case any peripheral
     // init touched USART1 even with telem disabled). Cheap, idempotent.
@@ -1477,7 +1477,7 @@ fn main() -> ! {
                                 bench_throttle = 0;
                                 bench_last_cmd = Some(bench_now);
                                 shared.request_isr_action(rm32::shared_comm::IsrAction::AllOff);
-                                let c = coast::measure(t_off, BOARD.bemf_pins.phase_a, 60);
+                                let c = coast::measure(t_off, BOARD_EXT.bemf_pins.phase_a, 60);
                                 coast_hold_com = true;
                                 rm32_stm32::dprintln!(
                                     "coast trans={} first_cyc={} cpu_mhz={}",
