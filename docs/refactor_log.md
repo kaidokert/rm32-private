@@ -524,10 +524,37 @@ Judgment calls made without stopping, for review at the end of the goal.
    main-loop work (r4: s03.2 -174, S3.3 -114, S4.3 -99, S4.4 -32; r1:
    -71, -48, -41, +8). Implication worth a look later: on binz at high
    duty the 1 kHz PID block (current limit, stall) runs below 1 kHz.
-   Not changed here. Also: one aborted A/B run reported "REBOOTED in arm";
+   Not changed here. (Amended after S4.4f, Call 9: part of S4.4's shift
+   rode on the wrapped current; with the fix imean is 1204 / 906 / 1930 vs
+   S4.3 1172 / 864 / 1882 and buggy S4.4 1216 / 919 / 1950, so ~+30..+50
+   remains. The main-loop reading still fits; it is not directly tested.)
+   Also: one aborted A/B run reported "REBOOTED in arm";
    it was the first-boot banner arriving late (run started right after
    flash-binz's reset; one banner, tk=827 at the first `b`). Captures in
    captures/bisect_s04.4/.
+
+9. **S4.4 shipped a defect; fixed as S4.4f (own gate, own bench, own
+   tag), not folded into S4.5.** The goal (and my test) said "every raw
+   count 0..4095"; binz's `raw_current()` is not a 12-bit count, it is
+   metered mA + 2000 as u16 (known since the increment-3 review, and I
+   still verified only 0..4095). Above ~2.1 A the S4.4 multiply-shift
+   wrapped modulo 4096 counts: `actual_current` (1 kHz path: PID current
+   limit, telemetry, `i50max`) read e.g. 704 mA at 4.8 A. Evidence:
+   `i50max` exactly 2095 (= 4095 - 2000) on S4.4 R1/R3 and 1996 on S4.5's
+   R3 (pre-S4.4 R3 peaks 4273..4816). The bands did not see it: the
+   recorder's `ma` column is the guard's driver-fed EWMA, not
+   `actual_current`. It surfaced as S4.5's binz R3 OCFAST kill (the guard
+   reads the driver: a genuine >4.8 A surge with the 1 kHz current
+   reading wrong), and R4 then hit the latched guard. Fix: the conversions
+   are exact over all of u16 (the `Adc` trait's type), the exhaustive test
+   runs 0..=65535, plus `binz_current_above_12_bits_is_exact`; both fail
+   on the 12-bit domain (falsified). Voltage over u16 has no exact 32-bit
+   form for 933 and 1194 dividers, so `AffineDiv` falls back to a 64-bit
+   multiply only where no 32-bit form exists: binz gains one
+   `__aeabi_lmul` (constant time, not a division); the public G071 board
+   (1100) needs none; no image gains a division. S4.4f bench: 8/8, binz
+   `i50max` 3452 / 4461 / 3601 (back in family). Process gap worth a
+   look: no band covers `actual_current` itself.
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
@@ -589,3 +616,18 @@ G071 public 69 -> 67, F051 58 -> 56, binz 79 -> 77 (the two removed are in
 G071 -536, F051 -628, L431 -520, G431 -600, binz -536, L431 bench -528 B,
 mostly `NTC_TABLE` (512 B, dead with `USE_NTC` false) plus panic-data
 reshuffle. Bench 8/8 in band first pass; binz `imean` shift: Call 8.
+**DEFECT (found in S4.5): binz current wrapped above ~2.1 A; fixed in
+S4.4f, Call 9. The S4.4 claim "equals S2.3" held only for 0..4095.**
+
+## S4.4f -- ADC conversions exact over all of u16 (CODE, fix) -- tag gc-s04.4f-psu
+
+The S4.4 defect and its fix: Call 9. `units::ADC_MAX` = `u16::MAX`;
+`AffineDiv` gains the 64-bit fallback form; exhaustive test over
+0..=65535; new `binz_current_above_12_bits_is_exact`: 389 host tests
+(388 + 1). `gc_summary.py` accepts a step suffix (`s04.4f-`) when mapping
+runs to the s00 bands.
+
+Gate PASS vs s04.4; ISR dumps identical on all six images. Soft-division
+call counts unchanged on every M0 image; `__aeabi_lmul` binz 2 -> 3,
+public G071 / F051 unchanged. Bench 8/8 in band; binz `i50max` 3452 (R1),
+4461 (R3), 3601 (R4) -- the S4.4 2095 ceiling is gone.

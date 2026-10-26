@@ -71,26 +71,31 @@ pub struct AdcCount(pub u16);
 /// Pin millivolts per ADC count, 3300 / 4095, as Q16 (truncated): the
 /// pin-mV step is `(raw * MV_PER_COUNT_Q16) >> 16`.
 const MV_PER_COUNT_Q16: u32 = (3300u64 * 65536 / 4095) as u32;
-/// Largest pin-mV a 12-bit reading gives.
-const MV_PIN_MAX: u32 = (4095 * MV_PER_COUNT_Q16) >> 16;
-/// Largest 12-bit ADC count.
-const ADC_MAX: u32 = 4095;
+/// Largest reading the `Adc` trait can return. The conversions are exact
+/// over all of `u16`, not only 12-bit counts: a port may encode its reading
+/// (binz returns metered mA + 2000, above 4095 past ~2.1 A).
+const ADC_MAX: u32 = u16::MAX as u32;
+/// Largest pin-mV a reading gives (`ADC_MAX * MV_PER_COUNT_Q16` fits u32).
+const MV_PIN_MAX: u32 = (ADC_MAX * MV_PER_COUNT_Q16) >> 16;
 
 /// Current sense scaling: 3300 / 41 ≈ 80.49 (C uses integer truncation to 80).
 /// We match C's integer behavior: 3300/41 = 80 (truncated).
 const CURRENT_MV_SCALE: i32 = 3300 / 41; // = 80, matches C
 
-/// `floor((a * x + b) / d)` for every `x` in `0..=x_max` with a 32-bit
-/// multiply, add and shift and no divide (cores without hardware divide
-/// would otherwise call `__aeabi_*div`). [`AffineDiv::new`] runs at compile
-/// time, checks every `x` against the exact quotient and fails the build if
-/// no exact form exists.
+/// `floor((a * x + b) / d)` for every `x` in `0..=x_max` with a multiply,
+/// add and shift and no divide (cores without hardware divide would
+/// otherwise call `__aeabi_*div`). [`AffineDiv::new`] runs at compile time,
+/// checks every `x` against the exact quotient and fails the build if no
+/// exact form exists.
 ///
 /// Three forms, first exact one wins (`a = A*d + a1`, `a2 = d - a1`):
 /// direct `floor((a x + b) / d)`; `A x + floor((a1 x + b) / d)`; and
 /// `(A + 1) x - ceil((a2 x - b) / d)`. Peeling off the integer part keeps the
-/// multiplier small enough for the precision a large `d` needs (L431's
-/// 933/1000 divider has no direct form over 0..3299 mV).
+/// multiplier small enough for the precision a large `d` needs. A 32-bit
+/// multiply is preferred; only when none of the three has an exact 32-bit
+/// form over the whole domain does it take a 64-bit multiply (on M0 a
+/// constant-time `__aeabi_lmul`, still no divide): the voltage dividers
+/// over all of `u16`'s pin-mV range need one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AffineDiv {
     lin: i32,
@@ -98,13 +103,15 @@ pub struct AffineDiv {
     negate: bool,
 }
 
-/// `((x * mul + add) >> shift) - sub` = `floor((alpha x + beta) / d)`.
+/// `((x * mul + add) >> shift) - sub` = `floor((alpha x + beta) / d)`, in
+/// 32-bit arithmetic, or 64-bit when `wide`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MulShift {
-    mul: u32,
-    add: u32,
+    mul: u64,
+    add: u64,
     shift: u32,
     sub: i32,
+    wide: bool,
 }
 
 impl MulShift {
@@ -113,28 +120,35 @@ impl MulShift {
         add: 0,
         shift: 0,
         sub: 0,
+        wide: false,
     };
 
     /// Exact form of `floor((alpha x + beta) / d)` for `x <= x_max`, if one
-    /// exists with `x * mul + add` inside u32.
-    const fn find(alpha: i32, beta: i32, d: i32, x_max: u32) -> Option<Self> {
+    /// exists with `x * mul + add` inside u32 (u64 when `wide`).
+    const fn find(alpha: i32, beta: i32, d: i32, x_max: u32, wide: bool) -> Option<Self> {
         // beta = d * t + r with 0 <= r < d: floor((alpha x + r) / d) + t.
         let t = beta.div_euclid(d);
         let r = beta.rem_euclid(d);
-        let mut shift = 31;
+        let limit = if wide {
+            u64::MAX as u128
+        } else {
+            u32::MAX as u128
+        };
+        let mut shift = if wide { 63 } else { 31 };
         loop {
-            let mul_lo = ((alpha as u64) << shift) / d as u64;
-            let add_lo = ((r as u64) << shift) / d as u64;
+            let mul_lo = ((alpha as u128) << shift) / d as u128;
+            let add_lo = ((r as u128) << shift) / d as u128;
             let mut k = 0;
             while k < 4 {
                 let mul = mul_lo + (k & 1);
                 let add = add_lo + (k >> 1);
-                if x_max as u64 * mul + add <= u32::MAX as u64 {
+                if x_max as u128 * mul + add <= limit {
                     let c = Self {
-                        mul: mul as u32,
-                        add: add as u32,
+                        mul: mul as u64,
+                        add: add as u64,
                         shift,
                         sub: -t,
+                        wide,
                     };
                     if c.exact(alpha, r, d, x_max) {
                         return Some(c);
@@ -153,7 +167,7 @@ impl MulShift {
         let mut x = 0;
         while x <= x_max {
             let want = ((alpha as i64 * x as i64 + r as i64) / d as i64) as i32;
-            if ((x * self.mul + self.add) >> self.shift) as i32 != want {
+            if self.apply(x) + self.sub != want {
                 return false;
             }
             x += 1;
@@ -163,7 +177,12 @@ impl MulShift {
 
     #[inline(always)]
     const fn apply(self, x: u32) -> i32 {
-        ((x * self.mul + self.add) >> self.shift) as i32 - self.sub
+        let q = if self.wide {
+            ((x as u64 * self.mul + self.add) >> self.shift) as u32
+        } else {
+            (x * self.mul as u32 + self.add as u32) >> self.shift
+        };
+        q as i32 - self.sub
     }
 }
 
@@ -178,30 +197,36 @@ impl AffineDiv {
     /// Exact divide-free form of `floor((a * x + b) / d)`, `x <= x_max`.
     pub const fn new(a: i32, b: i32, d: i32, x_max: u32) -> Self {
         assert!(a >= 0 && d > 0);
-        if let Some(core) = MulShift::find(a, b, d, x_max) {
-            return Self {
-                lin: 0,
-                core,
-                negate: false,
-            };
-        }
         let a1 = a % d;
-        if let Some(core) = MulShift::find(a1, b, d, x_max) {
-            return Self {
-                lin: a / d,
-                core,
-                negate: false,
-            };
+        let mut wide = false;
+        loop {
+            if let Some(core) = MulShift::find(a, b, d, x_max, wide) {
+                return Self {
+                    lin: 0,
+                    core,
+                    negate: false,
+                };
+            }
+            if let Some(core) = MulShift::find(a1, b, d, x_max, wide) {
+                return Self {
+                    lin: a / d,
+                    core,
+                    negate: false,
+                };
+            }
+            // ceil((a2 x - b) / d) = floor((a2 x - b + d - 1) / d)
+            if let Some(core) = MulShift::find(d - a1, d - 1 - b, d, x_max, wide) {
+                return Self {
+                    lin: a / d + 1,
+                    core,
+                    negate: true,
+                };
+            }
+            if wide {
+                panic!("no exact multiply-shift form for this board constant");
+            }
+            wide = true;
         }
-        // ceil((a2 x - b) / d) = floor((a2 x - b + d - 1) / d)
-        if let Some(core) = MulShift::find(d - a1, d - 1 - b, d, x_max) {
-            return Self {
-                lin: a / d + 1,
-                core,
-                negate: true,
-            };
-        }
-        panic!("no exact 32-bit multiply-shift form for this board constant");
     }
 
     /// The quotient for `x <= x_max`.
@@ -354,7 +379,7 @@ mod tests {
     board!(NoSensor, 1100, 0, 498);
 
     fn matches_s2_3<P: Platform>() {
-        for raw in 0..=4095u16 {
+        for raw in 0..=u16::MAX {
             assert_eq!(
                 AdcCount(raw).centivolts::<P>(),
                 s2_3_centivolts(raw, P::VOLTAGE_DIVIDER_X100),
@@ -372,7 +397,8 @@ mod tests {
     }
 
     /// S4.4 gate: every board's compile-time conversion equals S2.3 for
-    /// every 12-bit count, to the count.
+    /// every reading the `Adc` trait can return (all of u16, which covers
+    /// every 12-bit count and binz's mA-encoded current), to the count.
     #[test]
     fn adc_conversions_equal_s2_3_for_every_count() {
         matches_s2_3::<Binz>();
@@ -383,6 +409,18 @@ mod tests {
         matches_s2_3::<Offset498>();
         matches_s2_3::<NoSensor>();
         matches_s2_3::<crate::platform::TestPlatform>();
+    }
+
+    /// The S4.4 regression: binz encodes current as metered mA + 2000, so
+    /// readings above 4095 are real (S4.4 first shipped a 12-bit domain and
+    /// wrapped every current above ~2.1 A modulo 4096 counts).
+    #[test]
+    fn binz_current_above_12_bits_is_exact() {
+        assert_eq!(AdcCount(6800).milliamps::<Binz>(), MilliAmps(4800));
+        assert_eq!(
+            AdcCount(u16::MAX).milliamps::<Binz>(),
+            s2_3_milliamps(u16::MAX, 1600, 80)
+        );
     }
 
     #[test]
