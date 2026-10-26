@@ -202,6 +202,40 @@ mod tests {
         }
     }
 
+    /// S6.2: the control tick latches the COMP gate average (e_com / 3 in
+    /// timer ticks) every tick, including the AllOff early-return path, and
+    /// never clamps it below the raw value (AM32's 5000 is a one-shot reset).
+    #[test]
+    fn tick_latches_comp_gate_average_every_tick() {
+        let mut comm = crate::commutation::Commutation::new();
+        let mut bemf = crate::control::state::BemfState::default();
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let order = MockOrder::default();
+        let mut hal = MockMotorHal::new_with_order(&order);
+        for (e_com, action, want) in [
+            (30_000, crate::shared_comm::IsrAction::None, 10_000),
+            (6_000, crate::shared_comm::IsrAction::AllOff, 2_000),
+            (-5, crate::shared_comm::IsrAction::None, 0),
+        ] {
+            shared.e_com_time.set(e_com);
+            shared.isr_action.set(action);
+            isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+                commutation: &mut comm,
+                bemf: &mut bemf,
+                duty: &mut duty,
+                config: &config,
+                armed_timeout_count: &mut armed_timeout,
+                voltage_based_ramp: false,
+                shared: &shared,
+                hal: &mut hal,
+            });
+            assert_eq!(shared.gate_avg.get(), want, "e_com {e_com}");
+        }
+    }
+
     #[test]
     fn prop_brake_reconfigures_bridge_before_duty() {
         let mut comm = crate::commutation::Commutation::new();

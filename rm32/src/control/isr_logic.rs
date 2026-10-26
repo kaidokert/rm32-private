@@ -27,6 +27,13 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     // Free-running tick count: the main loop's 1 s (consumed current) and
     // LED blink periods (AM32's `tenkhzcounter++` / `ledcounter++` here).
     ctx.shared.tick_count_inc();
+    // COMP gate average, latched every tick (see `IsrTiming::gate_avg`),
+    // before any early return so the AllOff path latches too. Clamped at 0
+    // only: AM32's 5000 is a one-shot desync reset, not a cap -- clamping
+    // continuously halves the spin-up gate (4/4 climb failures measured).
+    // The ramp limit below reads the same value (one division per tick).
+    let average_interval = crate::platform::e_com_us_to_avg_ticks::<H>(ctx.shared.e_com_time());
+    ctx.shared.set_gate_avg(average_interval.max(0) as u32);
 
     // AM32 interval telemetry (): with
     // telemetry_on_interval set, fire send_telemetry every
@@ -198,13 +205,11 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     }
 
     // Ramp rate limiting
-    let average_interval =
-        crate::platform::e_com_us_to_avg_ticks::<H>(ctx.shared.e_com_time()) as u32;
     ctx.duty.ramp_limit::<H>(
         ctx.shared.battery_voltage(),
         ctx.shared.commutation_interval(),
         ctx.shared.zero_crosses(),
-        average_interval,
+        average_interval as u32,
         ctx.voltage_based_ramp,
     );
 

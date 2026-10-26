@@ -34,11 +34,11 @@ fn ADC_COMP() {
         return;
     }
     let avg = {
-        let a = crate::comp_gate::get();
+        let shared = crate::isr::shared();
+        let a = shared.gate_avg();
         if a != 0 {
             a
         } else {
-            let shared = crate::isr::shared();
             rm32::fast_math::div3_i32(shared.e_com_time()).max(0) as u32
         }
     };

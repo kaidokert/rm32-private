@@ -149,6 +149,17 @@ pub trait IsrTiming {
     fn set_commutation_interval(&self, v: u32);
     fn e_com_time(&self) -> i32;
     fn set_e_com_time(&self, _v: i32) {}
+    /// COMP acceptance-gate average (interval-timer ticks), latched by the
+    /// control tick at 20 kHz and read by the COMP ISR. AM32's staleness:
+    /// main.c computes `average_interval` in the slow loop and
+    /// `COMP_IRQHandler` reads that stale value. Feeding the gate the fresh
+    /// per-commutation `e_com / 3` was the 2026-07-27 regression (a freshly
+    /// shrunk gate opens early in transients, releases camped edges into
+    /// early accepts; no Running at 20-40 %). 0 = not latched yet.
+    fn gate_avg(&self) -> u32 {
+        0
+    }
+    fn set_gate_avg(&self, _v: u32) {}
     fn interval_timer_count(&self) -> u32 {
         0
     }

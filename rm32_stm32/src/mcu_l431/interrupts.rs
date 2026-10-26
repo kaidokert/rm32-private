@@ -94,13 +94,12 @@ fn COMP() {
     #[cfg(feature = "benchuart")]
     LEAN_COMP_ENTRIES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let shared = crate::isr::shared();
-    // Gate avg: AM32-verbatim 20 kHz-latched STALE average by default
-    // (crate::comp_gate), fresh e_com/3 only when the 'G' bench knob
-    // selects it or the latch is still cold. CONTROL logic — must NOT
-    // depend on zctrace (regression 07-27: the zctrace-free build fell
-    // back to fresh here and failed to lock at <=40% throttle).
+    // Gate avg: the control tick's 20 kHz-latched STALE average
+    // (rm32 `IsrTiming::gate_avg`), fresh e_com/3 only while the latch is
+    // still cold. CONTROL logic, in every build (regression 07-27: a
+    // zctrace-free build fell back to fresh here and failed to lock).
     let avg = {
-        let a = crate::comp_gate::get();
+        let a = shared.gate_avg();
         if a != 0 {
             a
         } else {

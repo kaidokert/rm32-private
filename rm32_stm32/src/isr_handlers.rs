@@ -336,30 +336,8 @@ pub fn handle_tim6() {
         crate::bench_hist::record(crate::bench_hist::Site::Tim6, cycles);
         let _ = cycles;
     }
-    // 20 kHz gate latch (AM32-verbatim staleness for the COMP gate),
-    // CLAMPED to AM32's average_interval domain (main.c clamps
-    // average_interval to 5000 at desync/timeout sites — and their COMP
-    // gate reads THAT variable). rm32 had split the quantity: main's
-    // desync clamp landed on a private copy while the gate read raw
-    // e_com/3 — after kick-era garbage intervals entered the ring the
-    // gate inflated to multi-ms, one early edge camped for the whole
-    // gate at priority 0 (59k re-entries, ~30 ms blackout, fall
-    // autopsy 07-25), starved its own accepts, and the timeout/kick
-    // churn became self-sustaining. The clamp bounds any camp to
-    // <=1.25 ms and reconnects the gate to AM32's guarded domain.
-    // NOTE: an earlier continuous min(,5000) clamp here was WRONG — AM32's
-    // 5000 is a one-shot desync reset, not a cap; clamping continuously
-    // halves the legitimate spin-up gate (avg ~10000 era) and invites
-    // early accepts during every climb (4/4 climb failures measured).
-    // The 30 ms camp-blackout bound needs a camp-side fix instead.
-    // COMP gate stale average — latched every tick in ALL builds (this
-    // is control, not instrumentation; see crate::comp_gate).
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     t6_cp(3);
-    crate::comp_gate::latch(
-        rm32::platform::e_com_us_to_avg_ticks::<crate::platform::StmPlatform>(shared.e_com_time())
-            .max(0) as u32,
-    );
     // binz bench: measured TIM6 handler wall time — TIM6 counts CPU cycles
     // from its own update (PSC 0, ARR 3199), so CNT at exit is the elapsed
     // time since the tick including entry latency and COM/COMP preemption.

@@ -53,6 +53,10 @@ pub struct SharedState {
 
     // Telemetry (main computes, ISR reads for speed PID)
     e_com_time: AtomicU32, // stored as u32, interpreted as i32
+    // core (not portable_atomic): plain load/store exist on every target,
+    // and portable_atomic wraps even a relaxed M0 load in PRIMASK -- a
+    // critical section on the priority-0 COMP path.
+    gate_avg: core::sync::atomic::AtomicU32,
 
     // Stall protection (main computes, ISR applies to duty)
     stall_protection_adjust: AtomicU16,
@@ -118,6 +122,7 @@ impl SharedState {
             signal_timeout: AtomicU16::new(0),
             zero_input_count: AtomicU16::new(0),
             e_com_time: AtomicU32::new(0),
+            gate_avg: core::sync::atomic::AtomicU32::new(0),
             interval_timer_count: AtomicU32::new(0),
             stall_protection_adjust: AtomicU16::new(0),
             current_limit_adjust: AtomicU16::new(2000),
@@ -378,6 +383,16 @@ impl SharedState {
     }
     pub fn set_e_com_time(&self, v: i32) {
         self.e_com_time.store(v as u32, REL);
+    }
+
+    /// See `IsrTiming::gate_avg`. Relaxed: one word, no ordering with
+    /// other fields.
+    pub fn gate_avg(&self) -> u32 {
+        self.gate_avg.load(core::sync::atomic::Ordering::Relaxed)
+    }
+    pub fn set_gate_avg(&self, v: u32) {
+        self.gate_avg
+            .store(v, core::sync::atomic::Ordering::Relaxed);
     }
 
     // --- U16 accessors ---
@@ -650,6 +665,12 @@ impl crate::shared_comm::IsrTiming for SharedState {
     }
     fn set_e_com_time(&self, v: i32) {
         SharedState::set_e_com_time(self, v);
+    }
+    fn gate_avg(&self) -> u32 {
+        SharedState::gate_avg(self)
+    }
+    fn set_gate_avg(&self, v: u32) {
+        SharedState::set_gate_avg(self, v);
     }
     fn interval_timer_count(&self) -> u32 {
         SharedState::interval_timer_count(self)
