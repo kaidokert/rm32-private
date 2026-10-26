@@ -200,3 +200,24 @@ insns), TIM6 5114 → 5118, TIM14 and DMA unchanged.
 Bench (v4 bands): 14 runs, all R1–R4 on both boards, `--check` 14/14,
 dsy = 0, no kills, no reboots. Battery: no (no control behaviour change).
 Verdict PASS.
+
+## S2.2 — L431 DWT-backed delay_micros (HOST) — tag gc-s02.2-psu
+
+`mcu_l431/system.rs` delay_micros spins on DWT.CYCCNT (enabled at boot on
+every L431 build) instead of `asm::delay(us * 80)`: since cortex-m 0.7.8
+`asm::delay(n)` is n `subs/bne` iterations (~3 cycles each on the M4).
+Callers: startup/beacon tones and the sine stepper (not used on the
+bench). Measured with `scripts/boot_timing.py` (reset → boot lines): the
+startup tune (nominal 600 ms, as AM32) 1791 ms → 593 ms.
+
+| | L431 | binz |
+|---|---|---|
+| ELF | text 54452 (−32) | byte-identical to s02.1 |
+
+Host gate PASS (s02.2). ISR diff vs s02.1: identical on both boards
+(isr_diff now cuts at symbol size; the padding after a noreturn call had
+shown as one extra line). Bench R1–R4 both boards: `--check` 8/8, dsy = 0,
+no kills. Battery: no. Verdict PASS.
+
+Open: the G071 (and F051) `asm::delay` ports have the same ~3x
+(binz tune 1776 ms); M0+ has no cycle counter — needs a timer delay.

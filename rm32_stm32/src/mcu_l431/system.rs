@@ -89,7 +89,13 @@ impl rm32::hal::System for System {
         }
     }
     fn delay_micros(&mut self, us: u32) {
-        cortex_m::asm::delay(us * 80);
+        // DWT.CYCCNT (enabled at boot in main): wall time at 80 MHz.
+        // cortex-m >= 0.7.8 `asm::delay(n)` spins n `subs/bne` iterations
+        // (~3 cycles each here), so `asm::delay(us * 80)` ran ~3x long.
+        let dwt = unsafe { &*cortex_m::peripheral::DWT::PTR };
+        let start = dwt.cyccnt.read();
+        let cycles = us.saturating_mul(80);
+        while dwt.cyccnt.read().wrapping_sub(start) < cycles {}
     }
     fn delay_millis(&mut self, ms: u32) {
         for _ in 0..ms {

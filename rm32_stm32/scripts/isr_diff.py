@@ -60,6 +60,19 @@ def load(elf: str) -> dict[str, tuple[int, list[tuple[int, str, str]]]]:
         m = LINE.match(ln)
         if cur and m:
             funcs[cur][1].append((int(m.group(1), 16), m.group(2), m.group(3)))
+    # Cut each body at its symbol size: objdump disassembles the alignment
+    # padding up to the next symbol as instructions, so a layout shift alone
+    # would add or drop "code" after a noreturn call.
+    sizes: dict[str, int] = {}
+    for ln in subprocess.run([NM, "-S", elf], capture_output=True, text=True,
+                             check=True).stdout.splitlines():
+        parts = ln.split()
+        if len(parts) == 4 and parts[2] in "Tt":
+            sizes[parts[3]] = int(parts[1], 16)
+    for name, (start, body) in funcs.items():
+        if name in sizes:
+            end = (start & ~1) + sizes[name]
+            body[:] = [ins for ins in body if ins[0] < end]
     return funcs
 
 
