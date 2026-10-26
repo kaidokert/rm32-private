@@ -61,41 +61,220 @@ impl TimerTicks {
     }
 }
 
+use crate::platform::Platform;
+
 /// Raw ADC count (12-bit, 0-4095).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[repr(transparent)]
 pub struct AdcCount(pub u16);
 
-use fixed::types::U16F16;
-
-/// Millivolts per ADC count: 3300 / 4095 ≈ 0.8059 mV/count.
-/// As fixed-point, this replaces the fragile `* 3300 / 4095` integer chain.
-const MV_PER_COUNT: U16F16 = U16F16::from_bits((3300u64 * 65536 / 4095) as u32);
+/// Pin millivolts per ADC count, 3300 / 4095, as Q16 (truncated): the
+/// pin-mV step is `(raw * MV_PER_COUNT_Q16) >> 16`.
+const MV_PER_COUNT_Q16: u32 = (3300u64 * 65536 / 4095) as u32;
+/// Largest pin-mV a 12-bit reading gives.
+const MV_PIN_MAX: u32 = (4095 * MV_PER_COUNT_Q16) >> 16;
+/// Largest 12-bit ADC count.
+const ADC_MAX: u32 = 4095;
 
 /// Current sense scaling: 3300 / 41 ≈ 80.49 (C uses integer truncation to 80).
 /// We match C's integer behavior: 3300/41 = 80 (truncated).
 const CURRENT_MV_SCALE: i32 = 3300 / 41; // = 80, matches C
 
-impl AdcCount {
-    /// Convert to centivolts given the divider as its true ratio x100
-    /// (11:1 = 1100): pin millivolts x ratio / 10. Against AM32's
-    /// `* 3300 / 4095 * 110 / 100` the fixed-point MV_PER_COUNT truncates up
-    /// to 1 pin-mV lower (<= 2 cV at 11:1; 4095 -> 3628 vs 3630).
-    pub fn to_centivolts(self, voltage_divider_x100: u16) -> CentiVolts {
-        let mv_pin = MV_PER_COUNT * U16F16::from_num(self.0);
-        let scaled = mv_pin.to_num::<u32>() * voltage_divider_x100 as u32 / 1000;
-        CentiVolts(scaled as u16)
+/// `floor((a * x + b) / d)` for every `x` in `0..=x_max` with a 32-bit
+/// multiply, add and shift and no divide (cores without hardware divide
+/// would otherwise call `__aeabi_*div`). [`AffineDiv::new`] runs at compile
+/// time, checks every `x` against the exact quotient and fails the build if
+/// no exact form exists.
+///
+/// Three forms, first exact one wins (`a = A*d + a1`, `a2 = d - a1`):
+/// direct `floor((a x + b) / d)`; `A x + floor((a1 x + b) / d)`; and
+/// `(A + 1) x - ceil((a2 x - b) / d)`. Peeling off the integer part keeps the
+/// multiplier small enough for the precision a large `d` needs (L431's
+/// 933/1000 divider has no direct form over 0..3299 mV).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AffineDiv {
+    lin: i32,
+    core: MulShift,
+    negate: bool,
+}
+
+/// `((x * mul + add) >> shift) - sub` = `floor((alpha x + beta) / d)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MulShift {
+    mul: u32,
+    add: u32,
+    shift: u32,
+    sub: i32,
+}
+
+impl MulShift {
+    const ZERO: Self = Self {
+        mul: 0,
+        add: 0,
+        shift: 0,
+        sub: 0,
+    };
+
+    /// Exact form of `floor((alpha x + beta) / d)` for `x <= x_max`, if one
+    /// exists with `x * mul + add` inside u32.
+    const fn find(alpha: i32, beta: i32, d: i32, x_max: u32) -> Option<Self> {
+        // beta = d * t + r with 0 <= r < d: floor((alpha x + r) / d) + t.
+        let t = beta.div_euclid(d);
+        let r = beta.rem_euclid(d);
+        let mut shift = 31;
+        loop {
+            let mul_lo = ((alpha as u64) << shift) / d as u64;
+            let add_lo = ((r as u64) << shift) / d as u64;
+            let mut k = 0;
+            while k < 4 {
+                let mul = mul_lo + (k & 1);
+                let add = add_lo + (k >> 1);
+                if x_max as u64 * mul + add <= u32::MAX as u64 {
+                    let c = Self {
+                        mul: mul as u32,
+                        add: add as u32,
+                        shift,
+                        sub: -t,
+                    };
+                    if c.exact(alpha, r, d, x_max) {
+                        return Some(c);
+                    }
+                }
+                k += 1;
+            }
+            if shift == 0 {
+                return None;
+            }
+            shift -= 1;
+        }
     }
 
-    /// Convert to milliamps given offset and sensitivity.
-    /// Formula: (count * 80 - offset * 100) / mv_per_amp
-    pub fn to_milliamps(self, current_offset: i16, mv_per_amp: u16) -> MilliAmps {
-        let mv = (self.0 as i32) * CURRENT_MV_SCALE - (current_offset as i32) * 100;
-        if mv_per_amp > 0 {
-            MilliAmps((mv / mv_per_amp as i32) as i16)
-        } else {
-            MilliAmps::ZERO
+    const fn exact(self, alpha: i32, r: i32, d: i32, x_max: u32) -> bool {
+        let mut x = 0;
+        while x <= x_max {
+            let want = ((alpha as i64 * x as i64 + r as i64) / d as i64) as i32;
+            if ((x * self.mul + self.add) >> self.shift) as i32 != want {
+                return false;
+            }
+            x += 1;
         }
+        true
+    }
+
+    #[inline(always)]
+    const fn apply(self, x: u32) -> i32 {
+        ((x * self.mul + self.add) >> self.shift) as i32 - self.sub
+    }
+}
+
+impl AffineDiv {
+    /// Always 0 (a board without the sensor).
+    pub const ZERO: Self = Self {
+        lin: 0,
+        core: MulShift::ZERO,
+        negate: false,
+    };
+
+    /// Exact divide-free form of `floor((a * x + b) / d)`, `x <= x_max`.
+    pub const fn new(a: i32, b: i32, d: i32, x_max: u32) -> Self {
+        assert!(a >= 0 && d > 0);
+        if let Some(core) = MulShift::find(a, b, d, x_max) {
+            return Self {
+                lin: 0,
+                core,
+                negate: false,
+            };
+        }
+        let a1 = a % d;
+        if let Some(core) = MulShift::find(a1, b, d, x_max) {
+            return Self {
+                lin: a / d,
+                core,
+                negate: false,
+            };
+        }
+        // ceil((a2 x - b) / d) = floor((a2 x - b + d - 1) / d)
+        if let Some(core) = MulShift::find(d - a1, d - 1 - b, d, x_max) {
+            return Self {
+                lin: a / d + 1,
+                core,
+                negate: true,
+            };
+        }
+        panic!("no exact 32-bit multiply-shift form for this board constant");
+    }
+
+    /// The quotient for `x <= x_max`.
+    #[inline(always)]
+    pub const fn apply(self, x: u32) -> i32 {
+        let c = self.core.apply(x);
+        self.lin * x as i32 + if self.negate { -c } else { c }
+    }
+}
+
+/// Compile-time ADC conversions of a platform's board constants.
+/// Blanket-implemented; read through [`AdcCount::centivolts`] and
+/// [`AdcCount::milliamps`].
+pub trait AdcScale: Platform + Sized {
+    /// Pin mV -> centivolts: `mv * VOLTAGE_DIVIDER_X100 / 1000`.
+    const PIN_MV_TO_CV: AffineDiv =
+        AffineDiv::new(Self::VOLTAGE_DIVIDER_X100 as i32, 0, 1000, MV_PIN_MAX);
+    /// Current numerator `n = raw * 80 - CURRENT_OFFSET * 100`, quotient
+    /// truncated toward zero like AM32's C: `floor(n / mVpA)` where `n >= 0`
+    /// (raw at or above [`Self::CURRENT_NEG_BELOW`]) ...
+    const CURRENT_POS: AffineDiv = if Self::MILLIVOLT_PER_AMP == 0 {
+        AffineDiv::ZERO
+    } else {
+        AffineDiv::new(
+            CURRENT_MV_SCALE,
+            -(Self::CURRENT_OFFSET as i32 * 100),
+            Self::MILLIVOLT_PER_AMP as i32,
+            ADC_MAX,
+        )
+    };
+    /// ... and `ceil(n / mVpA) = floor((n + mVpA - 1) / mVpA)` below it.
+    const CURRENT_NEG: AffineDiv = if Self::MILLIVOLT_PER_AMP == 0 {
+        AffineDiv::ZERO
+    } else {
+        AffineDiv::new(
+            CURRENT_MV_SCALE,
+            -(Self::CURRENT_OFFSET as i32 * 100) + Self::MILLIVOLT_PER_AMP as i32 - 1,
+            Self::MILLIVOLT_PER_AMP as i32,
+            ADC_MAX,
+        )
+    };
+    /// First raw count with a non-negative numerator.
+    const CURRENT_NEG_BELOW: u32 = if Self::CURRENT_OFFSET <= 0 {
+        0
+    } else {
+        (Self::CURRENT_OFFSET as u32 * 100).div_ceil(CURRENT_MV_SCALE as u32)
+    };
+}
+
+impl<P: Platform> AdcScale for P {}
+
+impl AdcCount {
+    /// Battery voltage in centivolts: pin millivolts (Q16 3300/4095,
+    /// truncated) x divider ratio / 10. Against AM32's `* 3300 / 4095 * 110
+    /// / 100` the Q16 pin-mV truncates up to 1 pin-mV lower (<= 2 cV at
+    /// 11:1; 4095 -> 3628 vs 3630).
+    #[inline]
+    pub fn centivolts<P: Platform>(self) -> CentiVolts {
+        let mv_pin = (self.0 as u32 * MV_PER_COUNT_Q16) >> 16;
+        CentiVolts(<P as AdcScale>::PIN_MV_TO_CV.apply(mv_pin) as u16)
+    }
+
+    /// Current in milliamps: `(raw * 80 - offset * 100) / mVpA`, truncated
+    /// toward zero (AM32); 0 without a sensor.
+    #[inline]
+    pub fn milliamps<P: Platform>(self) -> MilliAmps {
+        let raw = self.0 as u32;
+        let q = if raw < <P as AdcScale>::CURRENT_NEG_BELOW {
+            <P as AdcScale>::CURRENT_NEG.apply(raw)
+        } else {
+            <P as AdcScale>::CURRENT_POS.apply(raw)
+        };
+        MilliAmps(q as i16)
     }
 }
 
@@ -130,6 +309,92 @@ pub fn calc_temperature_pure(
 
 #[cfg(test)]
 mod tests {
+    use crate::platform::Platform;
+
+    /// The S2.3 conversions, verbatim (runtime divisions): the reference
+    /// the compile-time forms must equal for every raw count.
+    fn s2_3_centivolts(raw: u16, voltage_divider_x100: u16) -> CentiVolts {
+        use fixed::types::U16F16;
+        const MV_PER_COUNT: U16F16 = U16F16::from_bits((3300u64 * 65536 / 4095) as u32);
+        let mv_pin = MV_PER_COUNT * U16F16::from_num(raw);
+        let scaled = mv_pin.to_num::<u32>() * voltage_divider_x100 as u32 / 1000;
+        CentiVolts(scaled as u16)
+    }
+
+    fn s2_3_milliamps(raw: u16, current_offset: i16, mv_per_amp: u16) -> MilliAmps {
+        let mv = (raw as i32) * CURRENT_MV_SCALE - (current_offset as i32) * 100;
+        if mv_per_amp > 0 {
+            MilliAmps((mv / mv_per_amp as i32) as i16)
+        } else {
+            MilliAmps::ZERO
+        }
+    }
+
+    macro_rules! board {
+        ($name:ident, $div:expr, $mvpa:expr, $off:expr) => {
+            struct $name;
+            impl Platform for $name {
+                const TICK_HZ: u32 = 20_000;
+                const TIMER_HZ: u32 = 2_000_000;
+                const VOLTAGE_DIVIDER_X100: u16 = $div;
+                const MILLIVOLT_PER_AMP: u16 = $mvpa;
+                const CURRENT_OFFSET: i16 = $off;
+                const USE_NTC: bool = false;
+            }
+        };
+    }
+    // Every board yaml's (divider, mV/A, offset), the harness default, and
+    // the old test constants (offset 498, no sensor).
+    board!(Binz, 1194, 80, 1600);
+    board!(L431, 933, 3, 0);
+    board!(Am32Default, 1100, 20, 0);
+    board!(TwelveS, 2100, 25, 0);
+    board!(IflightF051, 1100, 30, 0);
+    board!(Offset498, 1100, 20, 498);
+    board!(NoSensor, 1100, 0, 498);
+
+    fn matches_s2_3<P: Platform>() {
+        for raw in 0..=4095u16 {
+            assert_eq!(
+                AdcCount(raw).centivolts::<P>(),
+                s2_3_centivolts(raw, P::VOLTAGE_DIVIDER_X100),
+                "cV raw {raw} div {}",
+                P::VOLTAGE_DIVIDER_X100
+            );
+            assert_eq!(
+                AdcCount(raw).milliamps::<P>(),
+                s2_3_milliamps(raw, P::CURRENT_OFFSET, P::MILLIVOLT_PER_AMP),
+                "mA raw {raw} mVpA {} off {}",
+                P::MILLIVOLT_PER_AMP,
+                P::CURRENT_OFFSET
+            );
+        }
+    }
+
+    /// S4.4 gate: every board's compile-time conversion equals S2.3 for
+    /// every 12-bit count, to the count.
+    #[test]
+    fn adc_conversions_equal_s2_3_for_every_count() {
+        matches_s2_3::<Binz>();
+        matches_s2_3::<L431>();
+        matches_s2_3::<Am32Default>();
+        matches_s2_3::<TwelveS>();
+        matches_s2_3::<IflightF051>();
+        matches_s2_3::<Offset498>();
+        matches_s2_3::<NoSensor>();
+        matches_s2_3::<crate::platform::TestPlatform>();
+    }
+
+    #[test]
+    fn affine_div_matches_division() {
+        // The reviewer's counterexample: no single u32 multiply-shift is
+        // exact for (raw * 80) / 3; the affine form on raw is.
+        let f = AffineDiv::new(80, 0, 3, 4095);
+        for raw in 0..=4095 {
+            assert_eq!(f.apply(raw), (raw as i32 * 80) / 3);
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -145,7 +410,7 @@ mod tests {
         // The fixed-point pin-mV truncates at most 1 mV lower (<= 2 cV).
         for raw in 0..=4095u16 {
             let am32 = (raw as u32 * 3300 / 4095 * 110 / 100) as i32;
-            let ours = AdcCount(raw).to_centivolts(1100).0 as i32;
+            let ours = AdcCount(raw).centivolts::<Am32Default>().0 as i32;
             assert!(
                 (0..=2).contains(&(am32 - ours)),
                 "raw {raw}: {ours} vs {am32}"
@@ -157,14 +422,14 @@ mod tests {
     fn adc_to_centivolts_bench_dividers() {
         // L431 9.33:1 and binz 11.94:1: 1.000 V at the pin.
         let raw = 1241; // 3300/4095*1241 = 1000.1 mV
-        assert_eq!(AdcCount(raw).to_centivolts(933).0, 933); // 9.33 V
-        assert_eq!(AdcCount(raw).to_centivolts(1194).0, 1194); // 11.94 V
+        assert_eq!(AdcCount(raw).centivolts::<L431>().0, 933); // 9.33 V
+        assert_eq!(AdcCount(raw).centivolts::<Binz>().0, 1194); // 11.94 V
     }
 
     #[test]
     fn adc_to_milliamps() {
         let count = AdcCount(2048);
-        let ma = count.to_milliamps(498, 20);
+        let ma = count.milliamps::<Offset498>();
         assert!(ma.0 > 5000 && ma.0 < 6000); // ~5750mA
     }
 
@@ -235,7 +500,7 @@ mod tests {
     #[test]
     fn adc_zero_offset_current() {
         // Zero offset, 20 mv/A: mid-range ADC = ~4024 mA
-        let ma = AdcCount(2048).to_milliamps(0, 20);
+        let ma = AdcCount(2048).milliamps::<Am32Default>();
         assert!(
             ma.0 > 8000,
             "expected high mA with zero offset, got {}",
@@ -245,6 +510,6 @@ mod tests {
 
     #[test]
     fn adc_zero_mvperamp_returns_zero() {
-        assert_eq!(AdcCount(2048).to_milliamps(498, 0), MilliAmps::ZERO);
+        assert_eq!(AdcCount(2048).milliamps::<NoSensor>(), MilliAmps::ZERO);
     }
 }

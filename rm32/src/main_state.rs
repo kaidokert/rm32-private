@@ -125,11 +125,6 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
 
     // Timing (main-loop side — ISR timing is in SharedComm)
     pub(crate) timing: TimingState,
-    // Board-level hardware constants (set once from BoardConfig, never change)
-    pub(crate) voltage_divider_x100: u16,
-    pub(crate) millivolt_per_amp: u16,
-    pub(crate) current_offset: i16,
-    pub(crate) use_ntc: bool,
     /// CPU MHz for variable PWM mode 2 scaling
     pub(crate) cpu_mhz: u8,
     pub cell_count: u8,
@@ -208,10 +203,6 @@ impl<P: Timing> MainState<P, NoLed> {
             pid: PidState::with_stall_target(board.stall_protect_interval),
             timing: TimingState::default(),
             timer1_max_arr: chip.timer1_max_arr,
-            voltage_divider_x100: board.voltage_divider_x100,
-            millivolt_per_amp: board.millivolt_per_amp,
-            current_offset: board.current_offset,
-            use_ntc: board.use_ntc,
             cpu_mhz: chip.cpu_mhz,
             cell_count: 0,
             motor_kv: 2000,
@@ -536,10 +527,9 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             // ADC measurements — typed conversions via AdcCount
             let smoothed_v = AdcCount(self.measurements.voltage_filter.update(adc.raw_voltage()));
             let smoothed_c = AdcCount(self.measurements.current_filter.update(adc.raw_current()));
-            self.measurements.battery_voltage = smoothed_v.to_centivolts(self.voltage_divider_x100);
-            self.measurements.actual_current =
-                smoothed_c.to_milliamps(self.current_offset, self.millivolt_per_amp);
-            self.measurements.degrees_celsius = if self.use_ntc {
+            self.measurements.battery_voltage = smoothed_v.centivolts::<P>();
+            self.measurements.actual_current = smoothed_c.milliamps::<P>();
+            self.measurements.degrees_celsius = if P::USE_NTC {
                 crate::ntc::ntc_degrees(adc.raw_temperature())
             } else {
                 adc.calc_temperature(adc.raw_temperature())

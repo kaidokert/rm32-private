@@ -46,6 +46,13 @@ where
 {
     const TICK_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TICK_HZ;
     const TIMER_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TIMER_HZ;
+    const VOLTAGE_DIVIDER_X100: u16 =
+        <crate::platform::StmPlatform as rm32::platform::Platform>::VOLTAGE_DIVIDER_X100;
+    const MILLIVOLT_PER_AMP: u16 =
+        <crate::platform::StmPlatform as rm32::platform::Platform>::MILLIVOLT_PER_AMP;
+    const CURRENT_OFFSET: i16 =
+        <crate::platform::StmPlatform as rm32::platform::Platform>::CURRENT_OFFSET;
+    const USE_NTC: bool = <crate::platform::StmPlatform as rm32::platform::Platform>::USE_NTC;
 }
 
 impl<P, I, C, IT, CT, PH> hal::MotorHal for IsrHal<P, I, C, IT, CT, PH>

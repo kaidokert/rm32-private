@@ -324,8 +324,8 @@ mod three_shunt {
     const RAW_LIMIT: i32 = 31_857;
     const METER_GAIN_X1000: i32 = 1_131;
     const METER_OFFSET_MA: i32 = 116;
-    /// Encoding bias so `AdcCount::to_milliamps(1600, 80)` (board YAML
-    /// current_offset 1600, millivolt_per_amp 80) returns metered mA,
+    /// Encoding bias so `AdcCount::milliamps` with the board YAML
+    /// (current_offset 1600, millivolt_per_amp 80) returns metered mA,
     /// negative (regenerating) currents included.
     pub const RAW_BIAS_MA: i32 = 2_000;
 

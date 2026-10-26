@@ -154,6 +154,10 @@ mod tests {
     impl crate::platform::Platform for MockMotorHal {
         const TICK_HZ: u32 = 20_000;
         const TIMER_HZ: u32 = 2_000_000;
+        const VOLTAGE_DIVIDER_X100: u16 = 1100;
+        const MILLIVOLT_PER_AMP: u16 = 20;
+        const CURRENT_OFFSET: i16 = 0;
+        const USE_NTC: bool = false;
     }
     impl hal::MotorHal for MockMotorHal {
         type Pwm = MockPwm;

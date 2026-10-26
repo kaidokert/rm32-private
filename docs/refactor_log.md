@@ -493,6 +493,42 @@ Judgment calls made without stopping, for review at the end of the goal.
    the value is unchanged and the 1 kHz path loses a divide. The bench
    `[loop]` print's `/ 3` in the port is bench-only code and left alone.
 
+7. **Board ADC constants: mechanism (S4.4).** The four board facts
+   (`VOLTAGE_DIVIDER_X100`, `MILLIVOLT_PER_AMP`, `CURRENT_OFFSET`, and also
+   `USE_NTC`, which was the fourth `MainState` copy of a `BoardConfig`
+   field) are `Platform` associated consts; the port's come from a
+   build.rs-generated `board_platform.rs` (the library cannot see the
+   binary's `BOARD`), the harness's and core tests' from
+   `BoardConfig::DEFAULT`. Divisions become `units::AffineDiv`: a const fn
+   that searches a 32-bit `((x*mul + add) >> shift) - sub` form, exhaustively
+   verifies it against the exact quotient for every input at compile time,
+   and fails the build if none exists. L431's 933/1000 divider has no
+   direct form over 0..3299 pin-mV, so `AffineDiv` also tries
+   `A x + floor(a1 x / d)` and `(A+1) x - ceil(a2 x / d)`. Current keeps
+   AM32's truncation toward zero with two forms split at the first raw
+   count whose numerator is non-negative. The old functions are kept,
+   verbatim, as the test reference (`s2_3_centivolts/milliamps`), and the
+   test was falsified once (planted +1 in the Q16 constant: fails).
+   Consequences on the images: per M0 image, exactly two soft-division
+   calls (`/ 1000`, `/ mVpA`) and one `__aeabi_lmul` (the `fixed` U16F16
+   multiply) leave the main loop, none are added; `NTC_TABLE` (512 B) is
+   dead-stripped on every board without an NTC.
+8. **binz `imean_ma` moved +40..+70 mA at S4.4 (unbanded; read as a
+   main-loop speed effect, not a current change).** Repeated A/B in one
+   session: s04.3 image 1172, 1172; s04.4 image 1216, 1212 (r1). The
+   recorder's tick-uniform mean is unchanged (1213/1211 vs 1208/1203) and
+   every segment matches. `imean` averages the 1 kHz block's samples;
+   when a main-loop iteration overruns 1 ms under binz load (TIM6 alone
+   is ~74% CPU at 70%) a block sample is lost, so high-current time is
+   under-weighted. `imean - time-mean` narrows at every step that removed
+   main-loop work (r4: s03.2 -174, S3.3 -114, S4.3 -99, S4.4 -32; r1:
+   -71, -48, -41, +8). Implication worth a look later: on binz at high
+   duty the 1 kHz PID block (current limit, stall) runs below 1 kHz.
+   Not changed here. Also: one aborted A/B run reported "REBOOTED in arm";
+   it was the first-boot banner arriving late (run started right after
+   flash-binz's reset; one banner, tk=827 at the first `b`). Captures in
+   captures/bisect_s04.4/.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -534,3 +570,22 @@ test `two_mhz_conversions_are_am32_arithmetic`: 386 host tests.
 
 Gate PASS vs s04.2; ISR dumps identical on all six images (main-loop text
 -48..+120 B from inlining). Bench 8/8 in band first time.
+
+## S4.4 -- board ADC constants compile-time, divide-free (CODE) -- tag gc-s04.4-psu
+
+`MainState` loses `voltage_divider_x100`, `millivolt_per_amp`,
+`current_offset`, `use_ntc`; `Platform` gains them (Call 7).
+`AdcCount::centivolts::<P>()` / `milliamps::<P>()` replace
+`to_centivolts(div)` / `to_milliamps(off, mvpa)`. New host tests
+`adc_conversions_equal_s2_3_for_every_count` (every board's tuple, the
+harness default, offset-498 and no-sensor variants, raw 0..4095, both
+conversions, equal to S2.3 to the count) and `affine_div_matches_division`:
+388 host tests (was 386).
+
+Gate PASS vs s04.3; ISR dumps identical on all six images (the conversion
+is main-loop code). Intended change shown: M0 soft-division call sites
+G071 public 69 -> 67, F051 58 -> 56, binz 79 -> 77 (the two removed are in
+`__cortex_m_rt_main`; no function gained one); `__aeabi_lmul` 2 -> 1; text
+G071 -536, F051 -628, L431 -520, G431 -600, binz -536, L431 bench -528 B,
+mostly `NTC_TABLE` (512 B, dead with `USE_NTC` false) plus panic-data
+reshuffle. Bench 8/8 in band first pass; binz `imean` shift: Call 8.

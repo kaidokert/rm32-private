@@ -129,17 +129,27 @@ struct MockMotorHal {
     com_timer: MockComTimer,
 }
 
-/// The harness is the AM32-parity oracle: AM32's control tick and timer.
+/// The harness is the AM32-parity oracle: AM32's control tick and timer,
+/// and AM32's default board (`BoardConfig::DEFAULT`, as MainState::new gets).
 struct HarnessPlatform;
 
 impl rm32::platform::Platform for HarnessPlatform {
     const TICK_HZ: u32 = 20_000;
     const TIMER_HZ: u32 = 2_000_000;
+    const VOLTAGE_DIVIDER_X100: u16 = rm32::board::BoardConfig::DEFAULT.voltage_divider_x100;
+    const MILLIVOLT_PER_AMP: u16 = rm32::board::BoardConfig::DEFAULT.millivolt_per_amp;
+    const CURRENT_OFFSET: i16 = rm32::board::BoardConfig::DEFAULT.current_offset;
+    const USE_NTC: bool = rm32::board::BoardConfig::DEFAULT.use_ntc;
 }
 
 impl rm32::platform::Platform for MockMotorHal {
     const TICK_HZ: u32 = <HarnessPlatform as rm32::platform::Platform>::TICK_HZ;
     const TIMER_HZ: u32 = <HarnessPlatform as rm32::platform::Platform>::TIMER_HZ;
+    const VOLTAGE_DIVIDER_X100: u16 =
+        <HarnessPlatform as rm32::platform::Platform>::VOLTAGE_DIVIDER_X100;
+    const MILLIVOLT_PER_AMP: u16 = <HarnessPlatform as rm32::platform::Platform>::MILLIVOLT_PER_AMP;
+    const CURRENT_OFFSET: i16 = <HarnessPlatform as rm32::platform::Platform>::CURRENT_OFFSET;
+    const USE_NTC: bool = <HarnessPlatform as rm32::platform::Platform>::USE_NTC;
 }
 
 impl hal::MotorHal for MockMotorHal {

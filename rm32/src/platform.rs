@@ -1,15 +1,24 @@
-//! Static facts a port supplies about its chip.
+//! Static facts a port supplies about its chip and board.
 //!
 //! One implementation per port (a zero-sized type). No associated const has
 //! a default: a default equal to one chip's value is exactly the coupling
 //! this trait exists to remove (docs/generic_core_design.md, principle 5).
 
-/// Clock facts the control core is written against.
+/// Clock and board facts the control core is written against.
 pub trait Platform {
     /// Control-tick rate (AM32 `tenKhzRoutine`, `LOOP_FREQUENCY_HZ`), Hz.
     const TICK_HZ: u32;
     /// Interval / commutation timer count rate, Hz.
     const TIMER_HZ: u32;
+
+    /// Bus voltage divider as its true ratio x100 (11:1 = 1100).
+    const VOLTAGE_DIVIDER_X100: u16;
+    /// Current sense gain, AM32 `MILLIVOLT_PER_AMP`; 0 = no current sensor.
+    const MILLIVOLT_PER_AMP: u16;
+    /// Current sense offset, AM32 `CURRENT_OFFSET`.
+    const CURRENT_OFFSET: i16;
+    /// Temperature from an external NTC instead of the MCU's sensor.
+    const USE_NTC: bool;
 }
 
 /// Microseconds to interval/commutation timer ticks (truncating). Use in a
@@ -54,8 +63,9 @@ pub fn e_com_us_to_avg_ticks<P: Platform>(e_com_us: i32) -> i32 {
     }
 }
 
-/// AM32's clocks (20 kHz control tick, 2 MHz timer) for the core's own unit
-/// tests. Not a default: ports and the harness name their own platform.
+/// AM32's clocks (20 kHz control tick, 2 MHz timer) and default board
+/// (`BoardConfig::DEFAULT`) for the core's own unit tests. Not a default:
+/// ports and the harness name their own platform.
 #[cfg(test)]
 pub(crate) struct TestPlatform;
 
@@ -63,6 +73,10 @@ pub(crate) struct TestPlatform;
 impl Platform for TestPlatform {
     const TICK_HZ: u32 = 20_000;
     const TIMER_HZ: u32 = 2_000_000;
+    const VOLTAGE_DIVIDER_X100: u16 = 1100;
+    const MILLIVOLT_PER_AMP: u16 = 20;
+    const CURRENT_OFFSET: i16 = 0;
+    const USE_NTC: bool = false;
 }
 
 #[cfg(test)]
