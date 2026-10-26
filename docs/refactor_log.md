@@ -257,3 +257,25 @@ Bench R1–R4 both boards: `--check` 8/8, dsy = 0, no kills; recorder bus
 now 10 mV resolution, ranges as before. (A first R1 pair overlapped — a
 tool background move — and was discarded and re-run solo.) Battery: no.
 Verdict PASS.
+
+## S2.4 — stale doc fixes (HOST) — tag gc-s02.4-psu
+
+- `isr_logic.rs` bemf_zero_cross: the porting note said F051/G071/G431 do
+  not pre-ack the COMP EXTI line; now F051 and G431 ack at entry and
+  L431/G071 use AM32's half-average-interval gate (ack or camp).
+- `main_state.rs`: the REQ-RESET-ON-TIMEOUT doc comment had drifted onto an
+  LVC test and cited "Src/and :1917"; moved back onto
+  `signal_timeout_armed_requests_reset`, citing AM32 Src/main.c:2388/:2401.
+- `main_state.rs` sine-changeover note listed 8 "missing" assignments;
+  most are now done (apply_sine_changeover + the tick ISR). Still missing
+  against AM32 main.c:2731-2746: SET_INTERVAL_TIMER_COUNT(9000) and the
+  stall-protect last_duty_cycle seed (open, not this step).
+
+Host gate PASS (s02.4); ISR diff vs s02.3 identical on both boards; flash
+images byte-identical (ELFs differ only in debug info). Bench R1–R4 both
+boards 8/8 in the v4 bands, dsy = 0, no kills. Verdict PASS.
+
+**Increment 2 closed** (S2.1–S2.4, tags gc-s02.1-psu … gc-s02.4-psu).
+Open from this increment: G071/F051 `asm::delay` ~3x long (binz tune
+1776 ms; needs a timer delay), current-unit split (cA vs mA), sine
+changeover gaps above, MV_PER_COUNT truncation (≤ 1 pin-mV vs AM32).

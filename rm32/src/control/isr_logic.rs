@@ -417,11 +417,12 @@ pub fn commutation_timer_expired<S, C, Ph, T>(
 /// this function to ack the EXTI line, the early-return causes NVIC to
 /// re-fire the COMP ISR forever → ISR storm → main-loop starvation.
 ///
-/// Mitigation: the platform-specific COMP ISR wrapper must ack EXTI.PR1
-/// (or the equivalent rising/falling pending registers) at ISR entry,
-/// BEFORE calling `handle_comp`. L431 does this; F051/G071/G431 do NOT
-/// (as of this writing — same latent bug exists there, just hasn't been
-/// observed yet). See `mcu_l431/interrupts.rs::COMP()` for the pattern.
+/// Mitigation: the platform-specific COMP ISR wrapper owns the EXTI pending
+/// bit. F051 (`ADC_COMP`) and G431 (`COMP1_2_3`) ack it at entry; L431
+/// (`COMP`) and G071 (`ADC_COMP`) follow AM32's half-average-interval gate:
+/// ack when the gate is open or the edge is pre-ZC noise, and leave it
+/// pending ("camp") until the gate opens otherwise. See each port's
+/// `interrupts.rs`.
 pub fn bemf_zero_cross<C: hal::Comparator, I: hal::IntervalTimer, T: hal::ComTimer>(
     commutation: &Commutation,
     bemf: &mut BemfState,

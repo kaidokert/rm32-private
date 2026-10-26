@@ -1229,12 +1229,6 @@ mod tests {
         );
     }
 
-    /// REQ-RESET-ON-TIMEOUT: When signal_timeout fires (armed >0.5s or
-    /// unarmed >2s), MainState::tick must request a system reset via
-    /// `set_needs_reset(true)`. Matches AM32's NVIC_SystemReset() at
-    /// Src/and :1917 — the only way the AM32 bootloader DFU
-    /// loop ever activates from a running firmware, which is what BF's
-    /// passthrough mode and the AM32 Configurator depend on.
     #[test]
     fn lvc_mode2_above_threshold_does_not_disarm() {
         use crate::motor_mode::MotorMode;
@@ -1289,6 +1283,12 @@ mod tests {
         assert!(!shared.armed());
     }
 
+    /// REQ-RESET-ON-TIMEOUT: When signal_timeout fires (armed >0.5s or
+    /// unarmed >2s), MainState::tick must request a system reset via
+    /// `needs_reset`. Matches AM32's two NVIC_SystemReset() calls in the
+    /// signal-timeout block (Src/main.c:2388, :2401) — the only way the AM32
+    /// bootloader DFU loop ever activates from a running firmware, which is
+    /// what BF's passthrough mode and the AM32 Configurator depend on.
     #[test]
     fn signal_timeout_armed_requests_reset() {
         use crate::motor_mode::MotorMode;
@@ -1331,26 +1331,18 @@ mod tests {
     // --- Sine-to-BLDC changeover tests ---
     // REQ-MOTOR-SINE_STEPPER_CONTROL
     //
-    // The changeover from sine mode to sensorless BLDC is handled in the
-    // firmware main loop (rm32_stm32/src/bin/main.rs), not in MainState::tick().
-    // These tests document what the changeover MUST set, based on C code
-    // (main.c lines 2238-2255). The firmware handler currently misses 8 of 13
-    // state assignments.
+    // The changeover from sine mode to sensorless BLDC is split between
+    // SystemTick::apply_sine_changeover (commutation_interval, zero_crosses,
+    // prop_brake_active, average/last_average_interval, changeover step) and
+    // the tick ISR (step, com_step, PWM update event, COM timer, comparator
+    // arming), not MainState::tick(). These tests document what the
+    // changeover MUST set, based on AM32 Src/main.c:2731-2746.
     //
-    // Missing in Rust firmware changeover handler:
-    //   - average_interval = 9000
-    //   - last_average_interval = average_interval
+    // Still missing against AM32:
     //   - SET_INTERVAL_TIMER_COUNT(9000)
-    //   - prop_brake_active = 0
-    //   - step = changeover_step (ignored via `..`)
-    //   - commutate() — first commutation step
-    //   - generatePwmTimerEvent()
-    //   - stall_protect_minimum_duty applied if stall_protection ON
-    //
-    // These can't be unit-tested here because they're firmware-specific
-    // (HAL calls like commutate() and generatePwmTimerEvent() have no
-    // platform-independent equivalent). They need a hardware smoke test
-    // or a firmware-level integration test.
+    //   - last_duty_cycle = stall_protect_minimum_duty if stall_protection ON
+    // (AM32's commutate() also advances the step before comStep; rm32
+    // applies changeover_step directly — not compared here.)
 
     // --- EDT arming/disarming tests ---
     // Coverage gap #5: EDT disarm on zero-throttle
