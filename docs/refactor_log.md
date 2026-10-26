@@ -924,6 +924,39 @@ check name regex widened twice, bands file untouched).
     The PSU-band check for S6.1 is therefore not done; the S6.1 PSU runs
     can be repeated when the PSU is back (Call for the operator).
 
+32. **S6.2: binz R3 slam peak -- open, not resolved.** The guard EWMA
+    peak in the first 0.5 s after the 10 -> 60 % slam is bimodal per run
+    (~4.5 A or ~5.07 A). Pooled over every interleaved run on 2026-10-26
+    (battery): A (gc-s06.1-psu) 4608 +- 192 mA, high mode 1/12; F (S6.2f)
+    4781 +- 220, 7/17; mean p = 0.024, mode rate Fisher p = 0.09. A first
+    n = 7 interleaved set gave p = 0.010 (predeclared bar, fired); the
+    last in-session triplets gave A 4726 vs F 4752 (p = 0.86). Ruled out
+    by bench bisect: TIM6 cost (F + 51-cycle pad, t6mean 2457 = A's: still
+    4792, 2/5 high) and the latch moment (X = F + the old end-of-tick
+    latch: 4919, 2/5 high). Not explained: no remaining S6.2 hunk has a
+    mechanism; code-placement sensitivity of the slam transient is the
+    open hypothesis (alignment checked, no pattern). The high mode is
+    above the PSU OCFAST 4.8 A, so on the PSU it would show as R3 trips
+    (Call 2 measured ~1 in 11 at S4-S5). Resolving the rate needs ~25
+    slams a side. S6.3's ABAB tracks the R3 high-mode rate. Operator call:
+    run the rate test now, or carry it.
+
+33. **S6.2 imean +95 mA is the Call 8 artifact, now tested directly.**
+    F's TIM6 is ~51 cycles cheaper (t6mean 2455 -> 2404, R3); restoring
+    the cycles as a pure busy-wait (F+pad) drops imean 834 -> 760 with no
+    other change. `i50max` is main-loop sampled as well (`main.rs:1052`).
+    The per-ms guard sample is the mean of the 20 kHz scans since the
+    previous main-loop 1 kHz dispatch (`mcu_g071/adc.rs::raw_current`), so
+    every main-loop-rate change moves these r-line numbers.
+
+34. **S6.2 latch placement.** First version (3cc6ee2) latched at the top
+    of the tick and fed the ramp limit from it: the ramp then read e_com
+    before `bemf_polling` could update it in the same tick (an ordering
+    change), and LLVM outlined `bemf_polling` on the L431 (+1 `bl`).
+    S6.2f (38373b7) reads it at the ramp site as before and latches the
+    gate from that value; the one-tick AllOff return skips a latch. Its
+    48-run ABAB (`captures/*/abab1/`) is kept but superseded.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -1179,3 +1212,25 @@ Bench (on the battery, Call 31): R1-R4 both boards, all complete, no kill,
 dsy_fw = 0; band check 2/8 (current 1-3 % high, battery bus); controls
 with s05.3c images show the same offset; L431 R4 battery-image ABAB 2 a
 side equal within 0.5 %. Verdict: no S6.1 difference.
+
+## S6.2 -- gate average latched by the core control tick (RISKY) -- tag gc-s06.2-psu (38373b7)
+
+3cc6ee2 + 38373b7 (fix-up, Call 34). `ten_khz_tick` reads the average
+interval at the ramp-limit site (where it always was) and latches it into
+`SharedState::gate_avg` (`IsrTiming::gate_avg`, a `core` AtomicU32: a
+`portable_atomic` load is PRIMASK-wrapped on M0 and put a critical section
+on the priority-0 COMP path). L431 / G071 COMP ISRs read it;
+`rm32_stm32::comp_gate` deleted. AM32 staleness kept (20 kHz latch, never
+fresh e_com/3, clamped at 0 only). New host test: tick latches; the
+AllOff tick keeps the previous value.
+
+Gate PASS vs s06.1c, removals only on all six images, no FAIL (binz TIM6
+-13, ADC_COMP -1; L431 TIM6 -17, COMP -2). binz WCET from s06.2f gate.
+
+Bench (battery, battery-guard images; A = gc-s06.1-psu `batt62a`, B =
+38373b7 `batt62f`): ABAB R1-R4 x 3 rounds per board, 48 runs, all OK, no
+kill, dsy_fw = 0; `ab_segments.py batt62a batt62f` 0 significant after
+Bonferroni (3 raw < 0.05, ~6 expected). Plus 4 extra R3 pairs, a pad
+experiment (5 + 5) and a bisect triplet (5 x 3): Calls 32, 33.
+Battery: covered by these runs (the pack was on for the whole step).
+Verdict: step criteria met; R3 slam high-mode rate open (Call 32).
