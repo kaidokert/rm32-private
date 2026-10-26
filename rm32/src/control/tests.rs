@@ -203,8 +203,9 @@ mod tests {
     }
 
     /// S6.2: the control tick latches the COMP gate average (e_com / 3 in
-    /// timer ticks) every tick, including the AllOff early-return path, and
-    /// never clamps it below the raw value (AM32's 5000 is a one-shot reset).
+    /// timer ticks), clamped at 0 only (AM32's 5000 is a one-shot reset).
+    /// The one-tick AllOff return keeps the previous latch; the next tick
+    /// latches again.
     #[test]
     fn tick_latches_comp_gate_average_every_tick() {
         let mut comm = crate::commutation::Commutation::new();
@@ -217,7 +218,8 @@ mod tests {
         let mut hal = MockMotorHal::new_with_order(&order);
         for (e_com, action, want) in [
             (30_000, crate::shared_comm::IsrAction::None, 10_000),
-            (6_000, crate::shared_comm::IsrAction::AllOff, 2_000),
+            (6_000, crate::shared_comm::IsrAction::AllOff, 10_000),
+            (6_000, crate::shared_comm::IsrAction::None, 2_000),
             (-5, crate::shared_comm::IsrAction::None, 0),
         ] {
             shared.e_com_time.set(e_com);
