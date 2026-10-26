@@ -431,6 +431,26 @@ it.
 
 Judgment calls made without stopping, for review at the end of the goal.
 
+**Summary for review (goal closed at gc-s05.2-psu).** Tags: gc-s04.1..5,
+gc-s04.4f, gc-s05.1, gc-s05.2 (all -psu). Host tests 384 -> 392.
+Needs a decision:
+- Call 9 -- S4.4 shipped a defect (binz current wrapped above ~2.1 A on
+  the 1 kHz path) that the bands could not see; fixed in S4.4f. Proposal:
+  a band (or gate check) on `actual_current` / `i50max`, which caught it.
+- Calls 2 + 12 -- binz R3 slam trips the 4.8 A OCFAST guard about 1 run
+  in 11 (3/32 on correct code; the slam's own peaks are 4.3..4.8 A).
+  Limits untouched; each trip was reset + repeated after a byte-identical
+  or code-identical check. Operator call: guard level vs R3 profile.
+- Call 10 (noted, not changed) -- AM32 divergences: LED blink ignores
+  `>> forward`; consumed charge uses raw mA per second, not AM32's Q16
+  mAh, with a mislabelled `/ 1000`.
+- Call 8 -- binz `imean` wanders +-40 mA step to step, unbanded,
+  unexplained after the main-loop theory failed (S5.2).
+Accept or veto: Calls 1, 3, 7, 13, 14 (mechanisms: `Platform`, `Timing`,
+`AffineDiv` with the 64-bit fallback, `step_legs`, `Bridge` / `StmBridge`
+and its three deviations from the design sketch); Call 4 (HOST read as
+identical ISR roots); Calls 5, 6 (scope); Call 11 (discarded round).
+
 1. **Platform mechanism (S4.1).** `rm32::platform::Platform` carries the
    clocks (`TICK_HZ`, `TIMER_HZ`); `MotorHal: Platform` is a supertrait so
    every ISR entry point already generic over `H: MotorHal` reads
