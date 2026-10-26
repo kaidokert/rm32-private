@@ -6,6 +6,8 @@ step-vs-previous-step proof.
 
 Per (board, round, segment, quantity): mean of each side, the difference,
 the difference as a fraction of the S00 band width, and Welch's t / p.
+Rounds with no S00 band (the battery runs, gc_battery.sh) compare every
+segment of at least --min-secs, with no band fraction.
 Flags a metric when p < alpha / (number of metrics compared) (Bonferroni),
 and separately lists every raw p < alpha so nothing is hidden. Refuses
 (exit 2) when a side has no runs, a killed run, or the two sides disagree
@@ -58,6 +60,8 @@ def main():
     ap.add_argument("b")
     ap.add_argument("--alpha", type=float, default=0.05)
     ap.add_argument("--bands", default="../docs/gc_bands_s00.json")
+    ap.add_argument("--min-secs", type=float, default=2.0,
+                    help="unbanded rounds: shortest segment compared")
     a = ap.parse_args()
     bands = json.loads(pathlib.Path(a.bands).read_text())
     A, B = collect(a.a), collect(a.b)
@@ -67,24 +71,29 @@ def main():
     rows = []
     for key in sorted(A):
         board, rnd = key
-        band = next(v for k, v in bands.items() if k.startswith(f"{board}/s00-{rnd}-"))
+        band = next((v for k, v in bands.items() if k.startswith(f"{board}/s00-{rnd}-")), None)
         nseg = {len(s["segments"]) for s in A[key] + B[key]}
         if len(nseg) != 1:
             print(f"refuse: {key} segment counts {nseg}")
             return 2
         for i in range(nseg.pop()):
             for q in ("duty", "ehz", "ma"):
-                bq = band["segments"][i][q]
-                if bq is None:
-                    continue
+                if band is None:
+                    if A[key][0]["segments"][i]["secs"] < a.min_secs:
+                        continue
+                    bq = None
+                else:
+                    bq = band["segments"][i][q]
+                    if bq is None:
+                        continue
                 xa = [s["segments"][i][q] for s in A[key]]
                 xb = [s["segments"][i][q] for s in B[key]]
                 ma, mb, t, p = welch(xa, xb)
-                frac = (mb - ma) / (bq[1] - bq[0]) if bq[1] > bq[0] else 0.0
+                frac = (mb - ma) / (bq[1] - bq[0]) if bq and bq[1] > bq[0] else float("nan")
                 thr = A[key][0]["segments"][i]["throttle"]
                 rows.append((board, rnd, i, thr, q, ma, mb, frac, t, p, len(xa), len(xb)))
     bonf = a.alpha / len(rows)
-    print(f"{len(rows)} banded metrics; Bonferroni threshold p < {bonf:.5f}")
+    print(f"{len(rows)} metrics; Bonferroni threshold p < {bonf:.5f}")
     for r in rows:
         board, rnd, i, thr, q, ma, mb, frac, t, p, na, nb = r
         mark = "SIGNIFICANT" if p < bonf else ("raw-p" if p < a.alpha else "")
