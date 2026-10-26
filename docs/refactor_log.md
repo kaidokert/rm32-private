@@ -350,7 +350,8 @@ kills) on one image (s03.2 code + 48 kHz yaml, flash-identical to the A/B
 48 kHz arm), built with the v4 recipe (`--ma-floor l431=30 --min-settled
 1.0`) and merged into `docs/gc_bands_s00.json` (l431/* replaced, binz/*
 byte-identical). Self-check 16/16; binz s03.2 4/4; the old-motor L431
-s03.2 runs 0/4 (falsifier). Bands committed after operator approval.
+s03.2 runs 0/4 (falsifier). Operator approved the bands as built
+(80 % top, 0.4 A under the guard accepted).
 
 S3.3 (DiagSink) is parked in `git stash` (S3.2 code under these runs); its
 L431 runs restart against the new bands.
