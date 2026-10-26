@@ -151,6 +151,10 @@ mod tests {
         interval: MockInterval,
         com_timer: MockComTimer,
     }
+    impl crate::platform::Platform for MockMotorHal {
+        const TICK_HZ: u32 = 20_000;
+        const TIMER_HZ: u32 = 2_000_000;
+    }
     impl hal::MotorHal for MockMotorHal {
         type Pwm = MockPwm;
         type Comp = MockComp;

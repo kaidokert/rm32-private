@@ -426,3 +426,46 @@ Bench R1-R4 both boards 8/8 in band, dsy=0, no kills.
 Increment 3 closed: S3.1-S3.4 tagged. Bench code is out of the core
 (harness and bench crates, DiagSink) and production builds carry none of
 it.
+
+## Increment 4-5a goal (S4.1-S4.5, S5.1-S5.2) -- Calls for review
+
+Judgment calls made without stopping, for review at the end of the goal.
+
+1. **Platform mechanism (S4.1).** `rm32::platform::Platform` carries the
+   clocks (`TICK_HZ`, `TIMER_HZ`); `MotorHal: Platform` is a supertrait so
+   every ISR entry point already generic over `H: MotorHal` reads
+   `H::TIMER_HZ` with no new parameter. The port has one zero-sized
+   `StmPlatform` (TIMER_HZ = CPU / (TIMER_PSC + 1), 2 MHz on all four
+   chips; TICK_HZ = 20 000 nominal, the L431's 19.6 kHz TIM6 is AM32's
+   own rounding); the harness has `HarnessPlatform` (AM32's 20 kHz / 2 MHz).
+   The `'static` bound in the design sketch is dropped (it forced
+   `'static` on every IsrHal peripheral parameter for nothing). Non-generic
+   code (`MainState`, `SystemTick`) gets `P: Platform` as a type parameter
+   when S4.2 first needs it there (a handful of construction sites).
+2. **binz R3 slam vs the surge guard (S4.1).** The first S4.1 binz R3
+   tripped OCFAST (fast 16 ms current EWMA > 4800 mA) 0.24 s into the
+   10->60 % step; R4 then refused (latched). The binz image differs from
+   s03.4 in 3 bytes, all panic-location line numbers: the code is
+   byte-identical to the known-good image, so there is nothing to bisect.
+   Reset + repeat passed (i50max 4816 mA). Every binz R3 since s00 peaks
+   4.3-4.8 A on the 50 ms reading, i.e. this slam grazes the 4.8 A surge
+   line by design of the profile; 1 trip in ~25 R3 runs. Limits untouched
+   (operator's 5 A allowance is final). Recorded per occurrence; if it
+   keeps recurring, the review question is the R3 profile (60 % slam on a
+   5 A supply), not the guard.
+
+## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
+
+`rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
+`rm32_stm32::platform::StmPlatform`, `IsrHal` implements `Platform` by
+delegating to it; harness `HarnessPlatform`, control-test mock likewise.
+Nothing reads the consts yet.
+
+Gate PASS vs s03.4; ISR dumps identical on all six images. Bench images
+differ from s03.4 only in panic-location line numbers (binz: 3 bytes).
+Host tests 384. `scripts/gc_round.sh` added: one As-run reference run per
+call (relay, flash, name), so the step loop is one command per hold.
+
+Bench 8/8 in band. One binz R3 OCFAST trip and one L431 R3 recorder dump
+that never read back whole (CH340 corruption, no kill, dsy=0) were rerun;
+originals in captures/bisect_s04.1/ (Call 2).

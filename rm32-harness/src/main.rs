@@ -129,6 +129,19 @@ struct MockMotorHal {
     com_timer: MockComTimer,
 }
 
+/// The harness is the AM32-parity oracle: AM32's control tick and timer.
+struct HarnessPlatform;
+
+impl rm32::platform::Platform for HarnessPlatform {
+    const TICK_HZ: u32 = 20_000;
+    const TIMER_HZ: u32 = 2_000_000;
+}
+
+impl rm32::platform::Platform for MockMotorHal {
+    const TICK_HZ: u32 = <HarnessPlatform as rm32::platform::Platform>::TICK_HZ;
+    const TIMER_HZ: u32 = <HarnessPlatform as rm32::platform::Platform>::TIMER_HZ;
+}
+
 impl hal::MotorHal for MockMotorHal {
     type Pwm = MockPwm;
     type Comp = MockComp;

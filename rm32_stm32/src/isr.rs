@@ -35,6 +35,19 @@ where
     pub phase: PH,
 }
 
+impl<P, I, C, IT, CT, PH> rm32::platform::Platform for IsrHal<P, I, C, IT, CT, PH>
+where
+    P: hal::PwmOutput,
+    I: hal::InputCapture,
+    C: hal::Comparator,
+    IT: hal::IntervalTimer,
+    CT: hal::ComTimer,
+    PH: hal::PhaseOutput,
+{
+    const TICK_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TICK_HZ;
+    const TIMER_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TIMER_HZ;
+}
+
 impl<P, I, C, IT, CT, PH> hal::MotorHal for IsrHal<P, I, C, IT, CT, PH>
 where
     P: hal::PwmOutput,
