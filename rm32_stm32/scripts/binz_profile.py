@@ -41,6 +41,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location("binz_spin", HERE / "binz_spin.py")
 spin = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(spin)
+_spec = importlib.util.spec_from_file_location("relay", HERE.parent.parent / "scripts" / "relay.py")
+relay = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(relay)
 
 TICK_S = 50e-6  # control tick
 ROW = re.compile(r"rd \d+ \d+ -?\d+ \d+")
@@ -84,13 +87,28 @@ def main() -> int:
                          "the first segment is then a direct step from the sine band")
     ap.add_argument("--board", choices=sorted(BOARDS), default="binz")
     ap.add_argument("--port", help="override the board's default port")
+    ap.add_argument("--sine", choices=["board", "on", "off"], default="board",
+                    help="sine-start ramp + walk-in: the board default, or forced (A/B of an image)")
+    ap.add_argument("--no-relay", action="store_true",
+                    help="skip the motor-routing relay check (no relay board)")
     a = ap.parse_args()
+    # One motor, two boards behind a relay: refuse to fly a board the motor
+    # is not routed to (it would "fail" a run it never had a motor for).
+    if not a.no_relay:
+        try:
+            got = relay.current_board()
+        except (relay.RelayError, relay.serial.SerialException) as e:
+            raise SystemExit(f"relay check failed: {e} (--no-relay to skip)")
+        if got != a.board:
+            raise SystemExit(f"motor is routed to {got}, not {a.board}: "
+                             f"python scripts/relay.py set {a.board}")
     board = BOARDS[a.board]
     segs = parse_profile(a.profile)
     period_s = (200 if a.rec == "fast" else 1000) * TICK_S
     span = 2048 * period_s
-    ramp = list(spin.SINE_RAMP) if board["sine"] else []
-    walk = [] if a.no_walk or not board["sine"] else [(p, 1.0) for p in range(5, 11)]
+    sine = board["sine"] if a.sine == "board" else a.sine == "on"
+    ramp = list(spin.SINE_RAMP) if sine else []
+    walk = [] if a.no_walk or not sine else [(p, 1.0) for p in range(5, 11)]
     total = sum(s for _, s in segs) + (sum(s for _, s in ramp + walk) if a.from_arm else 0.0)
     if total > span * 0.98:
         raise SystemExit(f"profile {total:.1f} s exceeds the recorder span {span:.1f} s")

@@ -14,6 +14,12 @@ current_adc_channel: 8
 voltage_adc_channel: 11
 stall_protect_interval: 6500
 bench_dir_reversed: true  # prop pushes into the table (normal rotation lifts the rig)
+# Shared low-L motor (relay to binz, 2026-10-25): 15 % carrier A/B, 3 runs a
+# side interleaved — 24 kHz variable held 2/3 (186-213 mA), 48 kHz fixed held
+# 3/3 (106-133 mA, 784-794 eHz = binz's 786 on the same motor). Same carrier
+# as binz (AM32 pwm_frequency=48, variable_pwm=0).
+bench_pwm_khz: 48
+bench_fixed_pwm: true
 min_bemf_counts: 3
 bemf_pins:
   phase_a: PB7   # COMP2 INM IO2

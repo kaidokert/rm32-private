@@ -71,14 +71,25 @@ bands:
 
 | ID | L431 (`--board l431`) | binz (`--board binz`) |
 |---|---|---|
-| R1 | `--rec slow 10:5,20:5,30:5,40:5,50:5,60:5` | `--rec slow 10:5,20:5,30:5,40:5,50:5,60:5,70:5` |
-| R2 | `--rec fast --from-arm 10:4` | same |
-| R3 | `--rec fast 10:3,60:4,40:0.35,25:0.35,15:0.35,10:4` | same |
-| R4 | `--rec slow 10:2,20:2,30:2,40:2,50:2,60:15` | `--rec slow 10:2,20:2,30:2,40:2,50:2,60:2,70:15` |
+| R1 | `--rec slow 15:5,20:5,30:5,40:5,50:5,60:5,70:5,80:5` | `--rec slow 10:5,20:5,30:5,40:5,50:5,60:5,70:5` |
+| R2 | `--rec fast --from-arm 15:4` | `--rec fast --from-arm 10:4` |
+| R3 | `--rec fast 15:3,60:4,40:0.35,25:0.35,15:0.35,10:4` | `--rec fast 10:3,60:4,40:0.35,25:0.35,15:0.35,10:4` |
+| R4 | `--rec slow 15:2,20:2,30:2,40:2,50:2,60:2,70:2,80:15` | `--rec slow 10:2,20:2,30:2,40:2,50:2,60:2,70:15` |
 | R5 | — | `binz_coast.py --rung 500 --hold 10` |
 
-Top rungs: L431 60 % (~2.1 A on the prop), binz 70 % (~2.85 A), both well
-under the 4.5 A PSU cutoff. R3 changed from the original 10 → 60 → 10 %
+**L431 re-referenced 2026-10-25 (shared motor).** Both boards now drive the
+binz motor through a relay board (`scripts/relay.py`: OFF = L431, ON =
+binz; `binz_profile.py` refuses a board the motor is not routed to;
+`rm32_stm32/scripts/l431_ref_run.sh` routes, flashes and flies one run).
+The L431 runs the binz carrier (48 kHz fixed, `neutron_l431.yaml`); on it
+the L431 cannot start at 10 % (2/2 stuck open-loop: 562 ns dead time on a
+2.1 µs pulse) but starts 15 % every time and holds 10 % once running, so
+its profiles start at 15 % and R3 keeps the 10 % tail. Top held rung 80 %
+(~4.1 A; 90 % trips the 4.5 A guard). L431 bands rebuilt from 4
+interleaved `s00.1` rounds on that image; binz bands unchanged.
+
+Top rungs: L431 80 % (~4.1 A, 0.4 A under the 4.5 A slow-EWMA guard),
+binz 70 % (~2.85 A). R3 changed from the original 10 → 60 → 10 %
 step: on the PSU the instant step-down regenerates into a supply that
 cannot sink current (19.9 V L431 / 19.5 V binz, both 14 V OV guards
 latched). The full step-down moves to the battery batch. The L431 profile

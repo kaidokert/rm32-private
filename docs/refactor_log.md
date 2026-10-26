@@ -315,3 +315,42 @@ byte-identical: the crate split changes thin-LTO inlining in `main` only
 equal size; public builds −16 / −8 / +8 / +8 B text). Same source; no ISR
 root changed. Bench R1–R4 both boards 8/8 in the v4 bands, dsy = 0, no
 kills. Verdict PASS.
+
+## L431 reference rebuilt on the shared motor (2026-10-25)
+
+The L431 was rewired to the binz motor behind a 4-relay board on COM19
+(all OFF = L431, all ON = binz; mapped by a 15 % hold on each board in each
+position: the unrouted board sits in open-loop at 7-17 eHz). New tooling:
+`scripts/relay.py` (status/set/check, 3 s deadline per exchange, refuses a
+split or partial status), `binz_profile.py` relay gate (`--no-relay` to
+skip) and `--sine board|on|off`, `rm32_stm32/scripts/l431_ref_run.sh`
+(route + flash + reset + one run), `rm32_stm32/scripts/lock_stats.py`
+(per-segment lock summary).
+
+Carrier A/B at 15 %, 3 runs a side interleaved, s03.2 code: 24 kHz
+variable held 2/3 (186-213 mA; the pre-A/B run also lost lock), 48 kHz
+fixed held 3/3 (106-133 mA, 784-794 eHz vs binz 786 on the same motor).
+Adopted 48 kHz fixed in `neutron_l431.yaml` (binz's carrier, AM32
+pwm_frequency=48 / variable_pwm=0).
+
+Startup bisect: at 48 kHz the L431 does not start at 10 % (2/2, open-loop
+8 eHz for 4 s); 24 kHz starts it (1/1). Sine start (binz's mode) did not
+help (2/2 stuck, reversed and forward direction). Dead time and startup
+limits left alone; the L431 profiles start at 15 % (starts 3/3 + 16/16)
+and hold 10 % once running (R3 tail, 4/4). Current offset: idle 0 mA,
+held currents consistent run to run.
+
+Ladder walk: 20-80 % held (80 % = 2930 eHz, 4.1 A, 15 s in R4); 90 %
+tripped the guard (OC, 5253 mA). New L431 profiles (plan section 3): R1
+15..80 %, R2 15 % from arm, R3 15:3,60:4,walk-down,10:4, R4 15..70 at 2 s
++ 80:15.
+
+Bands: 4 interleaved R1-R4 rounds (`s00.1-*`, 16 runs, all dsy=0, no
+kills) on one image (s03.2 code + 48 kHz yaml, flash-identical to the A/B
+48 kHz arm), built with the v4 recipe (`--ma-floor l431=30 --min-settled
+1.0`) and merged into `docs/gc_bands_s00.json` (l431/* replaced, binz/*
+byte-identical). Self-check 16/16; binz s03.2 4/4; the old-motor L431
+s03.2 runs 0/4 (falsifier). Bands committed after operator approval.
+
+S3.3 (DiagSink) is parked in `git stash` (S3.2 code under these runs); its
+L431 runs restart against the new bands.
