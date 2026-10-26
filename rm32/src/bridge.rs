@@ -3,6 +3,8 @@
 //! their register tables from [`step_legs`] at compile time, so the six-step
 //! table exists once.
 
+use crate::hal::PhaseOutput;
+
 /// What one half-bridge leg (phase) is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LegRole {
@@ -39,31 +41,9 @@ pub const fn step_legs(step: u8, complementary: bool) -> [LegRole; 3] {
     }
 }
 
-/// The gate legs: AM32 `comStep` / `allOff` / `fullBrake` / `allpwm` /
-/// `proportionalBrake`. Semantic methods, not raw leg roles, so harness
-/// counters and reverse rotation stay meaningful. Code that only commutates
-/// (the commutation-timer path) asks for this much.
-pub trait BridgeLegs {
-    /// Drive commutation step `step` (1..=6, [`step_legs`]); any other step
-    /// leaves the outputs unchanged. The driven leg's PWM style is still the
-    /// port's decision.
-    fn com_step(&mut self, step: u8);
-    /// Every leg floating (AM32 `allOff`).
-    fn all_off(&mut self);
-    /// Every low side on (AM32 `fullBrake`).
-    fn full_brake(&mut self);
-    /// Every leg driven by PWM (AM32 `allpwm`).
-    fn all_pwm(&mut self);
-    /// High sides off, low sides PWM (AM32 `proportionalBrake`).
-    fn proportional_brake(&mut self);
-    /// RPM pulse output on steps 1 and 4 (debug); boards without one ignore it.
-    #[inline(always)]
-    fn pulse_toggle(&mut self, _step: u8) {}
-}
-
 /// The power stage as the core drives it: the gate legs plus the PWM timer
 /// behind them (AM32's TIM1 period, compare, dead-time and prescaler writes).
-pub trait Bridge: BridgeLegs {
+pub trait Bridge: PhaseOutput {
     /// Same compare value on all three phases.
     fn set_duty_all(&mut self, compare: u16);
     /// Per-phase compare values (sine start).
@@ -79,7 +59,7 @@ pub trait Bridge: BridgeLegs {
 }
 
 /// A `&mut` to a bridge is a bridge (lets a HAL hand out `&mut` its own).
-impl<B: BridgeLegs + ?Sized> BridgeLegs for &mut B {
+impl<B: PhaseOutput + ?Sized> PhaseOutput for &mut B {
     #[inline(always)]
     fn com_step(&mut self, step: u8) {
         (**self).com_step(step);

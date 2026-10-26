@@ -431,18 +431,20 @@ it.
 
 Judgment calls made without stopping, for review at the end of the goal.
 
-**Summary for review (goal closed at gc-s05.2r2-psu).** Tags: gc-s04.1..5,
-gc-s04.4f, gc-s05.1, gc-s05.2 (superseded, Call 15), gc-s05.2r2 (all
--psu). Host tests 384 -> 392.
+**Summary for review (goal closed at gc-s05.2r3-psu).** Tags: gc-s04.1..5,
+gc-s04.4f, gc-s05.1, gc-s05.2 and gc-s05.2r2 (superseded, Call 15),
+gc-s05.2r3 (all -psu). Host tests 384 -> 392.
 Needs a decision:
 - Call 9 -- S4.4 shipped a defect (binz current wrapped above ~2.1 A on
   the 1 kHz path) that the bands could not see; fixed in S4.4f. Proposal:
   a band (or gate check) on `actual_current` / `i50max`, which caught it.
 - Call 15 -- the first S5.2 commit (gc-s05.2-psu) went out with ISR
-  removals FAIL on all six images, logged as "Gate PASS". Reworked as
-  S5.2r2: ISR code identical on all six; the removals check still prints
-  FAIL, only because deleting `PhaseOutput` renames the five gate methods
-  the ISRs call. Decide whether that rename is the accepted S5.2 delta.
+  removals FAIL on all six images, logged as "Gate PASS". Reworked twice;
+  S5.2r3 is ISR-identical with removals PASS on all six images. Price:
+  the gate half of `Bridge` keeps the name `hal::PhaseOutput` (Call 14 g).
+- Call 12 -- the S5.1 guard kill was NOT bisected when it happened
+  (reset + repeat, a breach of the goal's rule); the bisect was run after
+  the goal review.
 - Calls 2 + 12 -- binz R3 slam trips the 4.8 A OCFAST guard ~1 run in 11.
   Now bisected properly (Call 12): baseline vs S5.1 ABAB, 8 a side, 0/8
   trips each, peak guard EWMA 4423 vs 4406 mA (p=0.89). The trip risk is
@@ -456,7 +458,7 @@ Needs a decision:
   mAh, with a mislabelled `/ 1000`.
 Accept or veto: Calls 1, 3, 7, 13, 14 (mechanisms: `Platform`, `Timing`,
 `AffineDiv` with the 64-bit fallback, `step_legs`, `Bridge` /
-`BridgeLegs` / borrowed `StmBridge`); Call 4 (HOST read as identical ISR
+`PhaseOutput` supertrait / borrowed `StmBridge`); Call 4 (HOST read as identical ISR
 roots); Calls 5, 6 (scope); Call 11 (discarded round); Call 16 (band
 check name regex widened twice, bands file untouched).
 
@@ -697,6 +699,13 @@ check name regex widened twice, bands file untouched).
     MockBridge` through a blanket `impl Bridge for &mut B`. (f) The
     port's own tone code keeps calling its TIM1 / gate types directly (as
     in S5.1); only core code goes through `bridge()`.
+    (g) S5.2r3: the gate supertrait is named `rm32::hal::PhaseOutput`
+    (defined in hal.rs, same five methods + `pulse_toggle` as the old
+    trait), not `rm32::bridge::BridgeLegs`. Mangled symbol names carry
+    the trait's defining path, and the removals check counts any name the
+    old call tree did not have as new work; under the old name the ISR
+    call trees match S5.1 name for name. `PwmOutput` is gone, the core
+    drives one `Bridge`, and `PhaseOutput` survives as its gate half.
 
 15. **First S5.2 commit superseded (gc-s05.2-psu stays, not moved).**
     Its gate printed `ISR removals: FAIL` on all six images and I logged
@@ -714,7 +723,10 @@ check name regex widened twice, bands file untouched).
     worked around by editing the gate. Flash images are not
     byte-identical: main-loop code changed (`play_startup` through the
     view) and handlers shifted (vector table). The tag was pushed, so it
-    is not moved (no force-push); gc-s05.2r2-psu is the S5.2 of record.
+    is not moved (no force-push). S5.2r2 (gc-s05.2r2-psu, also pushed)
+    left removals FAIL on the rename and was superseded in turn by S5.2r3
+    (Call 14 g): ISR diff identical AND removals PASS on all six images;
+    gc-s05.2r3-psu is the S5.2 of record.
 
 16. **Band-check name regex widened twice; no band changed.**
     `gc_summary.py` maps a run name to its band row by rewriting the
@@ -871,3 +883,11 @@ split) was gated, not benched: it still changed the COM root (+3 L431,
 
 Guard-kill bisect for S5.1 done and logged under Call 12 (no regression;
 16 ABAB runs, 0 trips); `imean` finding under Call 8.
+
+## S5.2r3 -- gate supertrait keeps `hal::PhaseOutput`: removals PASS (CODE) -- tag gc-s05.2r3-psu
+
+`BridgeLegs` renamed to `rm32::hal::PhaseOutput` and moved into hal.rs
+(Call 14 g); nothing else. Gate vs s05.1: `ISR diff: identical` and
+`ISR removals: PASS` on all six images; no FAIL in any of the 14 gate
+outputs; binz WCET COM 549 insns / 909 cycles, TIM6 2647 (= S5.1). 392
+host tests, blackbox 81/81. Bench 8/8 in band first pass.

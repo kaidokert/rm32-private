@@ -25,7 +25,7 @@ where
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: rm32::bridge::BridgeLegs,
+    PH: rm32::hal::PhaseOutput,
 {
     pub pwm: P,
     pub input: I,
@@ -42,7 +42,7 @@ where
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: rm32::bridge::BridgeLegs,
+    PH: rm32::hal::PhaseOutput,
 {
     const TICK_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TICK_HZ;
     const TIMER_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TIMER_HZ;
@@ -62,7 +62,7 @@ where
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: rm32::bridge::BridgeLegs,
+    PH: rm32::hal::PhaseOutput,
 {
     type Bridge<'a>
         = crate::bridge::StmBridge<'a, P, PH>

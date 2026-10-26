@@ -8,7 +8,7 @@ use crate::commutation::Commutation;
 use crate::constants::*;
 use crate::control::context::MotorContext;
 use crate::control::state::{BemfState, DutyState};
-use crate::hal::{self, Bridge, BridgeLegs, ComTimer, Comparator, IntervalTimer, MotorHal};
+use crate::hal::{self, Bridge, ComTimer, Comparator, IntervalTimer, MotorHal, PhaseOutput};
 use crate::motor_mode::MotorEvent;
 use crate::shared_comm::SharedComm;
 
@@ -340,7 +340,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
     P: Timing,
     S: SharedComm,
     C: hal::Comparator,
-    B: hal::BridgeLegs,
+    B: hal::PhaseOutput,
     T: hal::ComTimer,
 {
     com_timer.disable_interrupt();

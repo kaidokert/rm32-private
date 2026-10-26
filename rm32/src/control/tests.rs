@@ -82,7 +82,7 @@ mod tests {
             }
         }
     }
-    impl hal::BridgeLegs for MockBridge {
+    impl hal::PhaseOutput for MockBridge {
         fn com_step(&mut self, _: u8) {
             self.com_step_calls += 1;
         }

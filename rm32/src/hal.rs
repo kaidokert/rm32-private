@@ -12,7 +12,29 @@ pub use embedded_hal::digital::InputPin;
 pub use embedded_hal::pwm::SetDutyCycle;
 
 /// The power stage (gate legs + PWM timer): see [`crate::bridge`].
-pub use crate::bridge::{Bridge, BridgeLegs};
+pub use crate::bridge::Bridge;
+
+/// The gate legs (the half of [`Bridge`] that commutates): AM32 `comStep` / `allOff` / `fullBrake` / `allpwm` /
+/// `proportionalBrake`. Semantic methods, not raw leg roles, so harness
+/// counters and reverse rotation stay meaningful. Code that only commutates
+/// (the commutation-timer path) asks for this much.
+pub trait PhaseOutput {
+    /// Drive commutation step `step` (1..=6, [`crate::bridge::step_legs`]); any other step
+    /// leaves the outputs unchanged. The driven leg's PWM style is still the
+    /// port's decision.
+    fn com_step(&mut self, step: u8);
+    /// Every leg floating (AM32 `allOff`).
+    fn all_off(&mut self);
+    /// Every low side on (AM32 `fullBrake`).
+    fn full_brake(&mut self);
+    /// Every leg driven by PWM (AM32 `allpwm`).
+    fn all_pwm(&mut self);
+    /// High sides off, low sides PWM (AM32 `proportionalBrake`).
+    fn proportional_brake(&mut self);
+    /// RPM pulse output on steps 1 and 4 (debug); boards without one ignore it.
+    #[inline(always)]
+    fn pulse_toggle(&mut self, _step: u8) {}
+}
 
 /// Comparator (BEMF sensing) interface
 pub trait Comparator {

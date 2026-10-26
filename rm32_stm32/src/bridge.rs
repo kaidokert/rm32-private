@@ -2,7 +2,7 @@
 //! tone prescaler) plus the gate-pin driver, viewed together. The two halves
 //! stay separate port types and separate `IsrHal` fields (each MCU has its
 //! own TIM1 wrapper; every MCU shares the GPIO gate driver), described by the
-//! port-internal `TimerPwm` and the core's `BridgeLegs` (the gate driver
+//! port-internal `TimerPwm` and the core's `PhaseOutput` (the gate driver
 //! implements that directly); `StmBridge` borrows both for the core.
 
 /// TIM1 as the bridge's PWM timer (one implementation per MCU).
@@ -24,7 +24,7 @@ pub struct StmBridge<'a, P, PH> {
     pub phase: &'a mut PH,
 }
 
-impl<P: TimerPwm, PH: rm32::bridge::BridgeLegs> rm32::bridge::BridgeLegs for StmBridge<'_, P, PH> {
+impl<P: TimerPwm, PH: rm32::hal::PhaseOutput> rm32::hal::PhaseOutput for StmBridge<'_, P, PH> {
     #[inline(always)]
     fn com_step(&mut self, step: u8) {
         self.phase.com_step(step);
@@ -51,7 +51,7 @@ impl<P: TimerPwm, PH: rm32::bridge::BridgeLegs> rm32::bridge::BridgeLegs for Stm
     }
 }
 
-impl<P: TimerPwm, PH: rm32::bridge::BridgeLegs> rm32::bridge::Bridge for StmBridge<'_, P, PH> {
+impl<P: TimerPwm, PH: rm32::hal::PhaseOutput> rm32::bridge::Bridge for StmBridge<'_, P, PH> {
     #[inline(always)]
     fn set_duty_all(&mut self, compare: u16) {
         self.pwm.set_duty_all(compare);

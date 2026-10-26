@@ -52,7 +52,7 @@ pub fn measure(t_off: u32, phase_inmsel: u32, max_ms: u32) -> CoastTiming {
         iv_cyc: [0; N_IV],
     };
     cortex_m::interrupt::free(|_| {
-        use rm32::bridge::BridgeLegs as _;
+        use rm32::hal::PhaseOutput as _;
         cortex_m::peripheral::NVIC::mask(crate::pac::Interrupt::TIM14);
         cortex_m::peripheral::NVIC::unpend(crate::pac::Interrupt::TIM14);
         crate::phase::G0APhaseDriver::new(false).all_off();

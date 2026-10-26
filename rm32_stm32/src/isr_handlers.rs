@@ -258,7 +258,7 @@ pub fn handle_tim6() {
     // tick (one HAL write, constant cost). Aborts instantly on running.
     {
         use crate::bridge::TimerPwm as _;
-        use rm32::bridge::BridgeLegs as _;
+        use rm32::hal::PhaseOutput as _;
         use rm32::tone::ToneAction;
         let req = shared.take_tone_request();
         match state

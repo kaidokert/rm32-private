@@ -11,7 +11,7 @@
 use crate::gpio_pin::GpioPin;
 use crate::gpio_regs::GpioPort;
 use core::marker::PhantomData;
-use rm32::bridge::BridgeLegs;
+use rm32::hal::PhaseOutput;
 
 /// GPIO MODER values.
 const MODE_OUTPUT: u32 = 0b01;
@@ -373,7 +373,7 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
     }
 }
 
-impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin> BridgeLegs
+impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin> PhaseOutput
     for PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
     fn com_step(&mut self, step: u8) {

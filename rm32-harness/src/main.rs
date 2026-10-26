@@ -72,7 +72,7 @@ struct MockBridge {
     all_off: HalCounter,
     full_brake: HalCounter,
 }
-impl hal::BridgeLegs for MockBridge {
+impl hal::PhaseOutput for MockBridge {
     fn com_step(&mut self, _: u8) {}
     fn all_off(&mut self) {
         self.all_off.set(self.all_off.get() + 1);
@@ -851,8 +851,8 @@ impl Harness {
 
 #[cfg(test)]
 mod tests {
-    use rm32::hal::BridgeLegs as _;
     use rm32::hal::Comparator as _;
+    use rm32::hal::PhaseOutput as _;
 
     use super::*;
 
