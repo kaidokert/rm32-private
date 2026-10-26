@@ -2,7 +2,7 @@
 //!
 //! Uses `embedded-hal` 1.0 traits where applicable. ESC-specific traits
 //! are defined here for things embedded-hal doesn't cover (comparator,
-//! phase output, commutation timer, etc).
+//! commutation timer, etc; the power stage is `crate::bridge::Bridge`).
 //!
 //! Implementations are provided by platform crates (rm32_stm32, rm32_std).
 
@@ -11,19 +11,8 @@ pub use embedded_hal::delay::DelayNs;
 pub use embedded_hal::digital::InputPin;
 pub use embedded_hal::pwm::SetDutyCycle;
 
-/// PWM output interface for 3-phase motor control.
-/// Goes beyond embedded-hal's single-channel SetDutyCycle.
-pub trait PwmOutput {
-    fn set_duty_all(&mut self, duty: u16);
-    fn set_auto_reload(&mut self, arr: u16);
-    fn set_prescaler(&mut self, psc: u16);
-    fn set_compare1(&mut self, val: u16);
-    fn set_compare2(&mut self, val: u16);
-    fn set_compare3(&mut self, val: u16);
-    fn generate_update_event(&mut self);
-    /// Override dead-time in TIM1 BDTR register (OR'd with existing DTG value).
-    fn set_dead_time_override(&mut self, dtg: u16);
-}
+/// The power stage (gate legs + PWM timer): see [`crate::bridge`].
+pub use crate::bridge::Bridge;
 
 /// Comparator (BEMF sensing) interface
 pub trait Comparator {
@@ -49,18 +38,6 @@ pub trait PulseOutput {
     fn toggle(&mut self);
 }
 
-/// Motor phase output control (6-step commutation)
-pub trait PhaseOutput {
-    fn com_step(&mut self, step: u8);
-    fn all_off(&mut self);
-    fn full_brake(&mut self);
-    fn all_pwm(&mut self);
-    fn proportional_brake(&mut self);
-    /// Toggle pulse output on commutation step 1/4 (debug RPM measurement).
-    /// Default no-op — override for boards with pulse output pin.
-    fn pulse_toggle(&mut self, _step: u8) {}
-}
-
 /// Interval timer (commutation timing measurement)
 pub trait IntervalTimer {
     fn count(&self) -> u32;
@@ -79,15 +56,13 @@ pub trait ComTimer {
 /// Reduces generic parameter count from 5 to 1 in ISR function signatures.
 /// Implementors provide the concrete MCU-specific types.
 pub trait MotorHal: crate::platform::Platform {
-    type Pwm: PwmOutput;
+    type Bridge: Bridge;
     type Comp: Comparator;
-    type Phase: PhaseOutput;
     type Interval: IntervalTimer;
     type Com: ComTimer;
 
-    fn pwm(&mut self) -> &mut Self::Pwm;
+    fn bridge(&mut self) -> &mut Self::Bridge;
     fn comp(&mut self) -> &mut Self::Comp;
-    fn phase(&mut self) -> &mut Self::Phase;
     fn interval(&mut self) -> &mut Self::Interval;
     fn com_timer(&mut self) -> &mut Self::Com;
 }

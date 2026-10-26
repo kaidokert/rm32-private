@@ -8,10 +8,11 @@
 
 use cortex_m_rt::entry;
 
+use rm32::bridge::Bridge as _;
 use rm32::commutation::Commutation;
 use rm32::config::EepromConfig;
 use rm32::control::state::{BemfState, DutyState};
-use rm32::hal::{PwmOutput, System, TelemetryUart as _};
+use rm32::hal::{System, TelemetryUart as _};
 use rm32::ws2812::LedStatus;
 
 use rm32::main_state::MainState;
@@ -157,17 +158,18 @@ fn main() -> ! {
 
     // --- Startup tune (before peripherals move to ISR) ---
     if BOARD.bridge_enable {
-        hal.phase = rm32_stm32::phase::G0APhaseDriver::new_bridge(false);
+        hal.bridge.phase = rm32_stm32::phase::G0APhaseDriver::new_bridge(false);
     }
     {
         let sounds = Sounds::new(Chip::TIM1_AUTORELOAD);
-        sounds.play_startup(&mut hal.pwm, &mut hal.phase, &mut sys);
+        sounds.play_startup(&mut hal.bridge, &mut sys);
     }
     rm32_stm32::dprintln!("[rm32] tone done");
 
     // --- RPM pulse output (debug): configure GPIO before phase moves to ISR ---
     if BOARD.pulse_output {
-        hal.phase
+        hal.bridge
+            .phase
             .enable_pulse_output::<rm32_stm32::gpio_pin::PB10>();
     }
 
@@ -361,6 +363,7 @@ fn main() -> ! {
     // PhaseDriver::set_comp_pwm for the failure mode when this is missed.
     isr_state
         .hal
+        .bridge
         .phase
         .set_comp_pwm(main_state.config.comp_pwm != 0);
     rm32_stm32::dprintln!("[rm32] comp_pwm wired: {}", main_state.config.comp_pwm != 0);
@@ -401,7 +404,10 @@ fn main() -> ! {
     }
     if dead_time_override > 0 {
         isr_state.duty.apply_dead_time_override(dead_time_override);
-        isr_state.hal.pwm.set_dead_time_override(dead_time_override);
+        isr_state
+            .hal
+            .bridge
+            .set_dead_time_override(dead_time_override);
     }
 
     // Move to static, then arm DMA (buffer address must be final).

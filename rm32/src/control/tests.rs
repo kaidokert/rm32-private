@@ -46,23 +46,6 @@ mod tests {
         }
     }
 
-    struct MockPwm {
-        last_duty: u16,
-        order: *const MockOrder,
-    }
-    impl hal::PwmOutput for MockPwm {
-        fn set_duty_all(&mut self, d: u16) {
-            self.last_duty = d;
-            record_order(self.order, |order| &order.set_duty);
-        }
-        fn set_auto_reload(&mut self, _: u16) {}
-        fn set_prescaler(&mut self, _: u16) {}
-        fn set_compare1(&mut self, _: u16) {}
-        fn set_compare2(&mut self, _: u16) {}
-        fn set_compare3(&mut self, _: u16) {}
-        fn generate_update_event(&mut self) {}
-        fn set_dead_time_override(&mut self, _dtg: u16) {}
-    }
     struct MockComp {
         level: bool,
         mask_called: bool,
@@ -81,15 +64,17 @@ mod tests {
             self.mask_called = true;
         }
     }
-    struct MockPhase {
+    struct MockBridge {
+        last_duty: u16,
         all_off_called: bool,
         com_step_calls: u32,
         prop_brake_calls: u32,
         order: *const MockOrder,
     }
-    impl Default for MockPhase {
+    impl Default for MockBridge {
         fn default() -> Self {
             Self {
+                last_duty: 0,
                 all_off_called: false,
                 com_step_calls: 0,
                 prop_brake_calls: 0,
@@ -97,7 +82,7 @@ mod tests {
             }
         }
     }
-    impl hal::PhaseOutput for MockPhase {
+    impl hal::Bridge for MockBridge {
         fn com_step(&mut self, _: u8) {
             self.com_step_calls += 1;
         }
@@ -111,6 +96,15 @@ mod tests {
             self.prop_brake_calls += 1;
             record_order(self.order, |order| &order.prop_brake);
         }
+        fn set_duty_all(&mut self, d: u16) {
+            self.last_duty = d;
+            record_order(self.order, |order| &order.set_duty);
+        }
+        fn set_phase_duties(&mut self, _: u16, _: u16, _: u16) {}
+        fn set_period(&mut self, _: u16) {}
+        fn latch(&mut self) {}
+        fn set_dead_time_override(&mut self, _: u16) {}
+        fn set_tone_divider(&mut self, _: u16) {}
     }
     struct MockInterval {
         count: u32,
@@ -145,9 +139,8 @@ mod tests {
     }
 
     struct MockMotorHal {
-        pwm: MockPwm,
+        bridge: MockBridge,
         comp: MockComp,
-        phase: MockPhase,
         interval: MockInterval,
         com_timer: MockComTimer,
     }
@@ -160,20 +153,16 @@ mod tests {
         const USE_NTC: bool = false;
     }
     impl hal::MotorHal for MockMotorHal {
-        type Pwm = MockPwm;
+        type Bridge = MockBridge;
         type Comp = MockComp;
-        type Phase = MockPhase;
         type Interval = MockInterval;
         type Com = MockComTimer;
 
-        fn pwm(&mut self) -> &mut MockPwm {
-            &mut self.pwm
+        fn bridge(&mut self) -> &mut MockBridge {
+            &mut self.bridge
         }
         fn comp(&mut self) -> &mut MockComp {
             &mut self.comp
-        }
-        fn phase(&mut self) -> &mut MockPhase {
-            &mut self.phase
         }
         fn interval(&mut self) -> &mut MockInterval {
             &mut self.interval
@@ -185,16 +174,12 @@ mod tests {
     impl MockMotorHal {
         fn new() -> Self {
             Self {
-                pwm: MockPwm {
-                    last_duty: 0,
-                    order: ptr::null(),
-                },
+                bridge: MockBridge::default(),
                 comp: MockComp {
                     level: false,
                     mask_called: false,
                     enable_calls: 0,
                 },
-                phase: MockPhase::default(),
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer::new(),
             }
@@ -203,8 +188,7 @@ mod tests {
         fn new_with_order(order: &MockOrder) -> Self {
             let mut hal = Self::new();
             let order = order as *const MockOrder;
-            hal.pwm.order = order;
-            hal.phase.order = order;
+            hal.bridge.order = order;
             hal
         }
     }
@@ -234,8 +218,8 @@ mod tests {
             hal: &mut hal,
         });
 
-        assert_eq!(hal.phase.prop_brake_calls, 1);
-        assert!(hal.pwm.last_duty > 0);
+        assert_eq!(hal.bridge.prop_brake_calls, 1);
+        assert!(hal.bridge.last_duty > 0);
         assert!(order.prop_brake.get() < order.set_duty.get());
     }
 
@@ -263,8 +247,8 @@ mod tests {
             hal: &mut hal,
         });
 
-        assert!(hal.phase.all_off_called);
-        assert_eq!(hal.pwm.last_duty, 0);
+        assert!(hal.bridge.all_off_called);
+        assert_eq!(hal.bridge.last_duty, 0);
         assert!(order.all_off.get() < order.set_duty.get());
     }
 
@@ -590,11 +574,11 @@ mod tests {
             hal: &mut hal,
         });
 
-        assert!(hal.phase.all_off_called);
+        assert!(hal.bridge.all_off_called);
         assert!(hal.comp.mask_called);
         assert_eq!(shared.isr_action(), IsrAction::None);
         assert_eq!(shared.duty_cycle_setpoint(), 0);
-        assert_eq!(hal.pwm.last_duty, 0);
+        assert_eq!(hal.bridge.last_duty, 0);
         assert_eq!(shared.signal_timeout(), 0);
     }
 
@@ -781,7 +765,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };
@@ -820,7 +804,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };
@@ -857,7 +841,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };
@@ -890,7 +874,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };
@@ -932,7 +916,7 @@ mod tests {
                 mask_called: false,
                 enable_calls: 0,
             };
-            let mut phase = MockPhase {
+            let mut phase = MockBridge {
                 all_off_called: false,
                 ..Default::default()
             };
@@ -969,7 +953,7 @@ mod tests {
                 mask_called: false,
                 enable_calls: 0,
             };
-            let mut phase = MockPhase {
+            let mut phase = MockBridge {
                 all_off_called: false,
                 ..Default::default()
             };
@@ -1010,7 +994,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };
@@ -1043,7 +1027,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };
@@ -1076,7 +1060,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };
@@ -1110,7 +1094,7 @@ mod tests {
             mask_called: false,
             enable_calls: 0,
         };
-        let mut phase = MockPhase {
+        let mut phase = MockBridge {
             all_off_called: false,
             ..Default::default()
         };

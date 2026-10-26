@@ -106,12 +106,11 @@ pub fn init(
     let sys = super::system::System::new();
 
     let hal = crate::isr::TargetIsrHal {
-        pwm,
+        bridge: crate::bridge::StmBridge { pwm, phase },
         input,
         comp,
         interval,
         com_timer,
-        phase,
     };
     InitResult {
         hal,

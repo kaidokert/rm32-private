@@ -1,6 +1,7 @@
 //! The three-phase bridge, described semantically: what each leg does in
-//! each commutation step. Ports build their register tables from
-//! [`step_legs`] at compile time, so the six-step table exists once.
+//! each commutation step, and the [`Bridge`] the core drives. Ports build
+//! their register tables from [`step_legs`] at compile time, so the six-step
+//! table exists once.
 
 /// What one half-bridge leg (phase) is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +37,41 @@ pub const fn step_legs(step: u8, complementary: bool) -> [LegRole; 3] {
         6 => [pwm, Float, LowSolid],
         _ => [Float, Float, Float],
     }
+}
+
+/// The power stage as the core drives it: the six gate legs plus the PWM
+/// timer behind them (AM32 `comStep` / `allOff` / `fullBrake` / ... and the
+/// TIM1 period, compare, dead-time and prescaler writes). Semantic methods,
+/// not raw leg roles, so harness counters and reverse rotation stay
+/// meaningful.
+pub trait Bridge {
+    /// Drive commutation step `step` (1..=6, [`step_legs`]); any other step
+    /// leaves the outputs unchanged. The driven leg's PWM style is still the
+    /// port's decision.
+    fn com_step(&mut self, step: u8);
+    /// Every leg floating (AM32 `allOff`).
+    fn all_off(&mut self);
+    /// Every low side on (AM32 `fullBrake`).
+    fn full_brake(&mut self);
+    /// Every leg driven by PWM (AM32 `allpwm`).
+    fn all_pwm(&mut self);
+    /// High sides off, low sides PWM (AM32 `proportionalBrake`).
+    fn proportional_brake(&mut self);
+    /// Same compare value on all three phases.
+    fn set_duty_all(&mut self, compare: u16);
+    /// Per-phase compare values (sine start).
+    fn set_phase_duties(&mut self, a: u16, b: u16, c: u16);
+    /// PWM period in timer counts (AM32 `TIM1->ARR`: variable PWM, tones).
+    fn set_period(&mut self, period: u16);
+    /// Apply period and compares now (AM32 update event).
+    fn latch(&mut self);
+    /// Dead-time override in AM32 config units.
+    fn set_dead_time_override(&mut self, dto: u16);
+    /// Tone prescaler (AM32 `TIM1->PSC` in sounds); 0 restores motor PWM.
+    fn set_tone_divider(&mut self, div: u16);
+    /// RPM pulse output on steps 1 and 4 (debug); boards without one ignore it.
+    #[inline(always)]
+    fn pulse_toggle(&mut self, _step: u8) {}
 }
 
 #[cfg(test)]

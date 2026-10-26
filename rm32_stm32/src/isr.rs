@@ -20,29 +20,29 @@ use rm32::shared_state::SharedState;
 /// Zero cfg blocks. Concrete types resolved by `TargetIsrHal` alias.
 pub struct IsrHal<P, I, C, IT, CT, PH>
 where
-    P: hal::PwmOutput,
+    P: crate::bridge::TimerPwm,
     I: hal::InputCapture,
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: hal::PhaseOutput,
+    PH: crate::bridge::PhaseGates,
 {
-    pub pwm: P,
+    /// TIM1 + gate pins (`pwm`, `phase`) as the core's `Bridge`.
+    pub bridge: crate::bridge::StmBridge<P, PH>,
     pub input: I,
     pub comp: C,
     pub interval: IT,
     pub com_timer: CT,
-    pub phase: PH,
 }
 
 impl<P, I, C, IT, CT, PH> rm32::platform::Platform for IsrHal<P, I, C, IT, CT, PH>
 where
-    P: hal::PwmOutput,
+    P: crate::bridge::TimerPwm,
     I: hal::InputCapture,
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: hal::PhaseOutput,
+    PH: crate::bridge::PhaseGates,
 {
     const TICK_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TICK_HZ;
     const TIMER_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TIMER_HZ;
@@ -57,27 +57,23 @@ where
 
 impl<P, I, C, IT, CT, PH> hal::MotorHal for IsrHal<P, I, C, IT, CT, PH>
 where
-    P: hal::PwmOutput,
+    P: crate::bridge::TimerPwm,
     I: hal::InputCapture,
     C: hal::Comparator,
     IT: hal::IntervalTimer,
     CT: hal::ComTimer,
-    PH: hal::PhaseOutput,
+    PH: crate::bridge::PhaseGates,
 {
-    type Pwm = P;
+    type Bridge = crate::bridge::StmBridge<P, PH>;
     type Comp = C;
-    type Phase = PH;
     type Interval = IT;
     type Com = CT;
 
-    fn pwm(&mut self) -> &mut P {
-        &mut self.pwm
+    fn bridge(&mut self) -> &mut Self::Bridge {
+        &mut self.bridge
     }
     fn comp(&mut self) -> &mut C {
         &mut self.comp
-    }
-    fn phase(&mut self) -> &mut PH {
-        &mut self.phase
     }
     fn interval(&mut self) -> &mut IT {
         &mut self.interval

@@ -54,6 +54,7 @@ pub mod adc_hal;
 #[cfg(any(feature = "stm32l431", feature = "stm32g431", feature = "stm32g071"))]
 pub mod bench_clock;
 pub mod board_ext;
+pub mod bridge;
 // Bench safety guard (vbat-sag + overcurrent kill). Timing source is
 // bench_clock (DWT.CYCCNT on M4, TIM6 tick count on G071).
 #[cfg(any(feature = "stm32l431", feature = "stm32g431", feature = "stm32g071"))]

@@ -103,12 +103,11 @@ pub fn init(
         .modify(|r, w| unsafe { w.bits(r.bits() | (1 << 15)) });
 
     let hal = crate::isr::TargetIsrHal {
-        pwm,
+        bridge: crate::bridge::StmBridge { pwm, phase },
         input,
         comp,
         interval,
         com_timer,
-        phase,
     };
     InitResult {
         hal,

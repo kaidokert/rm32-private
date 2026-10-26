@@ -528,6 +528,13 @@ Judgment calls made without stopping, for review at the end of the goal.
    rode on the wrapped current; with the fix imean is 1204 / 906 / 1930 vs
    S4.3 1172 / 864 / 1882 and buggy S4.4 1216 / 919 / 1950, so ~+30..+50
    remains. The main-loop reading still fits; it is not directly tested.)
+   (Amended again after S5.2: imean r1 by step s04.4f 1204, s04.5 1201,
+   s05.1 1193, s05.2 1156; r4 1930, 1925, 1943, 1897. S5.2 removed no
+   main-loop work I can name, yet imean fell back to S4.3's level. The
+   main-loop explanation is therefore NOT supported as stated; imean
+   moves +-40 mA step to step for reasons not identified. It is not a
+   banded metric and the recorder's time-mean stays flat; open question,
+   not acted on.)
    Also: one aborted A/B run reported "REBOOTED in arm";
    it was the first-boot banner arriving late (run started right after
    flash-binz's reset; one banner, tk=827 at the first `b`). Captures in
@@ -602,6 +609,26 @@ Judgment calls made without stopping, for review at the end of the goal.
     and F051 / G431) stays as it is: its per-step pin generics cannot read
     a runtime role array without becoming the per-leg decoder the binz
     WCET gate rejected; S5.2's `Bridge::com_step` takes it over.
+
+14. **S5.2 shape.** Core: `rm32::bridge::Bridge` (re-exported as
+    `hal::Bridge`) with the design's semantic methods; `MotorHal` exposes
+    `bridge()` instead of `pwm()` + `phase()`; `PwmOutput` / `PhaseOutput`
+    are deleted from the core. Deviations from the design sketch, all
+    deliberate: (a) `com_step(step)` keeps one argument -- the
+    `complementary` parameter is S5.3's drive-mode move (RISKY), so the
+    port still decides it; (b) `BASE_PERIOD` / `PWM_CLK_HZ` are not added
+    yet -- nothing reads them until `tim1_arr` initialisation moves off
+    the chip constant, and an unused const per port is a value nobody
+    checks; (c) the port keeps TIM1 and the gate pins as separate types
+    behind port-internal traits (`TimerPwm`, `PhaseGates`, the old
+    method sets) composed in `StmBridge<P, PH>`, which implements the core
+    trait by `#[inline(always)]` delegation -- four TIM1 wrappers share
+    one gate driver, so this is the smallest honest factoring. The
+    firmware's sine start still writes CCRs with `mcu::write_tim1_ccr`
+    from main context (the bridge lives in ISR state); only the harness
+    calls `set_phase_duties`. Harness and core tests use one `MockBridge`
+    each, keeping the HAL counters (`all_off`, `full_brake`, order
+    recorder).
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
@@ -707,3 +734,23 @@ G071 `PLAN` (288 B, read from the ELF) byte-identical on both G071 images;
 text sizes identical on all six; the binz flash image is byte-identical
 to S4.5's. Bench 8/8 in band (binz R3 run once more after an OCFAST
 trip on the identical image, Call 12).
+
+## S5.2 -- `Bridge` trait replaces `PwmOutput` + `PhaseOutput` (CODE) -- tag gc-s05.2-psu
+
+Core `Bridge` trait; `MotorHal::bridge()`; isr_logic, sounds and
+`commutation_timer_expired` drive the bridge; method renames per the
+design (`set_auto_reload` -> `set_period`, `generate_update_event` ->
+`latch`, `set_prescaler` -> `set_tone_divider`, compare1..3 ->
+`set_phase_duties`). Port `StmBridge` (Call 14). 392 host tests
+(unchanged count), blackbox 81/81.
+
+Gate PASS vs s05.1. ISR change shown: only the two roots that drive the
+bridge differ (TIM6 and the COM timer); every other root byte-identical.
+Instruction counts equal or lower on every image (TIM6: G071 -7, F051
+-22, L431/G431 -2, L431 bench -4, binz -7; COM: G071/binz -2, others +0).
+Masked diff (registers, immediates, branch targets): register allocation,
+address arithmetic and stack spills only, no call added or removed; the
+one store that disappeared (binz COM, `rising` flag at `[r0, #22]`) is
+tail-merged into the shared store both wrap branches now jump to. binz
+WCET: COM 906 cycles @2ws (was 909), TIM6 unchanged. Text -8..-96 B.
+Bench 8/8 in band first pass.

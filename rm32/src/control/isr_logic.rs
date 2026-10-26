@@ -8,7 +8,7 @@ use crate::commutation::Commutation;
 use crate::constants::*;
 use crate::control::context::MotorContext;
 use crate::control::state::{BemfState, DutyState};
-use crate::hal::{self, ComTimer, Comparator, IntervalTimer, MotorHal, PhaseOutput, PwmOutput};
+use crate::hal::{self, Bridge, ComTimer, Comparator, IntervalTimer, MotorHal};
 use crate::motor_mode::MotorEvent;
 use crate::shared_comm::SharedComm;
 
@@ -48,7 +48,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     let action_interval_count = ctx.hal.interval().count();
     match action {
         crate::shared_comm::IsrAction::AllOff => {
-            ctx.hal.phase().all_off();
+            ctx.hal.bridge().all_off();
             ctx.hal.comp().mask_interrupts();
             ctx.shared
                 .clear_isr_action(crate::shared_comm::IsrAction::AllOff);
@@ -96,8 +96,8 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     let changeover = ctx.shared.changeover_step();
     if changeover > 0 {
         ctx.commutation.set_step(changeover);
-        ctx.hal.phase().com_step(changeover);
-        ctx.hal.pwm().generate_update_event();
+        ctx.hal.bridge().com_step(changeover);
+        ctx.hal.bridge().latch();
         let ci = ctx.shared.commutation_interval();
         ctx.hal.com_timer().set_and_enable(ci as u16);
         ctx.hal.comp().set_step(changeover, ctx.commutation.rising);
@@ -126,7 +126,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             );
             ctx.shared.set_duty_cycle_setpoint(setpoint);
             if !ctx.shared.running() {
-                ctx.hal.phase().all_off();
+                ctx.hal.bridge().all_off();
                 ctx.shared.transition(MotorEvent::StartMotor);
                 ctx.duty.start_motor();
                 let step = ctx.commutation.advance();
@@ -134,7 +134,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                     .commutation
                     .record_interval::<H>(ctx.shared.commutation_interval() as u16);
                 ctx.shared.set_e_com_time(e_com);
-                ctx.hal.phase().com_step(step);
+                ctx.hal.bridge().com_step(step);
                 ctx.hal.comp().set_step(step, ctx.commutation.rising);
                 ctx.hal.comp().change_input();
                 ctx.shared
@@ -152,11 +152,11 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.bemf.reset_for_step();
             }
             if ctx.config.brake_on_stop == 2 {
-                ctx.hal.phase().com_step(2);
+                ctx.hal.bridge().com_step(2);
                 let brake_duty = crate::fast_math::div2000_pwm(
                     ctx.config.active_brake_power as u32 * tim1_arr as u32,
                 ) * 10;
-                ctx.hal.pwm().set_duty_all(brake_duty as u16);
+                ctx.hal.bridge().set_duty_all(brake_duty as u16);
             }
             // AM32: below the six-step threshold the sine stepper takes
             // over (phase positions are seeded by the main-loop stepper).
@@ -238,15 +238,17 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             if !ctx.duty.sine_outputs_on {
                 ctx.hal.com_timer().disable_interrupt();
                 ctx.hal.comp().mask_interrupts();
-                ctx.hal.pwm().set_duty_all(0);
-                ctx.hal.phase().all_pwm();
+                ctx.hal.bridge().set_duty_all(0);
+                ctx.hal.bridge().all_pwm();
                 ctx.duty.sine_outputs_on = true;
             }
         } else {
             ctx.duty.sine_outputs_on = false;
         }
     } else if ctx.shared.armed() && ctx.shared.running() {
-        ctx.hal.pwm().set_duty_all(ctx.duty.pwm_compare(tim1_arr));
+        ctx.hal
+            .bridge()
+            .set_duty_all(ctx.duty.pwm_compare(tim1_arr));
     } else if ctx.shared.prop_brake_active() {
         // SAFETY-CRITICAL ORDER: reconfigure the bridge for braking
         // BEFORE the brake duty lands (AM32 proportionalBrake(): all
@@ -254,18 +256,18 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         // compare applied to the mixed bridge state a stop leaves behind
         // drives a DC VBAT->winding->GND path — locked-rotor burn.
         // Re-asserted every tick like AM32's every-main-pass call.
-        ctx.hal.phase().proportional_brake();
-        ctx.hal.pwm().set_duty_all(DutyState::brake_compare(
+        ctx.hal.bridge().proportional_brake();
+        ctx.hal.bridge().set_duty_all(DutyState::brake_compare(
             ctx.config.drag_brake_strength,
             tim1_arr,
         ));
     } else {
-        ctx.hal.phase().all_off();
-        ctx.hal.pwm().set_duty_all(0);
+        ctx.hal.bridge().all_off();
+        ctx.hal.bridge().set_duty_all(0);
     }
     let final_duty = ctx.duty.finalize();
     ctx.shared.set_duty_cycle(final_duty);
-    ctx.hal.pwm().set_auto_reload(tim1_arr);
+    ctx.hal.bridge().set_period(tim1_arr);
 
     // Sync ISR→shared (Commutation owns truth, shared publishes for main loop)
     ctx.shared.set_forward(ctx.commutation.forward);
@@ -309,8 +311,8 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 .commutation
                 .record_interval::<H>(ctx.shared.commutation_interval() as u16);
             ctx.shared.set_e_com_time(e_com);
-            ctx.hal.phase().com_step(step);
-            ctx.hal.phase().pulse_toggle(step);
+            ctx.hal.bridge().com_step(step);
+            ctx.hal.bridge().pulse_toggle(step);
             ctx.hal.comp().set_step(step, ctx.commutation.rising);
             ctx.hal.comp().change_input();
             ctx.bemf.reset_for_step();
@@ -325,20 +327,20 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 
 /// Commutation timer expired (TIM14/TIM16 ISR body).
 #[allow(clippy::too_many_arguments)]
-pub fn commutation_timer_expired<P, S, C, Ph, T>(
+pub fn commutation_timer_expired<P, S, C, B, T>(
     commutation: &mut Commutation,
     bemf: &mut BemfState,
     shared: &S,
     com_timer: &mut T,
     comp: &mut C,
-    phase: &mut Ph,
+    bridge: &mut B,
     bidirectional: bool,
     strict_changeover: bool,
 ) where
     P: Timing,
     S: SharedComm,
     C: hal::Comparator,
-    Ph: hal::PhaseOutput,
+    B: hal::Bridge,
     T: hal::ComTimer,
 {
     com_timer.disable_interrupt();
@@ -355,8 +357,8 @@ pub fn commutation_timer_expired<P, S, C, Ph, T>(
     let ci0 = shared.commutation_interval();
     let e_com = commutation.record_interval::<P>(ci0 as u16);
     shared.set_e_com_time(e_com);
-    phase.com_step(step);
-    phase.pulse_toggle(step);
+    bridge.com_step(step);
+    bridge.pulse_toggle(step);
     comp.set_step(step, commutation.rising);
     comp.change_input();
 

@@ -12,7 +12,7 @@ use rm32::control::state::{BemfState, DutyState};
 use rm32::dshot;
 use rm32::dshot_commands::CommandResult;
 use rm32::hal;
-use rm32::hal::PwmOutput;
+use rm32::hal::Bridge;
 use rm32::motor_mode::MotorMode;
 use rm32::shared_state::SharedState;
 use rm32::system::SystemTick;
@@ -21,27 +21,6 @@ use std::cell::Cell;
 use std::io::{self, BufRead, Write};
 
 // --- Mock HAL (same as harness.rs) ---
-
-struct MockPwm {
-    duty: u16,
-    arr: u16,
-    duty_count: u32,
-}
-impl hal::PwmOutput for MockPwm {
-    fn set_duty_all(&mut self, d: u16) {
-        self.duty = d;
-        self.duty_count += 1;
-    }
-    fn set_auto_reload(&mut self, arr: u16) {
-        self.arr = arr;
-    }
-    fn set_prescaler(&mut self, _: u16) {}
-    fn set_compare1(&mut self, _: u16) {}
-    fn set_compare2(&mut self, _: u16) {}
-    fn set_compare3(&mut self, _: u16) {}
-    fn generate_update_event(&mut self) {}
-    fn set_dead_time_override(&mut self, _: u16) {}
-}
 
 struct MockComp {
     level: bool,
@@ -86,11 +65,14 @@ impl HalCounts {
     }
 }
 
-struct MockPhase {
+struct MockBridge {
+    duty: u16,
+    arr: u16,
+    duty_count: u32,
     all_off: HalCounter,
     full_brake: HalCounter,
 }
-impl hal::PhaseOutput for MockPhase {
+impl hal::Bridge for MockBridge {
     fn com_step(&mut self, _: u8) {}
     fn all_off(&mut self) {
         self.all_off.set(self.all_off.get() + 1);
@@ -100,6 +82,17 @@ impl hal::PhaseOutput for MockPhase {
     }
     fn all_pwm(&mut self) {}
     fn proportional_brake(&mut self) {}
+    fn set_duty_all(&mut self, d: u16) {
+        self.duty = d;
+        self.duty_count += 1;
+    }
+    fn set_phase_duties(&mut self, _: u16, _: u16, _: u16) {}
+    fn set_period(&mut self, arr: u16) {
+        self.arr = arr;
+    }
+    fn latch(&mut self) {}
+    fn set_dead_time_override(&mut self, _: u16) {}
+    fn set_tone_divider(&mut self, _: u16) {}
 }
 
 struct MockInterval {
@@ -122,9 +115,8 @@ impl hal::ComTimer for MockComTimer {
 }
 
 struct MockMotorHal {
-    pwm: MockPwm,
+    bridge: MockBridge,
     comp: MockComp,
-    phase: MockPhase,
     interval: MockInterval,
     com_timer: MockComTimer,
 }
@@ -153,20 +145,16 @@ impl rm32::platform::Platform for MockMotorHal {
 }
 
 impl hal::MotorHal for MockMotorHal {
-    type Pwm = MockPwm;
+    type Bridge = MockBridge;
     type Comp = MockComp;
-    type Phase = MockPhase;
     type Interval = MockInterval;
     type Com = MockComTimer;
 
-    fn pwm(&mut self) -> &mut MockPwm {
-        &mut self.pwm
+    fn bridge(&mut self) -> &mut MockBridge {
+        &mut self.bridge
     }
     fn comp(&mut self) -> &mut MockComp {
         &mut self.comp
-    }
-    fn phase(&mut self) -> &mut MockPhase {
-        &mut self.phase
     }
     fn interval(&mut self) -> &mut MockInterval {
         &mut self.interval
@@ -256,18 +244,16 @@ impl Harness {
             config: EepromConfig::default(),
             armed_timeout_count: 0,
             hal: MockMotorHal {
-                pwm: MockPwm {
+                bridge: MockBridge {
                     duty: 0,
                     arr: 0,
                     duty_count: 0,
+                    all_off: counts.all_off.clone(),
+                    full_brake: counts.full_brake.clone(),
                 },
                 comp: MockComp {
                     level: false,
                     mask_interrupts: counts.mask_interrupts.clone(),
-                },
-                phase: MockPhase {
-                    all_off: counts.all_off.clone(),
-                    full_brake: counts.full_brake.clone(),
                 },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer,
@@ -516,9 +502,7 @@ impl Harness {
         if let Some((result, (ch1, ch2, ch3))) =
             self.system.tick_sine(&self.shared, &self.config, 60, 1999)
         {
-            self.hal.pwm.set_compare1(ch1);
-            self.hal.pwm.set_compare2(ch2);
-            self.hal.pwm.set_compare3(ch3);
+            self.hal.bridge.set_phase_duties(ch1, ch2, ch3);
             match result {
                 rm32::sine::SineStepResult::Continue(_) => {}
                 rm32::sine::SineStepResult::Changeover {
@@ -638,9 +622,9 @@ impl Harness {
             self.shared.input_set() as i32,
             self.dshot as i32,
             self.servo_pwm as i32,
-            self.hal.pwm.duty,
-            self.hal.pwm.arr,
-            self.hal.pwm.duty_count,
+            self.hal.bridge.duty,
+            self.hal.bridge.arr,
+            self.hal.bridge.duty_count,
             self.shared.duty_maximum(),
             self.bemf.filter_level(),
             self.bemf.temp_advance(),
@@ -698,7 +682,7 @@ impl Harness {
                         &self.shared,
                         &mut self.hal.com_timer,
                         &mut self.hal.comp,
-                        &mut self.hal.phase,
+                        &mut self.hal.bridge,
                         self.config.is_bidirectional(),
                         self.config.use_strict_changeover(),
                     );
@@ -864,7 +848,7 @@ impl Harness {
 
 #[cfg(test)]
 mod tests {
-    use rm32::hal::{Comparator as _, PhaseOutput as _};
+    use rm32::hal::Comparator as _;
 
     use super::*;
 
@@ -937,8 +921,8 @@ mod tests {
     fn hal_call_counters_track_and_reset() {
         let mut harness = Harness::new();
 
-        harness.hal.phase.all_off();
-        harness.hal.phase.full_brake();
+        harness.hal.bridge.all_off();
+        harness.hal.bridge.full_brake();
         harness.hal.comp.mask_interrupts();
 
         assert_eq!(harness.hal_counts.all_off.get(), 1);
