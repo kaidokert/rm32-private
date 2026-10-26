@@ -442,9 +442,10 @@ Needs a decision:
   removals FAIL on all six images, logged as "Gate PASS". Reworked twice;
   S5.2r3 is ISR-identical with removals PASS on all six images. Price:
   the gate half of `Bridge` keeps the name `hal::PhaseOutput` (Call 14 g).
-- Call 12 -- the S5.1 guard kill was NOT bisected when it happened
-  (reset + repeat, a breach of the goal's rule); the bisect was run after
-  the goal review.
+- Calls 2 + 12 -- neither guard kill (S4.1, S5.1) was bisected when it
+  happened (reset + repeat, a breach of the goal's rule). Both bisects
+  were run after the goal review: no regression at either step (S4.1:
+  1/8 vs 0/8 trips, peak p=0.81; S5.1: 0/8 vs 0/8, peak p=0.89).
 - Calls 2 + 12 -- binz R3 slam trips the 4.8 A OCFAST guard ~1 run in 11.
   Now bisected properly (Call 12): baseline vs S5.1 ABAB, 8 a side, 0/8
   trips each, peak guard EWMA 4423 vs 4406 mA (p=0.89). The trip risk is
@@ -484,6 +485,18 @@ check name regex widened twice, bands file untouched).
    (operator's 5 A allowance is final). Recorded per occurrence; if it
    keeps recurring, the review question is the R3 profile (60 % slam on a
    5 A supply), not the guard.
+   **Bisect done after the goal review** (reset + repeat was a breach of
+   the goal's rule, not a bisect). Endpoints A = s03.4 binz image (last
+   good, sha1 5de1f400), B = the s04.1 image that tripped (1fa2dd41);
+   binz R3, ABBA, 8 a side, flash before each run; bar as in Call 12.
+   Result: trips A 0/8, B 1/8 (run 7, OCFAST at +0.24 s, fast EWMA 4827,
+   the same instant as every R3 trip); peak guard EWMA 4426 +- 223 vs
+   4395 +- 294 mA with B's killed run counted as a censored 4800
+   (p=0.81); dwell p=0.87, `i50max` p=0.54, `imean` 856 vs 857. One A
+   run peaked at 4849 mA on the recorder without tripping. Bar not met:
+   no regression at S4.1; both sides graze the 4.8 A line.
+   (`ab_r3_peaks.py` now keeps killed runs with a censored peak instead
+   of refusing them.)
 
 3. **Timing mechanism (S4.2).** Every clock-unit constant moves into
    one blanket trait, `constants::Timing: Platform`, written in µs / ms

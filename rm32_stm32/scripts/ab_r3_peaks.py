@@ -8,7 +8,11 @@ two-sided p (normal approximation to t when scipy is missing).
 
     python scripts/ab_r3_peaks.py <tagA> <tagB>   (e.g. bis51A bis51B)
 
-Refuses (exit 2) when either side has no runs or a run lacks a field.
+A run the firmware guard killed is kept: its peak is censored (OCFAST
+fires once its fast EWMA passes 4800 mA), so it counts as max(recorded,
+4800), a lower bound; its dwell / r-line metrics do not exist and it is
+left out of those. Refuses (exit 2) when either side has no runs or a
+completed run lacks a field.
 """
 
 import csv
@@ -32,13 +36,18 @@ def runs(tag):
         ma = [int(r["ma"]) for r in rows]
         slam = [m for ti, m in zip(t, ma) if STEP_T <= ti < STEP_T + SLAM_W]
         dwell = [m for ti, m in zip(t, ma) if DWELL[0] <= ti < DWELL[1]]
+        kill = bool(d.get("kill"))
+        if kill:
+            out.append({"run": js.stem.split("_", 2)[-1], "kill": True,
+                        "peak_ma": max(max(ma), 4800), "slam_ma": max(max(slam or [0]), 4800)})
+            continue
         rline = d["r"] if isinstance(d["r"], str) else " ".join(f"{k}={v}" for k, v in d["r"].items())
         kv = dict(re.findall(r"(\w+)=(-?\d+)", rline))
         if not slam or not dwell or "i50max" not in kv or "imean_ma" not in kv:
             sys.exit(f"refuse: {js.name} lacks a field (slam {len(slam)}, dwell {len(dwell)}, r={rline!r})")
         out.append({
             "run": js.stem.split("_", 2)[-1],
-            "kill": bool(d.get("kill")),
+            "kill": False,
             "peak_ma": max(ma),
             "slam_ma": max(slam),
             "dwell_ma": sum(dwell) / len(dwell),
@@ -74,13 +83,20 @@ def main():
         return 2
     for tag, rs in ((a_tag, a), (b_tag, b)):
         for r in rs:
-            print(f"{tag} {r['run']} kill={int(r['kill'])} peak_ma={r['peak_ma']} "
+            if r["kill"]:
+                print(f"{tag} {r['run']} kill=1 peak_ma>={r['peak_ma']} (censored)")
+                continue
+            print(f"{tag} {r['run']} kill=0 peak_ma={r['peak_ma']} "
                   f"slam_ma={r['slam_ma']} dwell_ma={r['dwell_ma']:.0f} "
                   f"i50max={r['i50max']} imean={r['imean']}")
     print(f"kills: {a_tag} {sum(r['kill'] for r in a)}/{len(a)}, "
           f"{b_tag} {sum(r['kill'] for r in b)}/{len(b)}")
     for k in ("peak_ma", "slam_ma", "dwell_ma", "i50max", "imean"):
-        ma, mb, sa, sb, t, p = welch([r[k] for r in a], [r[k] for r in b])
+        xa, xb = [r[k] for r in a if k in r], [r[k] for r in b if k in r]
+        if len(xa) < 2 or len(xb) < 2:
+            print(f"{k:9s} too few completed runs")
+            continue
+        ma, mb, sa, sb, t, p = welch(xa, xb)
         print(f"{k:9s} {a_tag} {ma:7.1f} sd {sa:5.1f} | {b_tag} {mb:7.1f} sd {sb:5.1f} "
               f"| diff {mb - ma:+7.1f}  t={t:+.2f} p={p:.4f}")
     return 0
