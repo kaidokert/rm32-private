@@ -355,3 +355,16 @@ s03.2 runs 0/4 (falsifier). Operator approved the bands as built
 
 S3.3 (DiagSink) is parked in `git stash` (S3.2 code under these runs); its
 L431 runs restart against the new bands.
+
+## binz bands rebuilt through the relay (2026-10-25)
+
+S3.3's binz R2/R3/R4 missed the binz bands on mA only (1-3 % over the
+edge, eHz in band, dsy=0). Bisect: the known-good s03.2c binz image
+(byte-identical to s03.2) reproduced the miss on R3/R4. Both images vs
+the s00 band means: eHz -1..-3 %, mA +6 % mean under load, +20..+40 % at
+10 % in R2-R4 -- the binz motor phases now run through the relay
+contacts; the binz bands predate the relay. Operator approved a rebuild:
+4 interleaved R1-R4 rounds (`s00.2-*`, 16 runs, dsy=0, no kills) on the
+s03.2c image, v4 recipe, binz/* replaced, l431/* byte-identical.
+Self-check 16/16, s03.2c bisect runs 3/3, pre-relay binz s03.2 runs 1/4
+(falsifier).
