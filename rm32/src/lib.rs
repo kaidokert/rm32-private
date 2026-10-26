@@ -6,9 +6,6 @@
 #![no_std]
 
 pub mod bemf;
-pub mod bench_input;
-pub mod bench_rec;
-pub mod blackbox;
 pub mod board;
 pub mod brushed;
 pub mod commutation;

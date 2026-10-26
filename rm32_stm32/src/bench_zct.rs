@@ -2,7 +2,7 @@
 //!
 //! Ported from the minz composition layer (`minz/core/src/zct_trace.rs`):
 //! ring storage + batch-decimation state + the enable toggle live here;
-//! the pack/gate/ring mechanics are host-tested in `rm32::bench_input`.
+//! the pack/gate/ring mechanics are host-tested in `rm32_bench::bench_input`.
 //! Producer today: `handle_tim14` (one record per commutation). The push
 //! stays critical-section-guarded so a second producer priority (the
 //! TIM6 polling path) can join later without a protocol change.
@@ -14,7 +14,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
 
-use rm32::bench_input::{ZCT_REC, ZctRing, zct_batch_gate, zct_pack, zct_probe_pack};
+use rm32_bench::bench_input::{ZCT_REC, ZctRing, zct_batch_gate, zct_pack, zct_probe_pack};
 
 // 128: the probe row doubles pushes per commutation; headroom so a camp
 // storm's paired rows don't evict each other before the drain.

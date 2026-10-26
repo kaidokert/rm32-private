@@ -282,7 +282,7 @@ historical xfails gone), 4 MCU cross-builds green on every commit.
   NEEDS UPSTREAM PR — public main still carries the 33.
 - More scars from the hunt: (a) my 0x01+0xFF EEPROM repair page was
   its own bug (from_bytes is a blind cast); use
-  `cargo run -p rm32 --example dump_config` to regenerate the real
+  `cargo run -p rm32-bench --example dump_config` to regenerate the real
   baseline page. (b) On this 128K L431 with a devinfo-bearing
   bootloader the APP serves config from 0x0801F800 (not 0x0800F800 —
   that's the bootloader's jump-gate page); write BOTH when repairing.

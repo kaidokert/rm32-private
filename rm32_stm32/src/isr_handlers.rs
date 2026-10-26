@@ -523,7 +523,7 @@ pub fn handle_comp() {
         let armed = true;
         if armed {
             crate::bench_bb::record(
-                rm32::blackbox::EV_ACC,
+                rm32_bench::blackbox::EV_ACC,
                 state.commutation.step(),
                 isr::shared().commutation_interval().min(u16::MAX as u32) as u16,
             );

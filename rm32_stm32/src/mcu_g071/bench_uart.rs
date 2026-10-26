@@ -6,7 +6,7 @@
 
 use core::sync::atomic::{AtomicU16, AtomicUsize};
 
-use rm32::bench_input::RxRing;
+use rm32_bench::bench_input::RxRing;
 
 const RING_N: usize = 256;
 static RING: [AtomicU16; RING_N] = [const { AtomicU16::new(0) }; RING_N];

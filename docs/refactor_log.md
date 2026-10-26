@@ -297,3 +297,21 @@ before, now workspace-wide.
 Gate PASS (s03.1); ISR diff identical; flash images byte-identical to
 s02.4. Bench R1–R4 both boards 8/8 in the v4 bands, dsy = 0, no kills.
 Verdict PASS.
+
+## S3.2 — `rm32-bench` crate (HOST) — tag gc-s03.2-psu
+
+`bench_input`, `bench_rec`, `blackbox` (git mv, no code change) and
+`examples/dump_config.rs` move from `rm32` into the new no_std workspace
+member `rm32-bench` (rm32 only as a dev-dependency for the example). The
+modules used nothing from rm32. `rm32_stm32` depends on `rm32-bench`; 22
+`rm32::bench_*` / `rm32::blackbox` paths rewritten. CLAUDE.md and
+feature_validation_roadmap.md now say `cargo run -p rm32-bench --example
+dump_config`. Host tests 384 = 349 rm32 + 28 rm32-bench + 7 harness
+(unchanged total).
+
+Gate PASS (s03.2); ISR diff identical on both boards. Flash NOT
+byte-identical: the crate split changes thin-LTO inlining in `main` only
+(binz `main` −36 B; L431 `main` +12 B plus two renamed bench functions of
+equal size; public builds −16 / −8 / +8 / +8 B text). Same source; no ISR
+root changed. Bench R1–R4 both boards 8/8 in the v4 bands, dsy = 0, no
+kills. Verdict PASS.

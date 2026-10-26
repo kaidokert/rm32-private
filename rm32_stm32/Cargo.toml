@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rm32 = { path = "../rm32", features = ["bench-diag"] }
+rm32-bench = { path = "../rm32-bench" }
 # >= 0.7.8: with cortex-m 0.7.7 (everything else unchanged) the G071 image
 # watchdog-loops at `interrupt::enable()` (core stuck in TIM6 with TIM6
 # pending again). Bisected 2026-10-04, see BINZ_BRINGUP.md "Cargo.lock

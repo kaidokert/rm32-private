@@ -1,7 +1,7 @@
 //! Blackbox firmware adapter — timestamps, critical section, dump.
 //!
 //! Ported from `minz/src/bb.rs`. Wraps the portable ring
-//! (`rm32::blackbox`) in a `Mutex<RefCell<..>>` so every context (COMP /
+//! (`rm32_bench::blackbox`) in a `Mutex<RefCell<..>>` so every context (COMP /
 //! TIM16 / TIM6 ISRs at their split priorities, plus the main loop) can
 //! record safely — the brief `interrupt::free` is the price of a
 //! producer set that spans priority levels. Timestamps are
@@ -18,7 +18,7 @@
 use core::cell::RefCell;
 
 use cortex_m::interrupt::Mutex;
-use rm32::blackbox::{BB_LEN, BlackBox, EMPTY, Event, format_dump};
+use rm32_bench::blackbox::{BB_LEN, BlackBox, EMPTY, Event, format_dump};
 
 static BB: Mutex<RefCell<BlackBox>> = Mutex::new(RefCell::new(BlackBox::new()));
 

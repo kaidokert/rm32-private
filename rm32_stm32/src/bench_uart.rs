@@ -16,7 +16,7 @@
 use core::sync::atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering};
 
 use crate::pac::{GPIOA, RCC, USART2};
-use rm32::bench_input::RxRing;
+use rm32_bench::bench_input::RxRing;
 
 const BAUD: u32 = 2_000_000;
 const PCLK1_HZ: u32 = 80_000_000;

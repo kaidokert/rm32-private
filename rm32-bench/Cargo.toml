@@ -1,0 +1,12 @@
+[package]
+name = "rm32-bench"
+version = "0.1.0"
+edition = "2024"
+description = "Bench-only tooling for rm32 firmware: UART command parser, time-series recorder, event blackbox"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+# examples/dump_config.rs builds the bench EEPROM page from rm32's config.
+rm32 = { path = "../rm32" }

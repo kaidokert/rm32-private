@@ -52,7 +52,7 @@
 - After any minz/rinz session assume: bootloader wiped (REBUILD from
   `E:/m/robot/esc/AM32-bootloader` at 9ef0c06 — obj/*.bin goes stale),
   EEPROM boot byte trashed, PB6/PA2 rewired. Regenerate the config
-  page with `cargo run -p rm32 --example dump_config`; on this 128K
+  page with `cargo run -p rm32-bench --example dump_config`; on this 128K
   L431 write it to BOTH 0x0800F800 (bootloader jump gate) and
   0x0801F800 (app config via bootloader devinfo).
 - RECURRING LOCKUP (3 instances, all power-cycle-correlated): core

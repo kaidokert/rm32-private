@@ -33,7 +33,7 @@ include!(concat!(env!("OUT_DIR"), "/board_config.rs"));
 
 #[entry]
 fn main() -> ! {
-    // Bench time-series recorder (rm32::bench_rec): 2048 x 8 B = 16 KB,
+    // Bench time-series recorder (rm32_bench::bench_rec): 2048 x 8 B = 16 KB,
     // fed from the main loop on the control-tick clock, dumped after a run.
     // A `static mut` in `#[entry]` is rewritten by cortex-m-rt into a safe
     // `&'static mut` (entry runs once).
@@ -41,12 +41,12 @@ fn main() -> ! {
         feature = "benchuart",
         any(feature = "stm32g071", feature = "stm32l431")
     ))]
-    static mut REC: rm32::bench_rec::Recorder<2048> = rm32::bench_rec::Recorder::new();
+    static mut REC: rm32_bench::bench_rec::Recorder<2048> = rm32_bench::bench_rec::Recorder::new();
     #[cfg(all(
         feature = "benchuart",
         any(feature = "stm32g071", feature = "stm32l431")
     ))]
-    let rec: &'static mut rm32::bench_rec::Recorder<2048> = REC;
+    let rec: &'static mut rm32_bench::bench_rec::Recorder<2048> = REC;
     // Cortex-M PRIMASK is 0 after reset (IRQs enabled). Disable until ISR state
     // is installed and the explicit enable below at the bottom of main.
     cortex_m::interrupt::disable();
@@ -456,11 +456,11 @@ fn main() -> ! {
     // between 9600 TX and 115200 RX-log, and an immediate reply
     // transmits before it can switch baud back to listen.
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
-    let mut su_parser = rm32::bench_input::UartDuty::new();
+    let mut su_parser = rm32_bench::bench_input::UartDuty::new();
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
     let mut su_cfg_offset: u8 = 0;
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
-    let mut su_pending: Option<(rm32::bench_input::UartCmd, u32)> = None;
+    let mut su_pending: Option<(rm32_bench::bench_input::UartCmd, u32)> = None;
     #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
     rm32_stm32::dprintln!("[rm32] softuart RX: PA0 9600 8N1 (EXTI0+LPTIM1)");
 
@@ -528,7 +528,7 @@ fn main() -> ! {
     // timestamp for the 3 s deadman (a dead host script must not leave
     // throttle latched — minz semantics).
     #[cfg(feature = "benchuart")]
-    let mut bench_parser = rm32::bench_input::UartDuty::new();
+    let mut bench_parser = rm32_bench::bench_input::UartDuty::new();
     #[cfg(feature = "benchuart")]
     let mut bench_throttle: u16 = 0;
     // Arming requires a GENUINE zero-throttle command after boot. The
@@ -857,7 +857,7 @@ fn main() -> ! {
                 | ((shared.stepper_sine() as u16) << 3);
             if mode_bits != bb_last_mode {
                 bb_last_mode = mode_bits;
-                rm32_stm32::bench_bb::record(rm32::blackbox::EV_MOD, 0, mode_bits);
+                rm32_stm32::bench_bb::record(rm32_bench::blackbox::EV_MOD, 0, mode_bits);
             }
         }
 
@@ -909,7 +909,7 @@ fn main() -> ! {
                 // 1=OC, 2=vbat).
                 #[cfg(feature = "blackbox")]
                 {
-                    rm32_stm32::bench_bb::record(rm32::blackbox::EV_KIL, 0, code);
+                    rm32_stm32::bench_bb::record(rm32_bench::blackbox::EV_KIL, 0, code);
                     rm32_stm32::bench_bb::freeze();
                 }
                 #[cfg(not(feature = "blackbox"))]
@@ -946,7 +946,7 @@ fn main() -> ! {
             rec_cyc %= rm32_stm32::bench_clock::CYC_PER_TICK;
             if rec_n > 0 {
                 rec.ticks(rec_n, || {
-                    rm32::bench_rec::Sample::pack(
+                    rm32_bench::bench_rec::Sample::pack(
                         shared.duty_cycle(),
                         shared.old_routine(),
                         main_state.dsy_fast as u32,
@@ -1035,7 +1035,7 @@ fn main() -> ! {
             rec_cyc %= rm32_stm32::bench_clock::CYC_PER_TICK;
             if rec_n > 0 {
                 rec.ticks(rec_n, || {
-                    rm32::bench_rec::Sample::pack(
+                    rm32_bench::bench_rec::Sample::pack(
                         shared.duty_cycle(),
                         shared.old_routine(),
                         main_state.dsy_fast as u32,
@@ -1109,7 +1109,7 @@ fn main() -> ! {
         // a command zeroes throttle and lets the firmware signal timeout run.
         #[cfg(feature = "benchuart")]
         {
-            use rm32::bench_input::UartCmd;
+            use rm32_bench::bench_input::UartCmd;
             let bench_now = rm32_stm32::bench_clock::now_cyc();
             // WAXWING freeze-on-fall: any desync/orbit event at wall
             // duty freezes the phase-voltage ring so the deaf window
@@ -1940,7 +1940,7 @@ fn main() -> ! {
         // this channel is for config surgery, dumps and the kill verb.
         #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
         {
-            use rm32::bench_input::UartCmd;
+            use rm32_bench::bench_input::UartCmd;
             let su_now = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
             for _ in 0..8 {
                 let Some(b) = softuart_rx.dequeue() else {
@@ -2033,8 +2033,8 @@ fn dump_recorder() {
 /// drain loop). Throttle verbs and benchuart-era facilities report
 /// as ignored; config verbs ride the A4 ring + save flag.
 #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
-fn su_execute(cmd: rm32::bench_input::UartCmd, cfg_offset: &mut u8) {
-    use rm32::bench_input::UartCmd;
+fn su_execute(cmd: rm32_bench::bench_input::UartCmd, cfg_offset: &mut u8) {
+    use rm32_bench::bench_input::UartCmd;
     let shared = isr::shared();
     match cmd {
         UartCmd::ConfigOffset(n) => {
