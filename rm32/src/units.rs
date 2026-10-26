@@ -1,24 +1,21 @@
 //! Zero-cost newtype wrappers for physical units.
 //!
-//! Prevents mixing up ADC counts with millivolts, or timer ticks with microseconds.
+//! Prevents mixing up ADC counts with centivolts, or timer ticks with microseconds.
 //! All types are `Copy` and transparent — zero runtime overhead.
 
-/// Battery voltage in millivolts.
+/// Battery voltage in centivolts (10 mV): AM32's own unit (1260 = 12.60 V),
+/// spoken by LVC, the voltage ramp, KISS and EDT. Bench code that wants mV
+/// multiplies by 10 at its own boundary.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 #[repr(transparent)]
-pub struct MilliVolts(pub u16);
+pub struct CentiVolts(pub u16);
 
-impl MilliVolts {
+impl CentiVolts {
     pub const ZERO: Self = Self(0);
 
-    /// Convert to centivolts for KISS telemetry.
-    pub fn to_centivolts(self) -> u16 {
-        self.0 / 10
-    }
-
-    /// Per-cell check: voltage < cell_count * per_cell_mv
-    pub fn below_cell_threshold(self, cell_count: u8, per_cell_mv: u16) -> bool {
-        let threshold = cell_count as u16 * per_cell_mv;
+    /// Per-cell check: voltage < cell_count * per_cell_cv
+    pub fn below_cell_threshold(self, cell_count: u8, per_cell_cv: u16) -> bool {
+        let threshold = cell_count as u16 * per_cell_cv;
         threshold > 0 && self.0 < threshold
     }
 }
@@ -80,12 +77,14 @@ const MV_PER_COUNT: U16F16 = U16F16::from_bits((3300u64 * 65536 / 4095) as u32);
 const CURRENT_MV_SCALE: i32 = 3300 / 41; // = 80, matches C
 
 impl AdcCount {
-    /// Convert to millivolts given a voltage divider ratio.
-    /// Uses fixed-point MV_PER_COUNT constant — overflow-safe single multiply.
-    pub fn to_millivolts(self, voltage_divider: u16) -> MilliVolts {
-        let mv_raw = MV_PER_COUNT * U16F16::from_num(self.0);
-        let scaled = mv_raw.to_num::<u32>() * voltage_divider as u32 / 100;
-        MilliVolts(scaled as u16)
+    /// Convert to centivolts given the divider as its true ratio x100
+    /// (11:1 = 1100): pin millivolts x ratio / 10. Against AM32's
+    /// `* 3300 / 4095 * 110 / 100` the fixed-point MV_PER_COUNT truncates up
+    /// to 1 pin-mV lower (<= 2 cV at 11:1; 4095 -> 3628 vs 3630).
+    pub fn to_centivolts(self, voltage_divider_x100: u16) -> CentiVolts {
+        let mv_pin = MV_PER_COUNT * U16F16::from_num(self.0);
+        let scaled = mv_pin.to_num::<u32>() * voltage_divider_x100 as u32 / 1000;
+        CentiVolts(scaled as u16)
     }
 
     /// Convert to milliamps given offset and sensitivity.
@@ -134,22 +133,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn millivolts_centivolts() {
-        assert_eq!(MilliVolts(16800).to_centivolts(), 1680);
+    fn centivolts_cell_threshold() {
+        let v = CentiVolts(1000); // 10V
+        assert!(v.below_cell_threshold(3, 370)); // 3 * 3.7V = 11.1V > 10V
+        assert!(!v.below_cell_threshold(2, 370)); // 2 * 3.7V = 7.4V < 10V
     }
 
     #[test]
-    fn millivolts_cell_threshold() {
-        let v = MilliVolts(10000); // 10V
-        assert!(v.below_cell_threshold(3, 3700)); // 3 * 3.7V = 11.1V > 10V
-        assert!(!v.below_cell_threshold(2, 3700)); // 2 * 3.7V = 7.4V < 10V
+    fn adc_to_centivolts_tracks_am32_for_11_to_1() {
+        // AM32: ADC_raw_volts * 3300 / 4095 * VOLTAGE_DIVIDER(110) / 100.
+        // The fixed-point pin-mV truncates at most 1 mV lower (<= 2 cV).
+        for raw in 0..=4095u16 {
+            let am32 = (raw as u32 * 3300 / 4095 * 110 / 100) as i32;
+            let ours = AdcCount(raw).to_centivolts(1100).0 as i32;
+            assert!(
+                (0..=2).contains(&(am32 - ours)),
+                "raw {raw}: {ours} vs {am32}"
+            );
+        }
     }
 
     #[test]
-    fn adc_to_millivolts() {
-        let count = AdcCount(2048); // mid-range
-        let mv = count.to_millivolts(110); // 11:1 divider
-        assert!(mv.0 > 1500 && mv.0 < 2000);
+    fn adc_to_centivolts_bench_dividers() {
+        // L431 9.33:1 and binz 11.94:1: 1.000 V at the pin.
+        let raw = 1241; // 3300/4095*1241 = 1000.1 mV
+        assert_eq!(AdcCount(raw).to_centivolts(933).0, 933); // 9.33 V
+        assert_eq!(AdcCount(raw).to_centivolts(1194).0, 1194); // 11.94 V
     }
 
     #[test]

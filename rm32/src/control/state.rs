@@ -108,9 +108,9 @@ impl DutyState {
         if self.ramp_count > self.ramp_divider as u16 {
             self.ramp_count = 0;
             if voltage_based {
-                let mv = (battery_voltage as u32)
-                    .clamp(RAMP_VOLTAGE_LOW_MV as u32, RAMP_VOLTAGE_HIGH_MV as u32);
-                let numerator = (mv - RAMP_VOLTAGE_LOW_MV as u32)
+                let cv = (battery_voltage as u32)
+                    .clamp(RAMP_VOLTAGE_LOW_CV as u32, RAMP_VOLTAGE_HIGH_CV as u32);
+                let numerator = (cv - RAMP_VOLTAGE_LOW_CV as u32)
                     * (RAMP_VOLTAGE_CHANGE_MAX - RAMP_VOLTAGE_CHANGE_MIN) as u32;
                 let v_change = (RAMP_VOLTAGE_CHANGE_MAX as u32
                     - crate::fast_math::div1400_ramp(numerator))
@@ -354,7 +354,7 @@ impl ProtectionState {
 /// Sensor measurements.
 #[derive(Clone, Default)]
 pub struct Measurements {
-    pub(crate) battery_voltage: crate::units::MilliVolts,
+    pub(crate) battery_voltage: crate::units::CentiVolts,
     pub(crate) actual_current: crate::units::MilliAmps,
     pub(crate) degrees_celsius: crate::units::DegreesCelsius,
     pub(crate) consumed_current: i32,
@@ -366,12 +366,12 @@ pub struct Measurements {
 
 impl Measurements {
     /// Read battery voltage.
-    pub fn battery_voltage(&self) -> crate::units::MilliVolts {
+    pub fn battery_voltage(&self) -> crate::units::CentiVolts {
         self.battery_voltage
     }
 
     /// Set battery voltage.
-    pub fn set_battery_voltage(&mut self, v: crate::units::MilliVolts) {
+    pub fn set_battery_voltage(&mut self, v: crate::units::CentiVolts) {
         self.battery_voltage = v;
     }
 

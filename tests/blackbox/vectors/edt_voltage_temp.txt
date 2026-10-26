@@ -19,7 +19,7 @@ ticks 250 | throttle=1000 | running=1
 
 # Direct EDT scheduler coverage for encoded frame payloads.
 edt_next | init=1 | edt_frame=3584
-edt_next | count=40 current=3500 voltage=12300 temperature=45 | edt_frame=1539
-edt_next | count=60 current=3500 voltage=12300 temperature=45 | edt_frame=1073
-edt_next | count=50 current=3500 voltage=12300 temperature=45 | edt_frame=557
-edt_next | count=106 current=3500 voltage=12300 temperature=45 | edt_frame=3584
+edt_next | count=40 current=3500 voltage=1230 temperature=45 | edt_frame=1539
+edt_next | count=60 current=3500 voltage=1230 temperature=45 | edt_frame=1073
+edt_next | count=50 current=3500 voltage=1230 temperature=45 | edt_frame=557
+edt_next | count=106 current=3500 voltage=1230 temperature=45 | edt_frame=3584

@@ -4,10 +4,10 @@ dead_time: 45  # AM32 default for L431 Vimdrones (0x2D, ~562 ns @ 80 MHz)
 # ADC cal — Vimdrones L431 bench, schematic-derived + bench-validated in
 # minz (VBAT 3.6k/30k divider = 9.33x ratio; INA180A1 20V/V x 1.5mOhm =
 # 30mV/A, no offset). Old values (210/16/498) read 8.15V as 1.8V and idle
-# current as -3.1A. voltage_divider = ratio*100; millivolt_per_amp is in
+# current as -3.1A. voltage_divider_x100 = ratio*100; millivolt_per_amp is in
 # units of (mV per A)/10 given units.rs CURRENT_MV_SCALE=80 (raw*80 =
 # mV*100). ±25% sense-cal uncertainty applies (single-point cal).
-voltage_divider: 933
+voltage_divider_x100: 933
 millivolt_per_amp: 3
 current_offset: 0
 current_adc_channel: 8

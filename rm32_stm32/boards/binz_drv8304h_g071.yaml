@@ -5,7 +5,7 @@
 name: "binz G071 DRV8304H"
 mcu: stm32g071
 dead_time: 26            # firmware50 qualified 0-100 % on this board at 26 (AM32 DRV8304H_G071 = 60: 9 % of a 48 kHz period on body diodes, +10 % current)
-voltage_divider: 1194    # bus divider x11.94 (firmware50 BUS_DIVIDER_X100)
+voltage_divider_x100: 1194    # bus divider x11.94 (firmware50 BUS_DIVIDER_X100)
 # 3-shunt current is reported as metered mA + 2000 (mcu_g071::adc), so
 # AdcCount::to_milliamps(1600, 80) = mA (see adc.rs three_shunt docs).
 millivolt_per_amp: 80

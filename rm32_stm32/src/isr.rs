@@ -105,6 +105,13 @@ pub fn shared() -> &'static SharedState {
     &SHARED
 }
 
+/// Battery voltage in millivolts for the bench/debug consumers (guard,
+/// recorder, UART lines). The core measures centivolts (AM32's unit), so
+/// this has 10 mV resolution.
+pub fn vbat_mv() -> u16 {
+    SHARED.battery_voltage().saturating_mul(10)
+}
+
 /// Move ISR state into the global static and return a mutable reference.
 ///
 /// The reference is valid until `cortex_m::interrupt::enable()` — after that,

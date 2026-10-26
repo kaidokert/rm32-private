@@ -101,7 +101,7 @@ pub const ORBIT_TRIP_MS: u16 = 30;
 /// Rail voltage (mV) the ORBIT_TRIP line was calibrated on; the line
 /// scales by measured vbat relative to this (battery sessions run
 /// ~12 V where the same duty legitimately draws ~1.5x the current).
-pub const ORBIT_CAL_VBAT_MV: i32 = 8160;
+pub const ORBIT_CAL_VBAT_CV: i32 = 816;
 /// Commanded-transient suppression for the orbit trip: while the
 /// applied duty moved more than this within the snapshot window, high
 /// current is expected (slam accel, clone-measured ~10 A on battery)
@@ -219,9 +219,9 @@ pub const CALIBRATION_MAX_JITTER: u32 = 50;
 // --- Ramp rate limiting ---
 
 /// Voltage ramp: minimum battery voltage for mapping (8.0V).
-pub const RAMP_VOLTAGE_LOW_MV: i32 = 800;
+pub const RAMP_VOLTAGE_LOW_CV: i32 = 800;
 /// Voltage ramp: maximum battery voltage for mapping (22.0V).
-pub const RAMP_VOLTAGE_HIGH_MV: i32 = 2200;
+pub const RAMP_VOLTAGE_HIGH_CV: i32 = 2200;
 /// Voltage ramp: max duty change at low voltage.
 pub const RAMP_VOLTAGE_CHANGE_MAX: i32 = 10;
 /// Voltage ramp: min duty change at high voltage.

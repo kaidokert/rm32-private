@@ -713,7 +713,7 @@ fn main() -> ! {
                 shared.dbg_bidir_evt(),
                 shared.dbg_crc_pass(),
                 shared.dbg_crc_fail(),
-                shared.battery_voltage(),
+                isr::vbat_mv(),
                 shared.actual_current(),
                 shared.duty_maximum(),
                 shared.e_com_time(),
@@ -885,7 +885,7 @@ fn main() -> ! {
                 .tick(
                     guard_now,
                     shared.running(),
-                    shared.battery_voltage(),
+                    isr::vbat_mv(),
                     shared.actual_current(),
                 )
                 .or_else(|| {
@@ -917,7 +917,7 @@ fn main() -> ! {
                 rm32_stm32::dprintln!(
                     "!! BENCH KILL reason={} vbat_mv={} i_ma={} rest_mv={} ref_mv={} (latched until reset)",
                     tag,
-                    shared.battery_voltage(),
+                    isr::vbat_mv(),
                     shared.actual_current(),
                     bench_guard.rest_peak_mv(),
                     bench_guard.sag_ref_mv()
@@ -952,7 +952,7 @@ fn main() -> ! {
                         main_state.dsy_fast as u32,
                         shared.commutation_interval(),
                         shared.actual_current() as i32,
-                        shared.battery_voltage(),
+                        isr::vbat_mv(),
                     )
                 });
             }
@@ -1043,7 +1043,7 @@ fn main() -> ! {
                         // fast (~16 ms) EWMA of the per-ms metered current:
                         // the single per-ms sample is random-phase noisy.
                         bench_guard.current_ewmas().0,
-                        shared.battery_voltage(),
+                        isr::vbat_mv(),
                     )
                 });
             }
@@ -1207,7 +1207,7 @@ fn main() -> ! {
                             // latch.
                             let avg = (shared.e_com_time() / 3).max(0) as u32;
                             let iraw = (shared.actual_current().max(0) as u32) * 100 / 2686;
-                            let vraw = (shared.battery_voltage() as u32) * 100 / 752;
+                            let vraw = (isr::vbat_mv() as u32) * 100 / 752;
                             rm32_stm32::dprintln!(
                                 "i step=0 old={} run={} ci={} avg={} zc={} duty={} iraw={} vbat={} drop=0 guard=0 killed={} ore={} stops={} vals={} lastv={} veto={} dsy={} otrip={} arr={} f={} dc={} ds={} do={} drops={} exc={} wex={} cm={}",
                                 shared.old_routine() as u8,
@@ -1285,7 +1285,7 @@ fn main() -> ! {
                                 };
                                 rm32_stm32::dprintln!(
                                     "b vbus_mv={} i_ma={} imean_ma={} in={} ehz={} nf={} en={} moe={} armed={} zero={} sh={},{},{} rest_mv={} killed={} fwd={} tk={} i50max={} i50over_ms={} ewf={} ews={} ecom10={} inj={} t6max={} t6ovr={} t6cp={},{},{},{} t6mean={} gapmax={} gaplate={} gaplost={}",
-                                    shared.battery_voltage(),
+                                    isr::vbat_mv(),
                                     shared.actual_current(),
                                     imean,
                                     in_n,
@@ -1589,7 +1589,7 @@ fn main() -> ! {
                                 rm32_stm32::dprintln!(
                                     "gecko start={} n=2048 vbat={}",
                                     head,
-                                    shared.battery_voltage()
+                                    isr::vbat_mv()
                                 );
                                 for line in 0..128usize {
                                     use core::fmt::Write as _;
@@ -2077,7 +2077,7 @@ fn su_execute(cmd: rm32::bench_input::UartCmd, cfg_offset: &mut u8) {
                 shared.commutation_interval(),
                 shared.duty_cycle(),
                 shared.zero_crosses(),
-                shared.battery_voltage()
+                isr::vbat_mv()
             );
         }
         UartCmd::RecorderDump => dump_recorder(),

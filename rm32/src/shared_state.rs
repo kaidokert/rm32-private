@@ -60,7 +60,7 @@ pub struct SharedState {
 
     // Measurements (main writes, ISR reads for EDT)
     actual_current: AtomicU16,  // mA, stored as u16
-    battery_voltage: AtomicU16, // mV
+    battery_voltage: AtomicU16, // cV (10 mV)
     degrees_celsius: AtomicU16, // stored as u16, interpreted as i16
 
     // ISR→main: interval timer count for stall detection

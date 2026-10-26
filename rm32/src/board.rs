@@ -32,7 +32,7 @@ pub struct BoardConfig {
     /// PWM dead-time in TIM1 DTG units
     pub dead_time: u8,
     /// Voltage divider ratio (e.g. 110 = 11:1 divider × 10)
-    pub voltage_divider: u16,
+    pub voltage_divider_x100: u16,
     /// Current sensor millivolts per amp
     pub millivolt_per_amp: u16,
     /// Current sensor offset (ADC counts)
@@ -76,7 +76,7 @@ impl BoardConfig {
     pub const DEFAULT: Self = Self {
         name: "Generic",
         dead_time: 60,
-        voltage_divider: 110,
+        voltage_divider_x100: 1100,
         millivolt_per_amp: 20,
         current_offset: 0,
         current_adc_channel: 4, // PA4

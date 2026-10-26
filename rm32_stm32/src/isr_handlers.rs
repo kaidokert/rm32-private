@@ -230,7 +230,7 @@ pub fn handle_tim6() {
                 Ordering::Relaxed,
             );
             SR_MA[h].store(shared.actual_current().max(0) as u16, Ordering::Relaxed);
-            SR_MV[h].store(shared.battery_voltage(), Ordering::Relaxed);
+            SR_MV[h].store(crate::isr::vbat_mv(), Ordering::Relaxed);
             SR_HEAD.store(
                 SR_HEAD.load(Ordering::Relaxed).wrapping_add(1),
                 Ordering::Relaxed,

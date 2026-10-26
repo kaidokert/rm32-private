@@ -736,10 +736,10 @@ impl Harness {
             "cell_count" => self.main.cell_count = v as u8, // pub field
             "battery_voltage" => {
                 self.main
-                    .set_battery_voltage(rm32::units::MilliVolts(v as u16));
+                    .set_battery_voltage(rm32::units::CentiVolts(v as u16));
                 // Also set ADC raw so main.tick() doesn't overwrite on next cycle
-                // Approximate: raw = mV * 100 / (3300 * divider / 4095)
-                // For divider=110: raw ≈ mV * 4095 / 3630
+                // Approximate: raw = cV * 1000 / (3300 / 4095 * divider_x100)
+                // For the default 11:1 (1100): raw ≈ cV * 4095 / 3630
                 self.adc.voltage = ((v as u32) * 4095 / 3630).min(4095) as u16;
             }
             "degrees_celsius" => {
@@ -945,19 +945,19 @@ mod tests {
 
         assert_eq!(harness.run_edt_next_command("init=1"), 0xE00);
         assert_eq!(
-            harness.run_edt_next_command("count=40 current=3500 voltage=12300 temperature=45"),
+            harness.run_edt_next_command("count=40 current=3500 voltage=1230 temperature=45"),
             0x603
         );
         assert_eq!(
-            harness.run_edt_next_command("count=60 current=3500 voltage=12300 temperature=45"),
+            harness.run_edt_next_command("count=60 current=3500 voltage=1230 temperature=45"),
             0x431
         );
         assert_eq!(
-            harness.run_edt_next_command("count=50 current=3500 voltage=12300 temperature=45"),
+            harness.run_edt_next_command("count=50 current=3500 voltage=1230 temperature=45"),
             0x22D
         );
         assert_eq!(
-            harness.run_edt_next_command("count=106 current=3500 voltage=12300 temperature=45"),
+            harness.run_edt_next_command("count=106 current=3500 voltage=1230 temperature=45"),
             0xE00
         );
         assert_eq!(harness.run_edt_next_command("deinit=1"), 0xEFF);

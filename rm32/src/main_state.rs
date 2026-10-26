@@ -40,10 +40,10 @@ pub(crate) fn variable_pwm_mode2(average_interval: u32, cpu_mhz: u8) -> u16 {
 /// scales with measured vbat since current at a given duty scales with
 /// source voltage.
 #[inline]
-pub(crate) fn orbit_current(current_ma: i16, duty: u16, vbat_mv: u16) -> bool {
+pub(crate) fn orbit_current(current_ma: i16, duty: u16, vbat_cv: u16) -> bool {
     let line = (duty as i32) * ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA;
-    let scaled = if vbat_mv > 6000 {
-        line * (vbat_mv as i32) / ORBIT_CAL_VBAT_MV
+    let scaled = if vbat_cv > 600 {
+        line * (vbat_cv as i32) / ORBIT_CAL_VBAT_CV
     } else {
         line
     };
@@ -120,7 +120,7 @@ pub struct MainState<LED: OutputPin = NoLed> {
     // Timing (main-loop side — ISR timing is in SharedComm)
     pub(crate) timing: TimingState,
     // Board-level hardware constants (set once from BoardConfig, never change)
-    pub(crate) voltage_divider: u16,
+    pub(crate) voltage_divider_x100: u16,
     pub(crate) millivolt_per_amp: u16,
     pub(crate) current_offset: i16,
     pub(crate) use_ntc: bool,
@@ -200,7 +200,7 @@ impl MainState<NoLed> {
             pid: PidState::with_stall_target(board.stall_protect_interval),
             timing: TimingState::default(),
             timer1_max_arr: chip.timer1_max_arr,
-            voltage_divider: board.voltage_divider,
+            voltage_divider_x100: board.voltage_divider_x100,
             millivolt_per_amp: board.millivolt_per_amp,
             current_offset: board.current_offset,
             use_ntc: board.use_ntc,
@@ -275,7 +275,7 @@ impl<LED: OutputPin> MainState<LED> {
     }
 
     /// Set battery_voltage measurement.
-    pub fn set_battery_voltage(&mut self, v: crate::units::MilliVolts) {
+    pub fn set_battery_voltage(&mut self, v: crate::units::CentiVolts) {
         self.measurements.set_battery_voltage(v);
     }
 
@@ -526,7 +526,7 @@ impl<LED: OutputPin> MainState<LED> {
             // ADC measurements — typed conversions via AdcCount
             let smoothed_v = AdcCount(self.measurements.voltage_filter.update(adc.raw_voltage()));
             let smoothed_c = AdcCount(self.measurements.current_filter.update(adc.raw_current()));
-            self.measurements.battery_voltage = smoothed_v.to_millivolts(self.voltage_divider);
+            self.measurements.battery_voltage = smoothed_v.to_centivolts(self.voltage_divider_x100);
             self.measurements.actual_current =
                 smoothed_c.to_milliamps(self.current_offset, self.millivolt_per_amp);
             self.measurements.degrees_celsius = if self.use_ntc {
@@ -635,7 +635,7 @@ impl<LED: OutputPin> MainState<LED> {
         // Telemetry send
         if shared.send_telemetry() {
             let mut pkt = [0u8; 10];
-            let voltage_cv = self.measurements.battery_voltage.to_centivolts();
+            let voltage_cv = self.measurements.battery_voltage.0;
             let current_ca = self.measurements.actual_current.to_centiamps();
             telemetry::make_telem_package(
                 &mut pkt,
@@ -1070,7 +1070,7 @@ mod tests {
         main.cell_count = 3;
         main.low_cell_volt_cutoff = 330;
         // Threshold = 3 * 330 = 990mV. Set voltage below.
-        main.set_battery_voltage(crate::units::MilliVolts(500));
+        main.set_battery_voltage(crate::units::CentiVolts(500));
         // Pre-fill count near threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
         // LVC now runs inside the 1 kHz block.
@@ -1121,13 +1121,13 @@ mod tests {
         main.cell_count = 3;
         main.low_cell_volt_cutoff = 330;
         // Trigger LVC first
-        main.set_battery_voltage(crate::units::MilliVolts(500));
+        main.set_battery_voltage(crate::units::CentiVolts(500));
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
         // Now raise voltage above threshold
         shared.set_motor_mode(MotorMode::OldRoutine); // re-arm for test
-        main.set_battery_voltage(crate::units::MilliVolts(1500));
+        main.set_battery_voltage(crate::units::CentiVolts(1500));
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
         // Count should NOT reset because low_voltage_cutoff latch is set
@@ -1149,7 +1149,7 @@ mod tests {
         main.config.low_voltage_cut_off = 2; // absolute mode
         main.config.absolute_voltage_cutoff = 100; // threshold (raw EEPROM value)
         main.cell_count = 0; // no cells — doesn't matter for mode 2
-        main.set_battery_voltage(crate::units::MilliVolts(50)); // below threshold
+        main.set_battery_voltage(crate::units::CentiVolts(50)); // below threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
         // LVC now runs inside the 1 kHz block.
         for _ in 0..crate::constants::PID_LOOP_DIVIDER {
@@ -1174,7 +1174,7 @@ mod tests {
         let mut main = make_test_main_state();
         main.config.low_voltage_cut_off = 2;
         main.config.absolute_voltage_cutoff = 100;
-        main.set_battery_voltage(crate::units::MilliVolts(150)); // above threshold
+        main.set_battery_voltage(crate::units::CentiVolts(150)); // above threshold
         main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 

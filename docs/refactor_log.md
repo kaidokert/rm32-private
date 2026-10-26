@@ -221,3 +221,39 @@ no kills. Battery: no. Verdict PASS.
 
 Open: the G071 (and F051) `asm::delay` ports have the same ~3x
 (binz tune 1776 ms); M0+ has no cycle counter — needs a timer delay.
+
+## S2.3 — battery voltage in centivolts everywhere (CODE) — tag gc-s02.3-psu
+
+One internal unit, AM32's own: `CentiVolts` replaces the ambiguous
+`MilliVolts` (AM32 boards produced cV, bench boards mV, under one type).
+`AdcCount::to_centivolts(voltage_divider_x100)` = pin mV × ratio×100 /
+1000. Board yamls state the divider as the true ratio ×100 under a new key
+`voltage_divider_x100` (AM32 110 → 1100, 210 → 2100; bench 933 / 1194
+unchanged); the old `voltage_divider` key is a build error with a message
+(build.rs had no deny_unknown_fields, so a stale key would silently
+default). Consumers: KISS sends the value as is (was `/ 10`), EDT `/ 25`
+like AM32 dshot.c (was `/ 250`), orbit scaling `> 600` / `816` (same
+ratio), voltage-ramp constants renamed `_CV` (values were always AM32 cV),
+LVC unchanged (it already assumed cV; on the bench boards it used to count
+~31 "cells"). Bench boundary: `rm32_stm32::isr::vbat_mv()` = cV × 10 feeds
+the guard, both recorders, the i / b / KILL / loop lines, gecko and SR_MV;
+EDT gets cV. Harness: default divider 1100; there is no load_eeprom reset of
+the divider in this tree (reviewer's note did not apply). Tests: EDT unit
+tests and `edt_voltage_temp.txt` move to cV inputs (12300 → 1230, frames
+unchanged); new full-range test vs AM32's formula (rm32's fixed-point
+pin-mV truncates up to 1 mV low: ≤ 2 cV at 11:1, pre-existing) and bench
+divider tests.
+
+| | L431 | binz |
+|---|---|---|
+| ELF sha256 | `459b59f7cfd8b85e…` | `a64412126da95800…` |
+| text | 54556 | 56812 |
+
+Host gate PASS (s02.3); C harness still exactly the 10 known diffs. ISR
+diff vs s02.2: DMA (EDT) and L431 TIM6 (bench SR_MV store); binz WCET
+DMA1_CHANNEL1 1409 → 1415 cyc, others unchanged. Meter (operator): bus
+11.6–11.8 V vs firmware L431 ≈ 11.65 V, binz ≈ 11.78 V idle — match.
+Bench R1–R4 both boards: `--check` 8/8, dsy = 0, no kills; recorder bus
+now 10 mV resolution, ranges as before. (A first R1 pair overlapped — a
+tool background move — and was discarded and re-run solo.) Battery: no.
+Verdict PASS.
