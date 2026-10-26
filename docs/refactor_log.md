@@ -895,6 +895,35 @@ check name regex widened twice, bands file untouched).
     `docs/gc_battery_s05.3.md` wrongly said that run had dsy=0: it read
     the fast-only column (Call 25).
 
+29. **S6.1: one removals FAIL accepted (public G071 EXTI4_15 +1).**
+    `handle_exti_frame` (DSHOT frame handling, not BEMF code) grew by one
+    instruction because `BemfComparator` lost its cached step/rising (2
+    bytes), shifting `IsrState` field offsets so one constant no longer
+    fits a single `movs`. Proof: the same tree with 2 bytes of padding put
+    back in `BemfComparator` gives EXTI4_15 2643 -> 2643 and removals PASS
+    on that image. No padding committed. The other five images PASS; the
+    binz bench image shrinks on every root (TIM14 -12, TIM6 -32, EXTI4_15
+    -9).
+
+30. **S6.1: removals check learned declared renames.** `change_input`
+    became `route_bemf` (a core helper, out of line on purpose: a port
+    `select_phase` with the phase computed at each call site cost binz
+    TIM14 +2 to +20). `isr_diff.py removals --rename OLD=NEW`
+    (`GC_RENAME` in `gc_gate.sh`) accepts the new name only when the old
+    one left the same tree; every work check still applies.
+
+31. **S6.1 bench ran on the battery, not the PSU.** I misread the supply
+    (a stiff pack: 54 mOhm fit, like the PSU's) and flew the PSU images.
+    The battery's higher bus put 6/8 runs 1-3 % over the PSU current
+    bands. Same-supply controls with the previous step's images show the
+    same offset: binz R1/R4 (s05.3c) 50 % 1573/1625 mA, out of band too;
+    L431 R4 s05.3c PSU image hit its own 4.5 A OC guard at 80 %. So the
+    comparison was redone on the battery with battery-guard images, L431
+    R4 ABAB (`batt61a` = gc-s05.3-psu, `batt61b` = 42aa6c3): 80 % 4341 /
+    4341 vs 4348 / 4328 mA, eHz within 0.5 %, no kill, dsy_fw = 0 on all.
+    The PSU-band check for S6.1 is therefore not done; the S6.1 PSU runs
+    can be repeated when the PSU is back (Call for the operator).
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -1127,3 +1156,26 @@ Verdict: no S5.3 difference on battery; the failures are pre-existing and
 logged as Calls 25, 26 and 28 for the operator. Bisect images (L431, 48 kHz, battery):
 battb00k48 878475ea34f8, bk-s03.1 f928153b3209, bk-s03.3 8119f935b7b1,
 bk-s03.4 afa1d2c84e8c, bk-s04.1 679aa19a749e.
+
+## S6.1 -- `BemfSensor` trait; `BemfPins` to the port (CODE) -- tag gc-s06.1-psu (42aa6c3)
+
+`hal::Comparator` -> `hal::BemfSensor` (design 5.2): `select_phase(Phase,
+rising)`, `enable_irq`, `mask_irq`, `level`, `filter_read`. The core owns
+the step -> floating-phase map (`hal::floating_phase`, branch-free table;
+AM32 `changeCompInput`: 1/4 C, 2/5 A, 3/6 B) and routes through one
+out-of-line `route_bemf`. The port comparator no longer caches
+step/rising. `BemfPins` moved to `rm32_stm32::board_ext`. `clear_pending`
+/ `repend` deferred to S6.3, where `on_bemf_irq` first needs them. New
+host tests: floating-phase table, commutation selects the new step's
+phase (rm32 361 pass).
+
+Gate (`GC_RENAME=change_input=route_bemf`) PASS vs s05.3c; committed tree
+re-gated as s06.1c, ISR dumps identical to the gated tree. Removals PASS
+on 5/6 images, public G071 EXTI4_15 +1 accepted (Call 29). binz WCET:
+TIM14 918 -> 897 cyc, TIM6 5080 -> 4995, ADC_COMP 698 unchanged. Bench
+ELFs: l431 a4aef5add519, binz 5040f9c691ad.
+
+Bench (on the battery, Call 31): R1-R4 both boards, all complete, no kill,
+dsy_fw = 0; band check 2/8 (current 1-3 % high, battery bus); controls
+with s05.3c images show the same offset; L431 R4 battery-image ABAB 2 a
+side equal within 0.5 %. Verdict: no S6.1 difference.
