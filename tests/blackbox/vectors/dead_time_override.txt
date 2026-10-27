@@ -3,6 +3,8 @@
 # duty thresholds are adjusted upward. This prevents FET shoot-through
 # during braking.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

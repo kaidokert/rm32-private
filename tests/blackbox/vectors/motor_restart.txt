@@ -1,5 +1,7 @@
 # Motor restart when stopped in interrupt mode
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

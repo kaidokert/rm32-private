@@ -2,6 +2,8 @@
 # Verify PID accumulators don't wind up beyond limits.
 # Exercises stall/speed/current PID with extreme inputs.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

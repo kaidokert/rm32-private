@@ -2,6 +2,8 @@
 # When eeprom.max_ramp < 10, ramp_divider=9 and all ramp profiles use raw value.
 # This produces much slower ramp rates for specialized low-speed applications.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

@@ -2,6 +2,8 @@
 # When stepper_sine=1 and throttle=0 (or !armed), brake modes engage.
 # brake_on_stop=1 → proportional brake, =2 → comStep(2), =0 → allOff.
 
+@tuning am32
+
 @config
 armed=0
 inputSet=1

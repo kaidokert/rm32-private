@@ -2,6 +2,8 @@
 # Exercises EDT scheduler voltage/temperature encoding path.
 # Needs armed + running + EDT active for scheduler to tick.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

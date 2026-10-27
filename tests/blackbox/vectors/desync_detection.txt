@@ -18,6 +18,10 @@
 # ZC 12, desync_check=1 fires with zero_crosses>10 and the interval has
 # changed enough from the initial value to trigger desync.
 
+# Rig tuning: asserts the fast-rotor stay-interrupt desync response
+# (rm32::tuning::DesyncPolicy::HalfKickStayInterrupt), not in AM32.
+@tuning rig
+
 @config
 armed=1
 inputSet=1

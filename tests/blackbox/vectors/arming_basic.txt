@@ -1,6 +1,8 @@
 # Basic arming sequence test
 # Verify: zero throttle for 1 second arms the ESC
 
+@tuning am32
+
 @config
 inputSet=1
 dshot=1

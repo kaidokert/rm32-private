@@ -34,6 +34,9 @@ class AM32Harness:
                 # Fallback: C harness
                 exe_path = repo / "build" / "am32_harness"
         self.exe_path = str(exe_path)
+        # The AM32 C harness has AM32's behaviour only; the Rust harness
+        # takes a `tuning` command (rm32::tuning, design §5.8).
+        self.is_c = Path(self.exe_path).stem == "am32_harness"
         self.proc = None
 
     def __enter__(self):
@@ -108,6 +111,13 @@ class AM32Harness:
     def _kvargs(self, **kwargs):
         return " ".join(f"{k}={v}" for k, v in kwargs.items())
 
+    def tuning(self, name):
+        """Select the tuning (`rig` | `am32`); starts a fresh harness."""
+        self._send(f"tuning {name}")
+        line = self._recv()
+        if line != "ok":
+            raise RuntimeError(f"Expected 'ok', got '{line}'")
+
     def reset(self):
         """Reset all firmware state to init values."""
         self._send("reset")
@@ -175,13 +185,35 @@ class AM32Harness:
         return state
 
 
-def run_test_vectors(harness, vectors_file):
+TUNINGS = ("rig", "am32")
+
+
+def read_tuning(vectors_file):
+    """The vector's required `@tuning rig|am32` line."""
+    found = None
+    with open(vectors_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("@tuning"):
+                if found is not None:
+                    raise ValueError(f"{vectors_file}: more than one @tuning")
+                found = line.split(None, 1)[1].strip() if " " in line else ""
+    if found not in TUNINGS:
+        raise ValueError(
+            f"{vectors_file}: needs exactly one `@tuning rig|am32` line, got {found!r}"
+        )
+    return found
+
+
+def run_test_vectors(harness, vectors_file, tuning=None):
     """
     Run test vectors from a file.
 
     Format:
         # Comments start with #
         # Blank lines are ignored
+
+        @tuning am32        # or rig (rm32::tuning); required
 
         @config
         key=value
@@ -202,7 +234,7 @@ def run_test_vectors(harness, vectors_file):
     with open(vectors_file, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("#"):
+            if not line or line.startswith("#") or line.startswith("@tuning"):
                 continue
             if line == "@config":
                 section = "config"
@@ -216,6 +248,12 @@ def run_test_vectors(harness, vectors_file):
                 sequence_lines.append(line)
 
     # Apply config
+    declared = read_tuning(vectors_file)
+    tuning = tuning or declared
+    if not harness.is_c:
+        harness.tuning(tuning)
+    elif tuning != "am32":
+        raise RuntimeError(f"{vectors_file}: `{tuning}` vector sent to the C harness")
     harness.reset()
     for cl in config_lines:
         if "=" not in cl:

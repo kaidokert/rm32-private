@@ -2,6 +2,8 @@
 # Verify: telemetry interval triggers send, and send_telemetry flag clears
 # Also verify: ESC info packet path
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

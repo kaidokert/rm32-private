@@ -1,6 +1,8 @@
 # Speed control PID (stall_protection=1)
 # Exercises the speed PID path with target_e_com_time computation.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

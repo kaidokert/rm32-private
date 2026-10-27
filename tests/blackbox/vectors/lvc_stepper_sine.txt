@@ -3,6 +3,8 @@
 # Pre-set low_voltage_count near threshold, let it accumulate over ~10 ticks.
 # battery_voltage defaults to 0 which is < cell_count * low_cell_volt_cutoff.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

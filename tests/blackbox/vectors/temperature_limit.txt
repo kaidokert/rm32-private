@@ -1,6 +1,8 @@
 # Temperature limiting
 # Verify: duty_cycle_maximum reduces when temperature exceeds limit
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

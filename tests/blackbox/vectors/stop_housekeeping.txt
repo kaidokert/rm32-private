@@ -5,6 +5,8 @@
 # polluting the stuck-rotor latch's zc>1000 fault-clear and the
 # zc-gated startup boost (post-stall "won't spin up" churn).
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

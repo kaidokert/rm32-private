@@ -10,6 +10,10 @@
 # vector); with it the passes at ZC 6 and 12 only re-seed, and the desync
 # fires at the ZC 18 pass.
 
+# Rig tuning: asserts the fast-rotor stay-interrupt desync response
+# (rm32::tuning::DesyncPolicy::HalfKickStayInterrupt), not in AM32.
+@tuning rig
+
 @config
 armed=1
 inputSet=1

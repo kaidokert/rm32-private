@@ -2,6 +2,8 @@
 # With input > 200, phase_A_position is forced to 0 which triggers
 # the changeover: stepper_sine=0, running=1, old_routine=1.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

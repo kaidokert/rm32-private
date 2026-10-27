@@ -11,7 +11,7 @@ Or from repo root:
 
 import pytest
 from pathlib import Path
-from harness import AM32Harness, run_test_vectors
+from harness import AM32Harness, read_tuning, run_test_vectors
 
 VECTORS_DIR = Path(__file__).parent / "vectors"
 
@@ -49,6 +49,9 @@ def test_vector(harness, vector_file):
     """Run a single test vector file."""
     if vector_file.stem in XFAIL_VECTORS:
         pytest.xfail(f"Known Rust vs C difference: {vector_file.stem}")
+    # Only AM32-tuning vectors have a C counterpart (design §5.8).
+    if harness.is_c and read_tuning(vector_file) != "am32":
+        pytest.skip("rig tuning: rm32 divergence, no AM32 counterpart")
     run_test_vectors(harness, vector_file)
 
 
@@ -86,3 +89,14 @@ class TestHarnessAPI:
     def test_arm_convenience(self, harness):
         state = harness.arm()
         assert state["armed"] == 1
+
+    def test_tuning_selects_policy(self, harness):
+        """`tuning` must really swap the policy: the rig vector's
+        stay-interrupt assertion fails under AM32 tuning."""
+        if harness.is_c:
+            pytest.skip("C harness has no tuning command")
+        rig_vector = VECTORS_DIR / "desync_detection.txt"
+        assert read_tuning(rig_vector) == "rig"
+        run_test_vectors(harness, rig_vector)
+        with pytest.raises(AssertionError):
+            run_test_vectors(harness, rig_vector, tuning="am32")

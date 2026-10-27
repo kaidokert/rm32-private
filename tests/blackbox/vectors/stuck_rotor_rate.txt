@@ -14,6 +14,8 @@
 # With stuck_rotor_protection=1 and threshold=10, the Rust bug causes
 # the motor to latch off during normal startup.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

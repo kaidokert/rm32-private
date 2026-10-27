@@ -2,6 +2,8 @@
 # Once LVC triggered (low_voltage_count > threshold), the flag latches.
 # Subsequent ticks with good voltage should NOT reset the count.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

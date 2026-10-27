@@ -1,6 +1,8 @@
 # Signal timeout — running ESC disarms and requests reset
 # REQ-SAFE-SIGNAL_TIMEOUT
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

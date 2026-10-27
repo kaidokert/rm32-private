@@ -5,6 +5,8 @@
 # Note: variable_pwm sets tim1_arr in main_loop, which is applied via
 # set_auto_reload in the NEXT tick's tenKhzRoutine. So we need 2 ticks.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

@@ -1,6 +1,8 @@
 # Signal timeout test
 # Verify: after LOOP_FREQUENCY_HZ/2 ticks with no signal reset, system disarms
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

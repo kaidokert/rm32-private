@@ -6,6 +6,8 @@
 # We pre-set the conditions directly since the harness can't easily drive
 # the ISR commutation path that normally sets these values.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

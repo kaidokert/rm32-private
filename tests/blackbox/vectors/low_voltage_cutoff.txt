@@ -5,6 +5,8 @@
 # ADC processes every PID_LOOP_DIVIDER=20 ticks
 # We pre-set low_voltage_count near threshold to avoid 200k ticks
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

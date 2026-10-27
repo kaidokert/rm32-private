@@ -2,6 +2,8 @@
 # Verify: current limit, stall protection, speed control PIDs fire,
 # and integral anti-windup saturates
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

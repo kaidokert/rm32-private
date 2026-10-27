@@ -2,6 +2,8 @@
 # Covers: motor idles when reversal not allowed (low commutation_interval)
 # Golden values captured from C harness.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1

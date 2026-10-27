@@ -1711,3 +1711,35 @@ reclimb clamp under `if let Some(reclimb)`, the fast-rotor branch under
   code byte changed. First gate run failed clippy (`collapsible_if` on
   the reclimb `if let`); collapsed to a let-chain. ELF SHA-256: l431
   ae2941d6..., binz 6d7b3494.... Tag gc-s09.1-ok.
+
+## S9.2 -- harness holds both tunings; vectors declare theirs (HOST) -- branch gc/s09
+
+Design §5.8. `rm32-harness`: `HarnessPlatform<T>` / `MockMotorHal<T>` /
+`Harness<T>` are generic over `T: TuningPolicy`; `main` holds
+`AnyHarness { Rig(Box<Harness<QualifiedRigTuning>>), Am32(Box<Harness<Am32Tuning>>) }`
+and dispatches each protocol line to the generic `command::<T>()`. New
+protocol command `tuning rig|am32` replaces the harness with a fresh one
+under that tuning (replies `ok`); the harness starts under `rig` for the
+API sanity tests. The core stays fully compile-time.
+
+- **Vectors declare their tuning.** Every vector carries exactly one
+  `@tuning rig|am32` line; `harness.read_tuning` refuses a vector with
+  none, two, or an unknown name. Classification by running all 76
+  vectors under both: 74 pass under AM32 tuning -> `am32`; 2 pass only
+  under the rig tuning -> `rig`: `desync_detection` (tick 13
+  old_routine=1 under AM32) and `desync_changeover_guard` (tick 19
+  running=0), both asserting the stay-interrupt desync response. All 76
+  pass under `rig`.
+- **C harness: am32 vectors only.** `rig` vectors skip on the C harness
+  (no AM32 counterpart); their two `c_known_diffs.txt` entries are gone,
+  9 remain. The runner refuses to send a `rig` vector to the C harness.
+- **Falsifier.** New API test `test_tuning_selects_policy`: runs
+  `desync_detection` under its declared `rig` (passes), then forced to
+  `am32` and requires the assertion failure -- the switch is not a
+  no-op. Rust suite 83 (82 + this test), all green.
+- Harness unit tests (`mod tests`) pin `Harness<QualifiedRigTuning>`
+  (first gate run: host tests did not compile without the annotation).
+- **Gate s09.2 vs s09.1: PASS.** Rust 83/83; C 9 failures = the 9 known,
+  3 skipped (2 rig vectors + the tuning API test). ISR dumps identical on
+  all six; bench ELFs byte-identical to s09.1 (SHA-256 l431 ae2941d6...,
+  binz 6d7b3494...). Firmware untouched. Tag gc-s09.2-ok.

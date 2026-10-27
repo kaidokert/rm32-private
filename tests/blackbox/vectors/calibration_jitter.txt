@@ -2,6 +2,8 @@
 # When adjusted_input > 1500 but differs from last_input by > 50,
 # enter_calibration_count resets to 0.
 
+@tuning am32
+
 @config
 armed=0
 inputSet=1

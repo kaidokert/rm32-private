@@ -7,6 +7,8 @@
 # The mode 2 path IS exercised (low_voltage_cut_off==2 branch entered)
 # but the voltage comparison doesn't trigger because ADC resets it.
 
+@tuning am32
+
 @config
 armed=1
 inputSet=1
