@@ -7,8 +7,7 @@
 use crate::diag::{DIAG, DiagSink, IsrSite};
 use crate::isr::{self, TargetIsrState};
 use crate::mcu::ChipConfig;
-use rm32::hal::{DshotOutputPrescaler, InputCapture};
-use rm32::transfer::{DetectedProtocol, TransferAction};
+use rm32::hal::InputCapture;
 
 /// Single-core ISR-local cell for zero-overhead mutable ISR state.
 ///
@@ -689,35 +688,21 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     );
     shared.set_zero_input_count(zic);
 
-    match actions.action {
-        TransferAction::InputDetected(proto) => {
-            shared.set_input_set(true);
-            match proto {
-                DetectedProtocol::Dshot => {
-                    shared.set_dshot(true);
-                    if let Some(prescaler) = actions.next_capture.prescaler {
-                        state.hal.input.set_output_prescaler(
-                            DshotOutputPrescaler::new(prescaler)
-                                .expect("invalid DShot output prescaler"),
-                        );
-                    }
-                }
-                DetectedProtocol::Servo => shared.set_servo_pwm(true),
-            }
-        }
-        TransferAction::DshotThrottle { value, telemetry } => {
-            if !state.edt_arm_enable || state.edt_armed || value == 0 {
-                shared.set_newinput(value);
-            }
-            if value == 0 && state.edt_arm_enable {
-                state.edt_armed = false;
-            }
-            if telemetry {
-                shared.set_send_telemetry(true);
-            }
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::DshotCommand { cmd, telemetry } => {
+    let input = &mut state.hal.input;
+    rm32::transfer::dispatch(
+        &actions,
+        shared,
+        rm32::transfer::InputContext {
+            config: &mut state.config,
+            cmd: &mut state.cmd,
+            edt: &mut state.edt,
+            forward: &mut state.forward,
+            edt_armed: &mut state.edt_armed,
+            edt_arm_enable: state.edt_arm_enable,
+            frametime_low: &mut state.frametime_low,
+            frametime_high: &mut state.frametime_high,
+        },
+        |cmd| {
             // Bench experiment lever (cmds 42/47, unassigned in the
             // DSHOT command space): level-set the PB6 print-blast used
             // by the poll-print-disturbance A/B (item 7). Level rather
@@ -729,95 +714,12 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 PRINT_BLAST.store(cmd == 42, Ordering::Relaxed);
             }
             // Command-arrival telemetry (EDT handshake debug): count every
-            // decoded command frame and publish the last cmd id. Rides the
-            // post-detection-idle dbg fields in the [loop] line
-            // (bidir_evt = count, hi_pin_n = last cmd).
+            // decoded command frame and publish the last cmd id.
             DIAG.dshot_command(cmd as u8);
-            shared.set_newinput(0);
-            if telemetry {
-                shared.set_send_telemetry(true);
-            }
-            shared.set_signal_timeout(0);
-            let old_config = state.config;
-            let result = state.cmd.process(
-                cmd,
-                shared.armed(),
-                shared.running(),
-                &mut state.config,
-                &mut state.forward,
-                &mut state.edt_armed,
-                state.edt_arm_enable,
-            );
-            for (offset, (old, new)) in old_config
-                .as_bytes()
-                .iter()
-                .zip(state.config.as_bytes().iter())
-                .enumerate()
-            {
-                if old != new {
-                    shared.push_config_write(offset as u8, *new);
-                }
-            }
-            match result {
-                rm32::dshot_commands::CommandResult::SaveSettings => {
-                    shared.set_save_settings_flag(true);
-                }
-                rm32::dshot_commands::CommandResult::PlayTone(tone) => {
-                    // A3: beacons route through the tick tone stepper.
-                    shared.set_tone_request(tone);
-                }
-                rm32::dshot_commands::CommandResult::SendEscInfo => {
-                    shared.set_send_esc_info_flag(true);
-                }
-                rm32::dshot_commands::CommandResult::ProgrammingCommit { position, value } => {
-                    // A4: arbitrary-byte programming writes reach main too.
-                    shared.push_config_write(position as u8, value);
-                }
-                _ => {}
-            }
-            shared.set_forward(state.forward);
-            if state.cmd.take_edt_init() {
-                state.edt.request_init();
-            }
-            if state.cmd.take_edt_deinit() {
-                state.edt.request_deinit();
-            }
-        }
-        TransferAction::ServoThrottle(value) => {
-            shared.set_newinput(value);
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::ServoCalibrating => {
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::ServoCalibrationDone {
-            low_threshold,
-            high_threshold,
-        } => {
-            // Persist calibration to EEPROM config; main loop will save to
-            // flash. A4: publish the bytes so main's copy is current when
-            // the save flag is acted on.
-            state.config.servo_low_threshold = low_threshold;
-            state.config.servo_high_threshold = high_threshold;
-            shared.push_config_write(
-                core::mem::offset_of!(rm32::config::EepromConfig, servo_low_threshold) as u8,
-                low_threshold,
-            );
-            shared.push_config_write(
-                core::mem::offset_of!(rm32::config::EepromConfig, servo_high_threshold) as u8,
-                high_threshold,
-            );
-            shared.set_save_settings_flag(true);
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::None => {}
-    }
-    if let Some((low, high)) = actions.frametime {
-        state.frametime_low = low;
-        state.frametime_high = high;
-    }
+        },
+        |prescaler| input.set_output_prescaler(prescaler),
+    );
     if actions.bidir_detected {
-        shared.set_dshot_telemetry(true);
         DIAG.bidir_detected();
         // BENCH: auto-start EDT at bidir commit. Production activation is
         // AM32-verbatim (DSHOT cmd 13, 6x, while armed+stopped) — but BF

@@ -10,13 +10,12 @@ use rm32::control::context::MotorContext;
 use rm32::control::isr_logic;
 use rm32::control::state::{BemfState, DutyState};
 use rm32::dshot;
-use rm32::dshot_commands::CommandResult;
 use rm32::hal;
 use rm32::hal::Bridge;
 use rm32::motor_mode::MotorMode;
 use rm32::shared_state::SharedState;
 use rm32::system::SystemTick;
-use rm32::transfer::{DetectedProtocol, TransferAction};
+use rm32::transfer::TransferAction;
 use std::cell::Cell;
 use std::io::{self, BufRead, Write};
 
@@ -364,93 +363,38 @@ impl Harness {
             self.frametime_high,
         );
 
-        // Apply transfer actions
-        match actions.action {
-            TransferAction::InputDetected(proto) => {
-                self.shared.set_input_set(true);
-                match proto {
-                    DetectedProtocol::Dshot => {
-                        self.dshot = true;
-                        self.shared.set_dshot(true);
-                        if let Some(prescaler) = actions.next_capture.prescaler {
-                            self.dshot_output_prescaler = hal::DshotOutputPrescaler::new(prescaler)
-                                .expect("invalid DShot output prescaler")
-                                .raw();
-                        }
-                    }
-                    DetectedProtocol::Servo => {
-                        self.servo_pwm = true;
-                        self.shared.set_servo_pwm(true);
-                    }
-                }
-            }
-            TransferAction::DshotThrottle { value, telemetry } => {
-                if !self.edt_arm_enable || self.edt_armed || value == 0 {
-                    self.shared.set_newinput(value);
-                }
-                if value == 0 && self.edt_arm_enable {
-                    self.edt_armed = false;
-                }
-                if telemetry {
-                    self.shared.set_send_telemetry(true);
-                }
-                self.shared.set_signal_timeout(0);
-            }
-            TransferAction::DshotCommand { cmd, telemetry } => {
-                self.shared.set_newinput(0);
-                if telemetry {
-                    self.shared.set_send_telemetry(true);
-                }
-                self.shared.set_signal_timeout(0);
-                let mut fwd = self.commutation.forward();
-                let result = self.cmd_proc.process(
-                    cmd,
-                    self.shared.armed(),
-                    self.shared.running(),
-                    &mut self.config,
-                    &mut fwd,
-                    &mut self.edt_armed,
-                    self.edt_arm_enable,
-                );
-                self.commutation.set_forward(fwd);
-                match result {
-                    CommandResult::PlayTone(tone) => {
-                        self.play_tone_flag = tone;
-                    }
-                    CommandResult::SaveSettings => {
-                        self.shared.set_save_settings_flag(true);
-                    }
-                    CommandResult::SendEscInfo => {
-                        self.shared.set_send_esc_info_flag(true);
-                    }
-                    _ => {}
-                }
-                self.shared.set_forward(self.commutation.forward());
-            }
-            TransferAction::ServoThrottle(value) => {
-                self.shared.set_newinput(value);
-                self.shared.set_signal_timeout(0);
-            }
-            TransferAction::ServoCalibrating => {
-                self.shared.set_signal_timeout(0);
-            }
-            TransferAction::ServoCalibrationDone {
-                low_threshold,
-                high_threshold,
-            } => {
-                self.config.servo_low_threshold = low_threshold;
-                self.config.servo_high_threshold = high_threshold;
-                self.shared.set_save_settings_flag(true);
-                self.shared.set_signal_timeout(0);
-            }
-            TransferAction::None => {}
+        // The core dispatch the firmware runs (S7.3).
+        let mut fwd = self.commutation.forward();
+        let mut output_prescaler = None;
+        rm32::transfer::dispatch(
+            &actions,
+            &self.shared,
+            rm32::transfer::InputContext {
+                config: &mut self.config,
+                cmd: &mut self.cmd_proc,
+                edt: &mut self.edt,
+                forward: &mut fwd,
+                edt_armed: &mut self.edt_armed,
+                edt_arm_enable: self.edt_arm_enable,
+                frametime_low: &mut self.frametime_low,
+                frametime_high: &mut self.frametime_high,
+            },
+            |_| {},
+            |p| output_prescaler = Some(p),
+        );
+        self.commutation.set_forward(fwd);
+        if let Some(prescaler) = output_prescaler {
+            self.dshot_output_prescaler = prescaler.raw();
         }
-        if let Some((low, high)) = actions.frametime {
-            self.frametime_low = low;
-            self.frametime_high = high;
+        // Harness mirrors: protocol flags it feeds back into `process`, and
+        // the tone a vector reads as `play_tone_flag`.
+        if let TransferAction::InputDetected(_) = actions.action {
+            self.dshot = self.shared.dshot();
+            self.servo_pwm = self.shared.servo_pwm();
         }
-        if actions.bidir_detected {
-            self.shared.set_dshot_telemetry(true);
+        let tone = self.shared.take_tone_request();
+        if tone != 0 {
+            self.play_tone_flag = tone;
         }
     }
 
