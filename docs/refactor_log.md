@@ -1028,6 +1028,22 @@ check name regex widened twice, bands file untouched).
     telemetry slot, no CRSF input), so the harness is unchanged there;
     the design's "firmware and harness both call it" holds for S7.3
     only.
+44. **FC bench EDT: `dshot_edt = FORCE`, not ON (2026-10-27).** rm32's
+    EDT sender works: with FORCE, BF shows RTVCS on binz (27-30 C,
+    12.25 V, 1 A at 50 %; current reads 0 below ~45 %, 1 A/LSB).
+    With ON, nothing decodes even after a real flight-arm (single-motor
+    remap so BF could arm with the L431 dark). Cause is BF, from source
+    (`E:/m/robot/esc/betaflight`, the flashed 2026-05-09 build; fork
+    master unchanged): since #14490 (9458ac043, 2025-07)
+    `dshot_decode_telemetry_value` decodes a typed frame only if
+    `telemetryTypes` already has an extended bit, and only a decoded
+    typed frame sets one; arm clears the state. ON can never start
+    decoding on any ESC. The pre-#14490 test (`telemetryTypes ==
+    NORMAL_MASK`) let a cleared state decode its first frame as typed.
+    The "ON works" record (bf_phase.md, 07-31) contradicts the source
+    and is not re-cited. No ESC bisect: the ESC side is proven by
+    FORCE. FC left at FORCE. A BF fix (seed the extended bits when cmd
+    13 is sent) belongs to the BF fork, outside this goal.
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
