@@ -1,0 +1,178 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue 7 Side by Side</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one reading column; verdict strip, then paired board columns, then the run ledger and the fix that got us here. */
+:root {
+  --bg: #f5f6f3; --panel: #ffffff; --fg: #1d2420; --muted: #5d6862; --rule: #d7ddd8;
+  --l431: #2f6db3; --binz: #b5591d; --pass: #2e7d4f; --warn: #a86b00;
+  --display: "Fraunces", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141917; --panel: #1c2320; --fg: #e3e8e4; --muted: #9aa69f; --rule: #2e3833;
+  --l431: #79a9e6; --binz: #e79a63; --pass: #6cc792; --warn: #e0a940; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141917; --panel: #1c2320; --fg: #e3e8e4; --muted: #9aa69f; --rule: #2e3833;
+  --l431: #79a9e6; --binz: #e79a63; --pass: #6cc792; --warn: #e0a940; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body); }
+main { max-width: 920px; margin: 0 auto; padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 36px; }
+h1 { font: 600 2rem/1.15 var(--display); margin: 0; text-wrap: balance; }
+h2 { font: 600 1.3rem/1.25 var(--display); margin: 0 0 12px; text-wrap: balance; }
+p { margin: 0 0 10px; max-width: 68ch; }
+.eyebrow { font: 600 0.75rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+.verdict { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: baseline; border-top: 3px solid var(--pass); padding-top: 14px; }
+.verdict .big { font: 600 2.4rem/1 var(--display); color: var(--pass); }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.board { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; min-width: 0; }
+.board h3 { margin: 0 0 4px; font: 600 1.05rem var(--body); display: flex; align-items: center; gap: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.board dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 10px 0 0; font-variant-numeric: tabular-nums; }
+.board dt { color: var(--muted); } .board dd { margin: 0; font-family: var(--mono); text-align: right; }
+.bars { display: grid; gap: 14px; }
+.barrow { display: grid; grid-template-columns: 9rem 1fr; gap: 10px; align-items: center; }
+.barrow .lbl { color: var(--muted); font-size: 0.88rem; }
+.barset { display: grid; gap: 4px; min-width: 0; }
+.bar { height: 18px; border-radius: 2px; position: relative; }
+.bar span { position: absolute; right: 6px; top: 0; font: 600 0.72rem/18px var(--mono); color: var(--bg); }
+.scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 0.88rem; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--rule); text-align: right; white-space: nowrap; }
+th { font: 600 0.72rem var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+td:first-child, th:first-child, td:nth-child(2), th:nth-child(2) { text-align: left; }
+tr:last-child td { border-bottom: 0; }
+.pill { font: 600 0.72rem var(--mono); padding: 1px 7px; border-radius: 10px; color: var(--pass); border: 1px solid var(--pass); }
+.l431 { color: var(--l431); } .binz { color: var(--binz); }
+.note { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; }
+figure { margin: 14px 0; background: #ffffff; border: 1px solid var(--rule); border-radius: 6px; padding: 8px; }
+figure img { display: block; width: 100%; height: auto; }
+ul { margin: 0; padding-left: 1.2em; } li { margin-bottom: 6px; max-width: 68ch; }
+@media (max-width: 480px) { .barrow { grid-template-columns: 1fr; } h1 { font-size: 1.6rem; } }
+</style>
+
+</head><body>
+<main>
+<header>
+  <div class="eyebrow">rm32 · issue #7 · FC bench · 2026-10-27</div>
+  <h1>L431 and G071, side by side on one commit</h1>
+  <p>Both ESCs ran the same rm32 source (<code>devel d30c3d3</code>; firmware tree identical to <code>f0625ca</code>) on the same motor, switched between boards by the relay. Betaflight drove both over DSHOT300 (unidirectional) from one F411. Supply was the 3S2P pack in parallel with the PSU. Every test ran as a separate command, alternating boards.</p>
+</header>
+
+<section class="verdict" aria-label="Verdict">
+  <div class="big">12 / 12 pass</div>
+  <p>Every ladder and double-slam on both boards held one start with zero desyncs. No resets happened during any test, and the bench guard never fired. A pass needs <code>starts=1</code>, <code>dsy=0</code>, and more than 500k locked commutations on a ladder or more than 100k on a slam. Verdicts come from the <code>[run]</code> summary the ESC prints after each stop.</p>
+</section>
+
+<section>
+  <h2>Board averages (3 runs each)</h2>
+  <div class="pair">
+    <div class="board">
+      <h3><span class="dot" style="background:var(--l431)"></span>Vimdrones L431</h3>
+      <div class="eyebrow">STM32L431 · 80 MHz · 48 kHz carrier · motor 0</div>
+      <dl>
+        <dt>Ladder comms</dt><dd>1,841,016</dd>
+        <dt>Ladder peak eRPM</dt><dd>220,859</dd>
+        <dt>Slam comms</dt><dd>346,917</dd>
+        <dt>Slam peak eRPM</dt><dd>223,325</dd>
+        <dt>Shortest e-period</dt><dd>268–272 µs</dd>
+        <dt>Desyncs / restarts</dt><dd>0 / 0</dd>
+      </dl>
+    </div>
+    <div class="board">
+      <h3><span class="dot" style="background:var(--binz)"></span>binz (NUCLEO-G071RB + DRV8304H)</h3>
+      <div class="eyebrow">STM32G071 · 64 MHz · 48 kHz carrier · motor 1</div>
+      <dl>
+        <dt>Ladder comms</dt><dd>1,893,486</dd>
+        <dt>Ladder peak eRPM</dt><dd>226,415</dd>
+        <dt>Slam comms</dt><dd>357,671</dd>
+        <dt>Slam peak eRPM</dt><dd>228,431</dd>
+        <dt>Shortest e-period</dt><dd>261–265 µs</dd>
+        <dt>Desyncs / restarts</dt><dd>0 / 0</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Where they differ</h2>
+  <div class="bars" role="img" aria-label="Bar comparison: binz runs about 2.5 percent faster at the top and logs about 3 percent more commutations">
+    <div class="barrow"><div class="lbl">Ladder peak eRPM</div><div class="barset">
+      <div class="bar" style="width:97.5%;background:var(--l431)"><span>220.9k</span></div>
+      <div class="bar" style="width:100%;background:var(--binz)"><span>226.4k</span></div></div></div>
+    <div class="barrow"><div class="lbl">Ladder comms</div><div class="barset">
+      <div class="bar" style="width:97.2%;background:var(--l431)"><span>1.841M</span></div>
+      <div class="bar" style="width:100%;background:var(--binz)"><span>1.893M</span></div></div></div>
+    <div class="barrow"><div class="lbl">Slam comms</div><div class="barset">
+      <div class="bar" style="width:97.0%;background:var(--l431)"><span>346.9k</span></div>
+      <div class="bar" style="width:100%;background:var(--binz)"><span>357.7k</span></div></div></div>
+  </div>
+  <figure><img src="ladder_slam_runs.png" alt="Peak eRPM per ladder and slam run: L431 220.6 to 223.9k, binz 226.4 to 229.9k; all 12 runs pass"></figure>
+  <p style="margin-top:14px">binz reaches about 2.5% higher top speed. Locked commutations scale with speed over a fixed-time ladder, so its counts are higher by the same margin. Run-to-run spread within a board is under 0.5%, so the gap is real. The likely causes are power-stage differences: the gate drivers and FETs differ between the two boards, the dead time is set per board (L431 about 560 ns, binz about 405 ns), and the battery leads are routed differently through the relay. Nobody has measured which one it is. Neither board shows a stability difference.</p>
+</section>
+
+<section>
+  <h2>Throttle curves</h2>
+  <p><code>scripts/bf_curve.py</code> steps each board 10 → 100 → 10% in 5% steps, two runs per board, alternating. At every step it reads Betaflight's own bidirectional eRPM and EDT telemetry (temperature, voltage, current), three samples per step. The x-axis is the throttle Betaflight commands. The ESC's internal duty isn't visible from the FC, and the ESC never prints while the motor is powered. All four curve runs passed by the same rule as the ladder: one start, zero desyncs, no resets (1.03M L431 and 1.06M binz locked commutations per run).</p>
+  <figure><img src="speed_vs_throttle.png" alt="Speed vs throttle for both boards, up and down sweeps; near-linear, binz slightly above L431 from 30 percent"></figure>
+  <p>Speed tracks throttle almost linearly on both boards, from 49k eRPM at 15% to 214k (L431) and 224k (binz) at 100%. The up and down sweeps lie on top of each other, so there is no hysteresis and no lost lock coming down.</p>
+  <figure><img src="speed_gap.png" alt="binz speed advantage vs throttle: 0 at 15 percent, rising to 3.5 to 5 percent from 30 percent up"></figure>
+  <p>The gap opens with throttle: none at 15%, 2.5% at 25%, then 2.2–5.1% from 30% to the top. Up and down sweeps agree to within about 1.5 points.</p>
+  <figure><img src="current_and_supply.png" alt="EDT current and supply voltage vs throttle for both boards"></figure>
+  <p>Current is the same on both boards at 1 A resolution, reaching 7 A at 100%. The supply readings differ by 0.22 V even near idle (12.00 V vs 12.22 V) on the same pack and PSU. That points to a calibration offset between the boards' voltage dividers, so these readings can't explain the speed gap. The L431 reads 0.5 V of sag at 7 A and binz 0.3 V. That is only one or two 0.25 V EDT steps, too coarse to compare the power paths.</p>
+  <figure><img src="temperature.png" alt="ESC temperature over the curve: L431 rises 36 to 43 C, binz noisy 22 to 30 C"></figure>
+  <p>The L431 warms steadily, from 36 to 43 C over 80 s. binz reads 22–30 C with ±3 C jitter from sample to sample and no trend. It looks like a noisy temperature measurement on the G071 side, worth a look before EDT temperature is trusted on that chip.</p>
+  <figure><img src="telemetry_invalid.png" alt="BF invalid telemetry percent vs throttle: L431 zero throughout, binz 0.3 to 2.3 percent, highest at low throttle"></figure>
+  <p>Betaflight's telemetry error rate is 0% on the L431 at every step. On binz it is 0.3–2.3%, worst below 30% throttle. This is the known binz telemetry item, now measured across the whole range.</p>
+</section>
+
+<section>
+  <h2>Every run</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Board</th><th>Test</th><th>#</th><th>Starts</th><th>Dsy</th><th>Comms</th><th>Peak eRPM</th><th>Min e-period µs</th><th>Session ms</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td class="l431">L431</td><td>ladder</td><td>1</td><td>1</td><td>0</td><td>1,843,118</td><td>221,402</td><td>271</td><td>139,325</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="binz">binz</td><td>ladder</td><td>1</td><td>1</td><td>0</td><td>1,893,873</td><td>226,415</td><td>265</td><td>140,125</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="l431">L431</td><td>ladder</td><td>2</td><td>1</td><td>0</td><td>1,838,634</td><td>220,588</td><td>272</td><td>139,356</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="binz">binz</td><td>ladder</td><td>2</td><td>1</td><td>0</td><td>1,895,052</td><td>226,415</td><td>265</td><td>140,201</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="l431">L431</td><td>ladder</td><td>3</td><td>1</td><td>0</td><td>1,841,295</td><td>220,588</td><td>272</td><td>139,257</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="binz">binz</td><td>ladder</td><td>3</td><td>1</td><td>0</td><td>1,891,532</td><td>226,415</td><td>265</td><td>139,740</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="l431">L431</td><td>slam</td><td>1</td><td>1</td><td>0</td><td>347,639</td><td>223,880</td><td>268</td><td>29,608</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="binz">binz</td><td>slam</td><td>1</td><td>1</td><td>0</td><td>359,506</td><td>229,885</td><td>261</td><td>29,331</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="l431">L431</td><td>slam</td><td>2</td><td>1</td><td>0</td><td>346,333</td><td>223,048</td><td>269</td><td>29,602</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="binz">binz</td><td>slam</td><td>2</td><td>1</td><td>0</td><td>355,948</td><td>228,136</td><td>263</td><td>29,149</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="l431">L431</td><td>slam</td><td>3</td><td>1</td><td>0</td><td>346,779</td><td>223,048</td><td>269</td><td>29,573</td><td><span class="pill">PASS</span></td></tr>
+      <tr><td class="binz">binz</td><td>slam</td><td>3</td><td>1</td><td>0</td><td>357,559</td><td>227,272</td><td>264</td><td>29,211</td><td><span class="pill">PASS</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-top:10px">Ladder: 10 → 100 → 10% in 2% steps, 1.5 s per step, never back to zero. Slam: 5 s at 10%, then three cycles of 100% → 10% → 100% → 10%. Logs are in <code>captures/gc/issue7/</code>, and <code>scripts/issue7_table.py</code> regenerates this table from them.</p>
+</section>
+
+<section>
+  <h2>What it took to get here</h2>
+  <p>The first L431 runs on this bench choked on about half of all 25% starts. The rotor got stuck in a restart loop with about 500 starts and 750 desyncs per hold. binz never did this. Stock AM32 (fd4d45f) on the same L431, motor, FC and config started cleanly 8 times out of 8, so the cause had to be in rm32.</p>
+  <ul>
+    <li><b>Ruled out:</b> carrier frequency (24 kHz also choked), spin direction, sine start, and the generic-core refactor (the pre-refactor baseline choked too). The duty matched AM32 at every check.</li>
+    <li><b>Mechanism:</b> a snapshot of the desync detector's inputs, now printed in <code>[run]</code> as <code>first=</code> and <code>hist=</code>, showed the first desync always fired at zero-cross 24, the first check in interrupt mode. rm32 polls BEMF on its 20 kHz tick rather than at AM32's main-loop rate, so commutations in polling mode run late. At the switch to interrupt mode the timing snaps to correct, the next revolution is about 35% faster, and <code>|last − avg| &gt; avg/2</code> reads that jump as a desync.</li>
+    <li><b>Start record, counted from the logs:</b> rm32 before the fix 11/23 clean, across every variant tried. One-check guard 5/8. Two-check guard 8/8. Stock AM32 8/8.
+      <figure><img src="start_ab.png" alt="Clean 25 percent starts: AM32 8 of 8, rm32 before fix 11 of 23, one-check guard 5 of 8, two-check guard 8 of 8"></figure></li>
+    <li><b>Fix (f0625ca):</b> the detector only compares two revolutions that both ran fully in interrupt mode. A guard that skipped only one check fixed 5 of 8 starts, because the zc 18–24 window was still mixed. Skipping two checks gave 8 of 8 clean starts at 75.5–76.1k eRPM. This is a recorded divergence from AM32, and it exists only because rm32's polling rate differs from AM32's.</li>
+    <li><b>Protocol matrix re-run on f0625ca:</b> DSHOT600, DSHOT150, DSHOT300, PWM and bidirectional DSHOT300 all pass. Each leg made one start, reached closed loop with zero desyncs, and peaked at about 75k eRPM. On the bidirectional leg Betaflight read 73.7k eRPM with 0% invalid telemetry. <code>gc-s7-dshot</code> is merged into devel.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Open items</h2>
+  <ul>
+    <li class="note"><b>binz boot decode stall (outside the tests):</b> in 2 of 6 sessions binz came up after the FC reboot with 0% DSHOT decode. It logged about 500 CRC failures, with a stale 16-bit first capture interval (≈62,350) in front of clean pulse widths. After one signal-timeout reset it decoded normally. This looks like the one-edge capture misalignment class. It happened before the test window in both cases, so no verdict is affected, but it is a defect to chase.</li>
+    <li><b>EDT restored at <code>dshot_edt = ON</code> (Call 44, rewritten):</b> the cause was an FC setting, not Betaflight code. <code>feature ESC_SENSOR</code>, left on since the August KISS test, stops Betaflight from sending the EDT-enable command at arm and replaces the MSP temperature, voltage and current with the unwired serial sensor. On the stock Betaflight build, switching it on, off and on again gave eRPM only, then full temperature, voltage and current, then eRPM only (L431 37 C, 12.00 V; binz 27 C, 12.25 V). The FC is now on <code>ON</code> with <code>ESC_SENSOR</code> off.</li>
+    <li><b>L431 SWD needs a slow clock</b> (<code>--speed 100</code>) since the power cycle. Flashing works at that speed and the runs are unaffected.</li>
+  </ul>
+</section>
+</main>
+</body></html>
