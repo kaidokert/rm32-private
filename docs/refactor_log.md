@@ -1090,6 +1090,7 @@ check name regex widened twice, bands file untouched).
     binz_A3_ladder.log). Open: the G071 capture never realigns once
     misaligned while frames keep arriving -- a fix belongs to the input
     path (re-arm on a CRC-fail run), its own step after S8.
+    **Operator: accepted (2026-10-27).**
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
