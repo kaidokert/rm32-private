@@ -4,7 +4,7 @@
 //! prints during a powered run. Lets an FC-driven test
 //! tell a closed-loop spin from a motor that only kept attempting starts:
 //!
-//! `[run] starts=N ms=T zc_pk=Z ecom_min=E erpm_pk=R dsy=D fast= cur= slow= old= orbit=`
+//! `[run] starts=N ms=T zc_pk=Z ecom_min=E erpm_pk=R dsy=D fast= cur= slow= old= orbit= comms=`
 //!
 //! - `starts`: running rising edges in the session (1 = clean; more =
 //!   stop/restart cycles, the choke signature)
@@ -16,6 +16,7 @@
 //! - `dsy`: desync events in the session (`desync_events`), then the
 //!   desync branches (fast-rotor stay, demote on current / slow / from
 //!   polling) and orbit-current trips, all session deltas
+//! - `comms`: locked (closed-loop) commutations in the session
 
 /// Ticks (20 kHz) of stopped + zero input that end a session.
 const QUIET_TICKS: u32 = 2_000;
@@ -32,7 +33,7 @@ pub struct RunSummary {
     quiet_since: u32,
     zc_pk: u32,
     ecom_min: u32,
-    c0: [u32; 6],
+    c0: [u32; 7],
 }
 
 impl RunSummary {
@@ -46,7 +47,7 @@ impl RunSummary {
             quiet_since: 0,
             zc_pk: 0,
             ecom_min: u32::MAX,
-            c0: [0; 6],
+            c0: [0; 7],
         }
     }
 
@@ -58,7 +59,7 @@ impl RunSummary {
         newinput: u16,
         zc: u32,
         e_com_time: i32,
-        c: [u32; 6],
+        c: [u32; 7],
     ) {
         let dt = tick.wrapping_sub(self.last_tick);
         self.last_tick = tick;
@@ -94,7 +95,7 @@ impl RunSummary {
 
     /// Print an open session now (the signal-timeout reset path: an FC
     /// reboot right after a hold resets the ESC before the quiet window).
-    pub fn finish(&mut self, c: [u32; 6]) {
+    pub fn finish(&mut self, c: [u32; 7]) {
         if !self.active {
             return;
         }
@@ -104,7 +105,7 @@ impl RunSummary {
             (self.ecom_min, 60_000_000 / self.ecom_min.max(1))
         };
         crate::dprintln!(
-            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={}",
+            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={} comms={}",
             self.starts,
             self.run_ticks / 20,
             self.zc_pk,
@@ -116,6 +117,7 @@ impl RunSummary {
             c[3].wrapping_sub(self.c0[3]),
             c[4].wrapping_sub(self.c0[4]),
             c[5].wrapping_sub(self.c0[5]),
+            c[6].wrapping_sub(self.c0[6]),
         );
         self.active = false;
     }

@@ -74,12 +74,13 @@ static ISR_LOCAL: IsrCell = IsrCell::new();
 /// excursion = |thiszc*1000/avg - 1000| permille vs the rolling
 /// average (e_com/3). EXC_N counts >250 permille (the clone's ">25%"
 /// bucket), EXC_MAX holds the worst permille, EXC_COMMS counts locked
-/// commutations measured. Cumulative; host computes segment deltas.
+/// commutations measured (all chips: the `[run]` summary's `comms`).
+/// Cumulative; host computes segment deltas.
 #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static EXC_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static EXC_MAX: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+#[cfg(feature = "debuguart")]
 pub static EXC_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Onboard flight recorder (poll-law-safe charts): every 0.5s (10k
@@ -377,32 +378,35 @@ pub fn handle_tim14() {
         state.config.is_bidirectional(),
         state.config.use_strict_changeover(),
     );
-    // Parity re-qual excursion counters (clone metric).
-    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    // Locked-commutation count (all chips) + parity re-qual excursion
+    // counters (clone metric, L431: the M0 has no hardware divide) —
+    // measured on every LOCKED commutation, whole envelope.
+    #[cfg(feature = "debuguart")]
     {
         use core::sync::atomic::Ordering;
         let tz = state.bemf.this_zc_time() as u32;
-        // Parity re-qual excursion counters (clone metric) — measured on
-        // every LOCKED commutation, whole envelope.
         if shared.running() && !shared.old_routine() && tz > 0 {
-            let avg = (shared.e_com_time() / 3).max(1) as u32;
-            let permille = if tz >= avg {
-                (tz - avg) * 1000 / avg
-            } else {
-                (avg - tz) * 1000 / avg
-            };
             EXC_COMMS.store(
                 EXC_COMMS.load(Ordering::Relaxed).wrapping_add(1),
                 Ordering::Relaxed,
             );
-            if permille > 250 {
-                EXC_N.store(
-                    EXC_N.load(Ordering::Relaxed).wrapping_add(1),
-                    Ordering::Relaxed,
-                );
-            }
-            if permille > EXC_MAX.load(Ordering::Relaxed) {
-                EXC_MAX.store(permille, Ordering::Relaxed);
+            #[cfg(feature = "stm32l431")]
+            {
+                let avg = (shared.e_com_time() / 3).max(1) as u32;
+                let permille = if tz >= avg {
+                    (tz - avg) * 1000 / avg
+                } else {
+                    (avg - tz) * 1000 / avg
+                };
+                if permille > 250 {
+                    EXC_N.store(
+                        EXC_N.load(Ordering::Relaxed).wrapping_add(1),
+                        Ordering::Relaxed,
+                    );
+                }
+                if permille > EXC_MAX.load(Ordering::Relaxed) {
+                    EXC_MAX.store(permille, Ordering::Relaxed);
+                }
             }
         }
     }
