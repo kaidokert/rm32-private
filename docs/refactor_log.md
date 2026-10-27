@@ -1481,3 +1481,25 @@ Re-review against `git diff gc-s07.2-psu..gc-s7-dshot` (02ae2f5, 027b2cc)
 matches the code (all 8 cited tests exist on the branch). S7.3, S7.4 and
 Calls 40-43 approved; Call 40 needs no layout pass at merge. Merge gate
 left: the L431 FC session (`scripts/protocol_matrix.py`).
+45. **Desync check skips the polling -> interrupt changeover (f0625ca,
+    2026-10-27).** A divergence from AM32, forced by rm32 polling BEMF on
+    the 20 kHz tick instead of AM32's main-loop rate: polled commutations
+    run late, so the first interrupt-mode revolution is ~35 % faster and
+    `|last - avg| > avg/2` tripped at zc 24 on ~50 % of L431 25 % starts
+    (restart loop, ~500 starts per hold). Stock AM32 fd4d45f on the same
+    L431/motor/FC: 8/8 clean. Refuted first: carrier (24 kHz chokes),
+    direction, sine start, the refactor (gc-s00 chokes), duty (400 =
+    AM32's low-rpm ceiling at every check). The check compares only once
+    two revolutions ran fully in interrupt mode: one-pass guard 5/8,
+    two-pass 8/8 (75.5-76.1k eRPM). Retire it if polling ever moves to
+    main-loop rate.
+46. **Issue #7 met on devel d30c3d3 (2026-10-27).** bf_ladder x3 +
+    bf_slam x3 on each board, same commit, same motor via relay,
+    alternating boards: 12/12 PASS (starts=1, dsy=0, 0 in-test resets).
+    binz ~2.5 % faster at the top (226.4k vs 220.9k eRPM); unexplained,
+    power-stage candidates only (dead time 405 vs 560 ns). Report:
+    https://claude.ai/artifact/HhU21C4nWpHjVqyPZuSgyU. Open, outside the
+    test windows: binz came up after 2/6 FC reboots with 0 % decode
+    (~500 CRC fails, stale first interval ~62,350) until one
+    signal-timeout reset -- the one-edge misalignment class. L431 SWD
+    needs `--speed 100` since the 2026-10-27 power cycle.
