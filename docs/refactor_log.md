@@ -1458,3 +1458,10 @@ coverage). Call 40's verdict stands (operator-accepted) but its stated
 cause is wrong: the +2 is block layout in `handle_exti_frame`.
 **Open: re-review S7.3 (02ae2f5), S7.4 (027b2cc) and Calls 40-43 against
 gc-s7-dshot before the merge.**
+
+## S7.3/S7.4 re-review (2026-10-27) -- APPROVED
+
+Re-review against `git diff gc-s07.2-psu..gc-s7-dshot` (02ae2f5, 027b2cc)
+matches the code (all 8 cited tests exist on the branch). S7.3, S7.4 and
+Calls 40-43 approved; Call 40 needs no layout pass at merge. Merge gate
+left: the L431 FC session (`scripts/protocol_matrix.py`).
