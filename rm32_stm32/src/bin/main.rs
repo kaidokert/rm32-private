@@ -573,6 +573,8 @@ fn main() -> ! {
     let mut i50_last_tk: u32 = 0;
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     let mut was_running = false;
+    #[cfg(feature = "debuguart")]
+    let mut run_summary = rm32_stm32::run_summary::RunSummary::new();
     #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
     let mut hist_rearm = true;
     // Hold-mean speed: e_com_time (us per electrical revolution, six
@@ -960,6 +962,25 @@ fn main() -> ! {
         // without an ENABLE pin). After the guard, so a kill's Disarm drops
         // the gates on the same pass.
         BOARD_EXT.drive_gate(shared.armed());
+        #[cfg(feature = "debuguart")]
+        run_summary.poll(
+            isr::tick_count(),
+            shared.running(),
+            shared.newinput(),
+            shared.zero_crosses(),
+            shared.e_com_time(),
+            [
+                main_state.desync_events,
+                main_state.dsy_fast,
+                main_state.dsy_demote_cur,
+                main_state.dsy_demote_slow,
+                main_state.dsy_demote_old,
+                main_state.orbit_trips,
+                rm32_stm32::isr_handlers::EXC_COMMS.load(core::sync::atomic::Ordering::Relaxed),
+            ],
+            main_state.dsy_snap,
+            main_state.dsy_hist,
+        );
         #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
         {
             let running = shared.running();
@@ -1889,6 +1910,28 @@ fn main() -> ! {
             }
             #[cfg(not(feature = "benchuart"))]
             {
+                #[cfg(feature = "debuguart")]
+                run_summary.finish([
+                    main_state.desync_events,
+                    main_state.dsy_fast,
+                    main_state.dsy_demote_cur,
+                    main_state.dsy_demote_slow,
+                    main_state.dsy_demote_old,
+                    main_state.orbit_trips,
+                    rm32_stm32::isr_handlers::EXC_COMMS.load(core::sync::atomic::Ordering::Relaxed),
+                ]);
+                #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+                {
+                    let (f, e, o) = rm32_stm32::mcu_l431::softuart_rx::counters();
+                    rm32_stm32::dprintln!(
+                        "[su-last f={} e={} o={} n={} last={:#04x}]",
+                        f,
+                        e,
+                        o,
+                        su_n,
+                        su_last
+                    );
+                }
                 // Last-words diagnostic: what the input pipeline saw this
                 // life. Main context (prints in ISRs are forbidden).
                 #[cfg(feature = "stm32l431")]

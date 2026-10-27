@@ -351,6 +351,152 @@ impl TransferState {
     }
 }
 
+/// ISR-side input state the transfer dispatch reads and updates (AM32
+/// `transfercomplete`'s globals). Firmware and harness both build it from
+/// their own fields.
+pub struct InputContext<'a> {
+    pub config: &'a mut crate::config::EepromConfig,
+    pub cmd: &'a mut crate::dshot_commands::CommandProcessor,
+    pub edt: &'a mut crate::edt::EdtScheduler,
+    pub forward: &'a mut bool,
+    pub edt_armed: &'a mut bool,
+    pub edt_arm_enable: bool,
+    pub frametime_low: &'a mut u16,
+    pub frametime_high: &'a mut u16,
+}
+
+/// Apply one frame's `TransferActions` to the shared and ISR-side state:
+/// the one dispatch firmware and harness share (S7.3; the harness copy had
+/// drifted: no config-diff writes, `ProgrammingCommit`, EDT init/deinit or
+/// calibration writes). `set_prescaler` receives the bidirectional DShot
+/// output prescaler when detection locks DShot (the port's register work).
+///
+/// `on_command` runs first on a decoded command (a port's bench hooks).
+/// Both hooks run where the firmware's inline code ran them: hooked outside
+/// the match, LLVM tail-duplicated a shared-state store into a second path.
+#[inline(always)]
+pub fn dispatch<C: FnOnce(u16), P: FnOnce(crate::hal::DshotOutputPrescaler)>(
+    actions: &TransferActions,
+    shared: &crate::shared_state::SharedState,
+    ctx: InputContext<'_>,
+    on_command: C,
+    set_prescaler: P,
+) {
+    use crate::dshot_commands::CommandResult;
+    match actions.action {
+        TransferAction::InputDetected(proto) => {
+            shared.set_input_set(true);
+            match proto {
+                DetectedProtocol::Dshot => {
+                    shared.set_dshot(true);
+                    if let Some(prescaler) = actions.next_capture.prescaler {
+                        set_prescaler(
+                            crate::hal::DshotOutputPrescaler::new(prescaler)
+                                .expect("invalid DShot output prescaler"),
+                        );
+                    }
+                }
+                DetectedProtocol::Servo => shared.set_servo_pwm(true),
+            }
+        }
+        TransferAction::DshotThrottle { value, telemetry } => {
+            // EDT arm gate: throttle passes once armed (or EDT not required);
+            // zero always passes and disarms. The gate reads `edt_armed`
+            // before the disarm; the store comes last so LLVM keeps one
+            // `newinput` store (store-then-disarm got tail-duplicated).
+            let pass = !ctx.edt_arm_enable || *ctx.edt_armed || value == 0;
+            if value == 0 && ctx.edt_arm_enable {
+                *ctx.edt_armed = false;
+            }
+            if pass {
+                shared.set_newinput(value);
+            }
+            if telemetry {
+                shared.set_send_telemetry(true);
+            }
+            shared.set_signal_timeout(0);
+        }
+        TransferAction::DshotCommand { cmd, telemetry } => {
+            on_command(cmd);
+            shared.set_newinput(0);
+            if telemetry {
+                shared.set_send_telemetry(true);
+            }
+            shared.set_signal_timeout(0);
+            let old_config = *ctx.config;
+            let result = ctx.cmd.process(
+                cmd,
+                shared.armed(),
+                shared.running(),
+                ctx.config,
+                ctx.forward,
+                ctx.edt_armed,
+                ctx.edt_arm_enable,
+            );
+            for (offset, (old, new)) in old_config
+                .as_bytes()
+                .iter()
+                .zip(ctx.config.as_bytes().iter())
+                .enumerate()
+            {
+                if old != new {
+                    shared.push_config_write(offset as u8, *new);
+                }
+            }
+            match result {
+                CommandResult::SaveSettings => shared.set_save_settings_flag(true),
+                CommandResult::PlayTone(tone) => shared.set_tone_request(tone),
+                CommandResult::SendEscInfo => shared.set_send_esc_info_flag(true),
+                CommandResult::ProgrammingCommit { position, value } => {
+                    shared.push_config_write(position as u8, value);
+                }
+                _ => {}
+            }
+            shared.set_forward(*ctx.forward);
+            if ctx.cmd.take_edt_init() {
+                ctx.edt.request_init();
+            }
+            if ctx.cmd.take_edt_deinit() {
+                ctx.edt.request_deinit();
+            }
+        }
+        TransferAction::ServoThrottle(value) => {
+            shared.set_newinput(value);
+            shared.set_signal_timeout(0);
+        }
+        TransferAction::ServoCalibrating => {
+            shared.set_signal_timeout(0);
+        }
+        TransferAction::ServoCalibrationDone {
+            low_threshold,
+            high_threshold,
+        } => {
+            // Persist to the config; publish the bytes so main's copy is
+            // current when it acts on the save flag.
+            ctx.config.servo_low_threshold = low_threshold;
+            ctx.config.servo_high_threshold = high_threshold;
+            shared.push_config_write(
+                core::mem::offset_of!(crate::config::EepromConfig, servo_low_threshold) as u8,
+                low_threshold,
+            );
+            shared.push_config_write(
+                core::mem::offset_of!(crate::config::EepromConfig, servo_high_threshold) as u8,
+                high_threshold,
+            );
+            shared.set_save_settings_flag(true);
+            shared.set_signal_timeout(0);
+        }
+        TransferAction::None => {}
+    }
+    if let Some((low, high)) = actions.frametime {
+        *ctx.frametime_low = low;
+        *ctx.frametime_high = high;
+    }
+    if actions.bidir_detected {
+        shared.set_dshot_telemetry(true);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -850,5 +996,179 @@ mod tests {
                 high_threshold: _
             }
         ));
+    }
+
+    // ---- S7.3: the shared dispatch -------------------------------------
+
+    struct Isr {
+        config: crate::config::EepromConfig,
+        cmd: crate::dshot_commands::CommandProcessor,
+        edt: crate::edt::EdtScheduler,
+        forward: bool,
+        edt_armed: bool,
+        edt_arm_enable: bool,
+        ft: (u16, u16),
+    }
+
+    impl Isr {
+        fn new(edt_arm_enable: bool) -> Self {
+            Self {
+                config: crate::config::EepromConfig::default(),
+                cmd: Default::default(),
+                edt: Default::default(),
+                forward: true,
+                edt_armed: false,
+                edt_arm_enable,
+                ft: (400, 600),
+            }
+        }
+        /// Dispatch one action; returns (commands hooked, prescaler set).
+        fn run(
+            &mut self,
+            shared: &crate::shared_state::SharedState,
+            action: TransferAction,
+        ) -> (u32, Option<u16>) {
+            let actions = TransferActions {
+                action,
+                next_capture: CaptureConfig::DSHOT300_DETECTED,
+                frametime: None,
+                bidir_detected: false,
+                #[cfg(feature = "bench-diag")]
+                high_pin_count: 0,
+            };
+            let (mut hooked, mut psc) = (0, None);
+            dispatch(
+                &actions,
+                shared,
+                InputContext {
+                    config: &mut self.config,
+                    cmd: &mut self.cmd,
+                    edt: &mut self.edt,
+                    forward: &mut self.forward,
+                    edt_armed: &mut self.edt_armed,
+                    edt_arm_enable: self.edt_arm_enable,
+                    frametime_low: &mut self.ft.0,
+                    frametime_high: &mut self.ft.1,
+                },
+                |_| hooked += 1,
+                |p| psc = Some(p.raw()),
+            );
+            (hooked, psc)
+        }
+    }
+
+    fn armed_shared() -> crate::shared_state::SharedState {
+        let shared = crate::shared_state::SharedState::new::<Mhz64>();
+        shared.set_armed(true);
+        assert!(shared.armed());
+        shared
+    }
+
+    fn command(cmd: u16) -> TransferAction {
+        TransferAction::DshotCommand {
+            cmd,
+            telemetry: false,
+        }
+    }
+
+    /// A config-changing command publishes exactly the changed byte to main
+    /// (the write the harness copy never made) and the direction.
+    #[test]
+    fn dispatch_command_publishes_config_diff() {
+        let shared = armed_shared();
+        let mut isr = Isr::new(false);
+        for _ in 0..6 {
+            assert_eq!(
+                isr.run(&shared, command(crate::dshot::commands::DIRECTION_REVERSED))
+                    .0,
+                1
+            );
+        }
+        assert_eq!(isr.config.dir_reversed, 1);
+        assert!(!isr.forward);
+        assert!(!shared.forward());
+        let off = core::mem::offset_of!(crate::config::EepromConfig, dir_reversed) as u8;
+        assert_eq!(shared.pop_config_write(), Some((off, 1)));
+        assert_eq!(shared.pop_config_write(), None);
+    }
+
+    /// Beacon commands become the tick tone request.
+    #[test]
+    fn dispatch_beacon_requests_tone() {
+        let shared = armed_shared();
+        let mut isr = Isr::new(false);
+        isr.run(&shared, command(3));
+        assert_eq!(shared.take_tone_request(), 3);
+    }
+
+    /// EDT arm gate: throttle is held until EDT_ENABLE arms it, zero always
+    /// passes and disarms, and EDT_ENABLE queues the EDT init frame.
+    #[test]
+    fn dispatch_edt_arm_gate() {
+        let shared = armed_shared();
+        let mut isr = Isr::new(true);
+        let throttle = |value| TransferAction::DshotThrottle {
+            value,
+            telemetry: false,
+        };
+        shared.set_newinput(7);
+        isr.run(&shared, throttle(500));
+        assert_eq!(shared.newinput(), 7, "held before EDT arms");
+        for _ in 0..6 {
+            isr.run(&shared, command(crate::dshot::commands::EDT_ENABLE));
+        }
+        assert!(isr.edt_armed);
+        assert!(matches!(
+            isr.edt.next_frame(0, 0, 0),
+            crate::edt::EdtFrame::Extended(crate::edt::EDT_INIT_FRAME)
+        ));
+        isr.run(&shared, throttle(500));
+        assert_eq!(shared.newinput(), 500, "passes once armed");
+        isr.run(&shared, throttle(0));
+        assert_eq!(shared.newinput(), 0);
+        assert!(!isr.edt_armed, "zero disarms");
+        isr.run(&shared, throttle(500));
+        assert_eq!(shared.newinput(), 0, "held again");
+    }
+
+    /// Servo calibration persists both thresholds, publishes both bytes and
+    /// asks main to save (the harness copy did not publish).
+    #[test]
+    fn dispatch_servo_calibration_publishes_thresholds() {
+        let shared = armed_shared();
+        let mut isr = Isr::new(false);
+        isr.run(
+            &shared,
+            TransferAction::ServoCalibrationDone {
+                low_threshold: 51,
+                high_threshold: 99,
+            },
+        );
+        use crate::config::EepromConfig;
+        assert_eq!(
+            (
+                isr.config.servo_low_threshold,
+                isr.config.servo_high_threshold
+            ),
+            (51, 99)
+        );
+        let lo = core::mem::offset_of!(EepromConfig, servo_low_threshold) as u8;
+        let hi = core::mem::offset_of!(EepromConfig, servo_high_threshold) as u8;
+        assert_eq!(shared.pop_config_write(), Some((lo, 51)));
+        assert_eq!(shared.pop_config_write(), Some((hi, 99)));
+        assert!(shared.save_settings_flag());
+    }
+
+    /// DShot detection hands the port its output prescaler; no command hook.
+    #[test]
+    fn dispatch_detection_sets_output_prescaler() {
+        let shared = crate::shared_state::SharedState::new::<Mhz64>();
+        let mut isr = Isr::new(false);
+        let (hooked, psc) = isr.run(
+            &shared,
+            TransferAction::InputDetected(DetectedProtocol::Dshot),
+        );
+        assert_eq!((hooked, psc), (0, Some(1)));
+        assert!(shared.input_set() && shared.dshot());
     }
 }

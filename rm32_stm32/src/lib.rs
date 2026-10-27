@@ -117,6 +117,8 @@ mod panic;
 pub mod phase;
 pub mod regs;
 #[cfg(feature = "debuguart")]
+pub mod run_summary;
+#[cfg(feature = "debuguart")]
 pub mod softuart;
 pub mod stub;
 pub mod telem_hal;

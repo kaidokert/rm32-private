@@ -7,8 +7,7 @@
 use crate::diag::{DIAG, DiagSink, IsrSite};
 use crate::isr::{self, TargetIsrState};
 use crate::mcu::ChipConfig;
-use rm32::hal::{DshotOutputPrescaler, InputCapture};
-use rm32::transfer::{DetectedProtocol, TransferAction};
+use rm32::hal::InputCapture;
 
 /// Single-core ISR-local cell for zero-overhead mutable ISR state.
 ///
@@ -75,12 +74,13 @@ static ISR_LOCAL: IsrCell = IsrCell::new();
 /// excursion = |thiszc*1000/avg - 1000| permille vs the rolling
 /// average (e_com/3). EXC_N counts >250 permille (the clone's ">25%"
 /// bucket), EXC_MAX holds the worst permille, EXC_COMMS counts locked
-/// commutations measured. Cumulative; host computes segment deltas.
+/// commutations measured (all chips: the `[run]` summary's `comms`).
+/// Cumulative; host computes segment deltas.
 #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static EXC_N: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
 pub static EXC_MAX: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-#[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+#[cfg(feature = "debuguart")]
 pub static EXC_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Onboard flight recorder (poll-law-safe charts): every 0.5s (10k
@@ -257,48 +257,25 @@ pub fn handle_tim6() {
     // idle duty writes would mute it — re-assert the tone duty every
     // tick (one HAL write, constant cost). Aborts instantly on running.
     {
-        use rm32::bridge::Bridge as _;
-        use rm32::hal::{MotorHal as _, PhaseOutput as _};
-        use rm32::tone::ToneAction;
+        use rm32::hal::MotorHal as _;
         let req = shared.take_tone_request();
-        match state
-            .tone
-            .tick::<crate::platform::StmPlatform>(req, shared.running())
-        {
-            ToneAction::StartNote(n) => {
+        let running = shared.running();
+        rm32::tone::step::<crate::platform::StmPlatform, _, _, _>(
+            &mut state.tone,
+            req,
+            running,
+            &state.config,
+            crate::mcu::Chip::TIM1_AUTORELOAD,
+            || state.hal.bridge(),
+            |_event| {
                 #[cfg(feature = "debuguart")]
-                bump_single_writer(&TONE_STARTS);
-                let mut bridge = state.hal.bridge();
-                bridge.set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
-                bridge.set_tone_divider(n.prescaler);
-                // AM32 sounds.c setVolume(): CCR = beep_volume(0-11) * 3.
-                let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                bridge.set_duty_all(vol);
-                // The core's drive decision (rm32::bridge::drive_complementary)
-                // reduces to the config bit here: StartNote is only returned
-                // while the motor is not running, and old_routine is a
-                // running mode. AM32's tones likewise follow comp_pwm alone.
-                bridge.com_step(n.step, state.config.use_comp_pwm());
-            }
-            ToneAction::Silence => {
-                #[cfg(feature = "debuguart")]
-                if shared.running() {
-                    bump_single_writer(&TONE_ABORTS);
-                } else {
-                    bump_single_writer(&TONE_ENDS);
+                match _event {
+                    rm32::tone::ToneEvent::Start => bump_single_writer(&TONE_STARTS),
+                    rm32::tone::ToneEvent::Silence if running => bump_single_writer(&TONE_ABORTS),
+                    rm32::tone::ToneEvent::Silence => bump_single_writer(&TONE_ENDS),
                 }
-                let mut bridge = state.hal.bridge();
-                bridge.all_off();
-                bridge.set_tone_divider(0);
-                bridge.set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
-            }
-            ToneAction::Idle => {
-                if state.tone.active() {
-                    let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                    state.hal.bridge().set_duty_all(vol);
-                }
-            }
-        }
+            },
+        );
     }
 
     // Comparator-level history (deaf-hiccup discriminator): one comp
@@ -401,32 +378,35 @@ pub fn handle_tim14() {
         state.config.is_bidirectional(),
         state.config.use_strict_changeover(),
     );
-    // Parity re-qual excursion counters (clone metric).
-    #[cfg(all(feature = "debuguart", feature = "stm32l431"))]
+    // Locked-commutation count (all chips) + parity re-qual excursion
+    // counters (clone metric, L431: the M0 has no hardware divide) —
+    // measured on every LOCKED commutation, whole envelope.
+    #[cfg(feature = "debuguart")]
     {
         use core::sync::atomic::Ordering;
         let tz = state.bemf.this_zc_time() as u32;
-        // Parity re-qual excursion counters (clone metric) — measured on
-        // every LOCKED commutation, whole envelope.
         if shared.running() && !shared.old_routine() && tz > 0 {
-            let avg = (shared.e_com_time() / 3).max(1) as u32;
-            let permille = if tz >= avg {
-                (tz - avg) * 1000 / avg
-            } else {
-                (avg - tz) * 1000 / avg
-            };
             EXC_COMMS.store(
                 EXC_COMMS.load(Ordering::Relaxed).wrapping_add(1),
                 Ordering::Relaxed,
             );
-            if permille > 250 {
-                EXC_N.store(
-                    EXC_N.load(Ordering::Relaxed).wrapping_add(1),
-                    Ordering::Relaxed,
-                );
-            }
-            if permille > EXC_MAX.load(Ordering::Relaxed) {
-                EXC_MAX.store(permille, Ordering::Relaxed);
+            #[cfg(feature = "stm32l431")]
+            {
+                let avg = (shared.e_com_time() / 3).max(1) as u32;
+                let permille = if tz >= avg {
+                    (tz - avg) * 1000 / avg
+                } else {
+                    (avg - tz) * 1000 / avg
+                };
+                if permille > 250 {
+                    EXC_N.store(
+                        EXC_N.load(Ordering::Relaxed).wrapping_add(1),
+                        Ordering::Relaxed,
+                    );
+                }
+                if permille > EXC_MAX.load(Ordering::Relaxed) {
+                    EXC_MAX.store(permille, Ordering::Relaxed);
+                }
             }
         }
     }
@@ -599,15 +579,12 @@ pub fn handle_dma_tc() {
         if state.hal.input.is_output() {
             state.hal.input.start_capture();
         } else {
-            let gcr = state.hal.input.gcr_buffer();
-
-            // EDT: decide whether to send eRPM or extended data frame
-            let value_12bit = match state.edt.next_frame(
-                shared.actual_current(),
-                shared.battery_voltage(),
-                shared.degrees_celsius(),
-            ) {
-                rm32::edt::EdtFrame::Extended(v) => {
+            rm32::edt::encode_response(
+                &mut state.edt,
+                shared,
+                state.hal.input.gcr_buffer(),
+                <crate::platform::StmPlatform as rm32::platform::Platform>::GCR_SHIFT,
+                |_v| {
                     // EDT-debug: count typed frames actually sent + latch
                     // the last value (read by the [edt] heartbeat line).
                     #[cfg(feature = "debuguart")]
@@ -617,19 +594,9 @@ pub fn handle_dma_tc() {
                             EDT_SENT.load(Ordering::Relaxed).wrapping_add(1),
                             Ordering::Relaxed,
                         );
-                        EDT_LAST.store(v, Ordering::Relaxed);
+                        EDT_LAST.store(_v, Ordering::Relaxed);
                     }
-                    v
-                }
-                rm32::edt::EdtFrame::Erpm => {
-                    rm32::dshot::erpm_to_12bit(shared.e_com_time() as u16, shared.running())
-                }
-            };
-            rm32::dshot::encode_gcr_frame(
-                value_12bit,
-                gcr,
-                7,
-                <crate::platform::StmPlatform as rm32::platform::Platform>::GCR_SHIFT,
+                },
             );
 
             state.hal.input.start_gcr_output();
@@ -689,35 +656,21 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     );
     shared.set_zero_input_count(zic);
 
-    match actions.action {
-        TransferAction::InputDetected(proto) => {
-            shared.set_input_set(true);
-            match proto {
-                DetectedProtocol::Dshot => {
-                    shared.set_dshot(true);
-                    if let Some(prescaler) = actions.next_capture.prescaler {
-                        state.hal.input.set_output_prescaler(
-                            DshotOutputPrescaler::new(prescaler)
-                                .expect("invalid DShot output prescaler"),
-                        );
-                    }
-                }
-                DetectedProtocol::Servo => shared.set_servo_pwm(true),
-            }
-        }
-        TransferAction::DshotThrottle { value, telemetry } => {
-            if !state.edt_arm_enable || state.edt_armed || value == 0 {
-                shared.set_newinput(value);
-            }
-            if value == 0 && state.edt_arm_enable {
-                state.edt_armed = false;
-            }
-            if telemetry {
-                shared.set_send_telemetry(true);
-            }
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::DshotCommand { cmd, telemetry } => {
+    let input = &mut state.hal.input;
+    rm32::transfer::dispatch(
+        &actions,
+        shared,
+        rm32::transfer::InputContext {
+            config: &mut state.config,
+            cmd: &mut state.cmd,
+            edt: &mut state.edt,
+            forward: &mut state.forward,
+            edt_armed: &mut state.edt_armed,
+            edt_arm_enable: state.edt_arm_enable,
+            frametime_low: &mut state.frametime_low,
+            frametime_high: &mut state.frametime_high,
+        },
+        |cmd| {
             // Bench experiment lever (cmds 42/47, unassigned in the
             // DSHOT command space): level-set the PB6 print-blast used
             // by the poll-print-disturbance A/B (item 7). Level rather
@@ -729,95 +682,12 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
                 PRINT_BLAST.store(cmd == 42, Ordering::Relaxed);
             }
             // Command-arrival telemetry (EDT handshake debug): count every
-            // decoded command frame and publish the last cmd id. Rides the
-            // post-detection-idle dbg fields in the [loop] line
-            // (bidir_evt = count, hi_pin_n = last cmd).
+            // decoded command frame and publish the last cmd id.
             DIAG.dshot_command(cmd as u8);
-            shared.set_newinput(0);
-            if telemetry {
-                shared.set_send_telemetry(true);
-            }
-            shared.set_signal_timeout(0);
-            let old_config = state.config;
-            let result = state.cmd.process(
-                cmd,
-                shared.armed(),
-                shared.running(),
-                &mut state.config,
-                &mut state.forward,
-                &mut state.edt_armed,
-                state.edt_arm_enable,
-            );
-            for (offset, (old, new)) in old_config
-                .as_bytes()
-                .iter()
-                .zip(state.config.as_bytes().iter())
-                .enumerate()
-            {
-                if old != new {
-                    shared.push_config_write(offset as u8, *new);
-                }
-            }
-            match result {
-                rm32::dshot_commands::CommandResult::SaveSettings => {
-                    shared.set_save_settings_flag(true);
-                }
-                rm32::dshot_commands::CommandResult::PlayTone(tone) => {
-                    // A3: beacons route through the tick tone stepper.
-                    shared.set_tone_request(tone);
-                }
-                rm32::dshot_commands::CommandResult::SendEscInfo => {
-                    shared.set_send_esc_info_flag(true);
-                }
-                rm32::dshot_commands::CommandResult::ProgrammingCommit { position, value } => {
-                    // A4: arbitrary-byte programming writes reach main too.
-                    shared.push_config_write(position as u8, value);
-                }
-                _ => {}
-            }
-            shared.set_forward(state.forward);
-            if state.cmd.take_edt_init() {
-                state.edt.request_init();
-            }
-            if state.cmd.take_edt_deinit() {
-                state.edt.request_deinit();
-            }
-        }
-        TransferAction::ServoThrottle(value) => {
-            shared.set_newinput(value);
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::ServoCalibrating => {
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::ServoCalibrationDone {
-            low_threshold,
-            high_threshold,
-        } => {
-            // Persist calibration to EEPROM config; main loop will save to
-            // flash. A4: publish the bytes so main's copy is current when
-            // the save flag is acted on.
-            state.config.servo_low_threshold = low_threshold;
-            state.config.servo_high_threshold = high_threshold;
-            shared.push_config_write(
-                core::mem::offset_of!(rm32::config::EepromConfig, servo_low_threshold) as u8,
-                low_threshold,
-            );
-            shared.push_config_write(
-                core::mem::offset_of!(rm32::config::EepromConfig, servo_high_threshold) as u8,
-                high_threshold,
-            );
-            shared.set_save_settings_flag(true);
-            shared.set_signal_timeout(0);
-        }
-        TransferAction::None => {}
-    }
-    if let Some((low, high)) = actions.frametime {
-        state.frametime_low = low;
-        state.frametime_high = high;
-    }
+        },
+        |prescaler| input.set_output_prescaler(prescaler),
+    );
     if actions.bidir_detected {
-        shared.set_dshot_telemetry(true);
         DIAG.bidir_detected();
         // BENCH: auto-start EDT at bidir commit. Production activation is
         // AM32-verbatim (DSHOT cmd 13, 6x, while armed+stopped) — but BF
@@ -860,13 +730,5 @@ pub fn handle_crsf_byte(byte: u8) {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
-    if let Some(rm32::crsf::CrsfResult::Channels(channels)) = state.crsf.feed(byte) {
-        let throttle =
-            rm32::crsf::CrsfParser::channel_to_throttle(channels[rm32::crsf::THROTTLE_CHANNEL]);
-        shared.set_newinput(throttle);
-        shared.set_signal_timeout(0);
-        if !shared.input_set() {
-            shared.set_input_set(true);
-        }
-    }
+    state.crsf.dispatch_byte(byte, shared);
 }
