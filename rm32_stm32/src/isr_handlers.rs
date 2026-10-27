@@ -256,48 +256,25 @@ pub fn handle_tim6() {
     // idle duty writes would mute it — re-assert the tone duty every
     // tick (one HAL write, constant cost). Aborts instantly on running.
     {
-        use rm32::bridge::Bridge as _;
-        use rm32::hal::{MotorHal as _, PhaseOutput as _};
-        use rm32::tone::ToneAction;
+        use rm32::hal::MotorHal as _;
         let req = shared.take_tone_request();
-        match state
-            .tone
-            .tick::<crate::platform::StmPlatform>(req, shared.running())
-        {
-            ToneAction::StartNote(n) => {
+        let running = shared.running();
+        rm32::tone::step::<crate::platform::StmPlatform, _, _, _>(
+            &mut state.tone,
+            req,
+            running,
+            &state.config,
+            crate::mcu::Chip::TIM1_AUTORELOAD,
+            || state.hal.bridge(),
+            |_event| {
                 #[cfg(feature = "debuguart")]
-                bump_single_writer(&TONE_STARTS);
-                let mut bridge = state.hal.bridge();
-                bridge.set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
-                bridge.set_tone_divider(n.prescaler);
-                // AM32 sounds.c setVolume(): CCR = beep_volume(0-11) * 3.
-                let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                bridge.set_duty_all(vol);
-                // The core's drive decision (rm32::bridge::drive_complementary)
-                // reduces to the config bit here: StartNote is only returned
-                // while the motor is not running, and old_routine is a
-                // running mode. AM32's tones likewise follow comp_pwm alone.
-                bridge.com_step(n.step, state.config.use_comp_pwm());
-            }
-            ToneAction::Silence => {
-                #[cfg(feature = "debuguart")]
-                if shared.running() {
-                    bump_single_writer(&TONE_ABORTS);
-                } else {
-                    bump_single_writer(&TONE_ENDS);
+                match _event {
+                    rm32::tone::ToneEvent::Start => bump_single_writer(&TONE_STARTS),
+                    rm32::tone::ToneEvent::Silence if running => bump_single_writer(&TONE_ABORTS),
+                    rm32::tone::ToneEvent::Silence => bump_single_writer(&TONE_ENDS),
                 }
-                let mut bridge = state.hal.bridge();
-                bridge.all_off();
-                bridge.set_tone_divider(0);
-                bridge.set_period(crate::mcu::Chip::TIM1_AUTORELOAD);
-            }
-            ToneAction::Idle => {
-                if state.tone.active() {
-                    let vol = (state.config.beep_volume.min(11) as u16) * 3;
-                    state.hal.bridge().set_duty_all(vol);
-                }
-            }
-        }
+            },
+        );
     }
 
     // Comparator-level history (deaf-hiccup discriminator): one comp
@@ -598,15 +575,12 @@ pub fn handle_dma_tc() {
         if state.hal.input.is_output() {
             state.hal.input.start_capture();
         } else {
-            let gcr = state.hal.input.gcr_buffer();
-
-            // EDT: decide whether to send eRPM or extended data frame
-            let value_12bit = match state.edt.next_frame(
-                shared.actual_current(),
-                shared.battery_voltage(),
-                shared.degrees_celsius(),
-            ) {
-                rm32::edt::EdtFrame::Extended(v) => {
+            rm32::edt::encode_response(
+                &mut state.edt,
+                shared,
+                state.hal.input.gcr_buffer(),
+                <crate::platform::StmPlatform as rm32::platform::Platform>::GCR_SHIFT,
+                |_v| {
                     // EDT-debug: count typed frames actually sent + latch
                     // the last value (read by the [edt] heartbeat line).
                     #[cfg(feature = "debuguart")]
@@ -616,19 +590,9 @@ pub fn handle_dma_tc() {
                             EDT_SENT.load(Ordering::Relaxed).wrapping_add(1),
                             Ordering::Relaxed,
                         );
-                        EDT_LAST.store(v, Ordering::Relaxed);
+                        EDT_LAST.store(_v, Ordering::Relaxed);
                     }
-                    v
-                }
-                rm32::edt::EdtFrame::Erpm => {
-                    rm32::dshot::erpm_to_12bit(shared.e_com_time() as u16, shared.running())
-                }
-            };
-            rm32::dshot::encode_gcr_frame(
-                value_12bit,
-                gcr,
-                7,
-                <crate::platform::StmPlatform as rm32::platform::Platform>::GCR_SHIFT,
+                },
             );
 
             state.hal.input.start_gcr_output();
@@ -762,13 +726,5 @@ pub fn handle_crsf_byte(byte: u8) {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
-    if let Some(rm32::crsf::CrsfResult::Channels(channels)) = state.crsf.feed(byte) {
-        let throttle =
-            rm32::crsf::CrsfParser::channel_to_throttle(channels[rm32::crsf::THROTTLE_CHANNEL]);
-        shared.set_newinput(throttle);
-        shared.set_signal_timeout(0);
-        if !shared.input_set() {
-            shared.set_input_set(true);
-        }
-    }
+    state.crsf.dispatch_byte(byte, shared);
 }

@@ -197,6 +197,69 @@ impl ToneScheduler {
     }
 }
 
+/// Tone duty, AM32 `sounds.c` `setVolume()`: CCR = beep_volume (0-11) * 3.
+pub const fn tone_duty(beep_volume: u8) -> u16 {
+    (if beep_volume > 11 { 11 } else { beep_volume }) as u16 * 3
+}
+
+/// A tone transition, for a port's counters (`step`'s hook).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ToneEvent {
+    Start,
+    Silence,
+}
+
+/// One control tick of the tone stepper applied to the bridge (S7.4):
+/// start a note (motor period, pitch divider, AM32 volume duty, the note's
+/// winding pair), silence it, or re-assert the duty while a note plays
+/// (the control path's idle duty writes would mute it). `base_period` is
+/// the motor PWM period the bridge returns to. `bridge` makes the bridge
+/// handle, only on a path that writes. `on_event` runs first on a start or
+/// silence.
+///
+/// Drive is the config's `comp_pwm` bit alone: a note only starts while the
+/// motor is not running, and old_routine is a running mode, so the core's
+/// drive decision (`bridge::drive_complementary`) reduces to it; AM32's
+/// tones likewise follow comp_pwm alone.
+#[inline(always)]
+pub fn step<P, B, M, F>(
+    tone: &mut ToneScheduler,
+    request: u8,
+    running: bool,
+    config: &crate::config::EepromConfig,
+    base_period: u16,
+    bridge: M,
+    on_event: F,
+) where
+    P: crate::constants::Timing,
+    B: crate::bridge::Bridge,
+    M: FnOnce() -> B,
+    F: FnOnce(ToneEvent),
+{
+    match tone.tick::<P>(request, running) {
+        ToneAction::StartNote(n) => {
+            on_event(ToneEvent::Start);
+            let mut bridge = bridge();
+            bridge.set_period(base_period);
+            bridge.set_tone_divider(n.prescaler);
+            bridge.set_duty_all(tone_duty(config.beep_volume));
+            bridge.com_step(n.step, config.use_comp_pwm());
+        }
+        ToneAction::Silence => {
+            on_event(ToneEvent::Silence);
+            let mut bridge = bridge();
+            bridge.all_off();
+            bridge.set_tone_divider(0);
+            bridge.set_period(base_period);
+        }
+        ToneAction::Idle => {
+            if tone.active() {
+                bridge().set_duty_all(tone_duty(config.beep_volume));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +342,98 @@ mod tests {
             t.tick::<crate::platform::TestPlatform>(3, true),
             ToneAction::Idle
         ));
+    }
+
+    /// S7.4 recording bridge: the writes `step` makes, in order.
+    #[derive(Default)]
+    struct Rec {
+        log: [(u8, u16, u16); 8],
+        n: usize,
+    }
+    impl Rec {
+        fn push(&mut self, op: u8, a: u16, b: u16) {
+            self.log[self.n] = (op, a, b);
+            self.n += 1;
+        }
+        fn take(&mut self) -> ([(u8, u16, u16); 8], usize) {
+            let r = (self.log, self.n);
+            *self = Self::default();
+            r
+        }
+    }
+    impl crate::hal::PhaseOutput for Rec {
+        fn com_step(&mut self, step: u8, complementary: bool) {
+            self.push(b'c', step as u16, complementary as u16);
+        }
+        fn all_off(&mut self) {
+            self.push(b'o', 0, 0);
+        }
+        fn full_brake(&mut self) {}
+        fn all_pwm(&mut self, _: bool) {}
+        fn proportional_brake(&mut self) {}
+    }
+    impl crate::bridge::Bridge for Rec {
+        fn set_duty_all(&mut self, compare: u16) {
+            self.push(b'd', compare, 0);
+        }
+        fn set_phase_duties(&mut self, _: u16, _: u16, _: u16) {}
+        fn set_period(&mut self, period: u16) {
+            self.push(b'p', period, 0);
+        }
+        fn latch(&mut self) {}
+        fn set_dead_time_override(&mut self, _: u16) {}
+        fn set_tone_divider(&mut self, div: u16) {
+            self.push(b'v', div, 0);
+        }
+    }
+
+    /// S7.4: `step` applies AM32's note sequence (period, pitch, volume
+    /// duty clamped at 11 * 3, the note's windings with comp_pwm), re-asserts
+    /// the duty while the note plays, and silences on running.
+    #[test]
+    fn step_drives_the_bridge() {
+        let mut t = ToneScheduler::default();
+        let mut rec = Rec::default();
+        let config = crate::config::EepromConfig {
+            beep_volume: 20,
+            comp_pwm: 1,
+            ..Default::default()
+        };
+        let mut ev = None;
+        let mut run =
+            |t: &mut ToneScheduler, rec: &mut Rec, req, running, ev: &mut Option<ToneEvent>| {
+                step::<crate::platform::TestPlatform, _, _, _>(
+                    t,
+                    req,
+                    running,
+                    &config,
+                    3332,
+                    || &mut *rec,
+                    |e| *ev = Some(e),
+                )
+            };
+        run(&mut t, &mut rec, TONE_BEACON_BASE, false, &mut ev);
+        let n = DEFAULT_TONE[0];
+        let (log, len) = rec.take();
+        assert_eq!(ev.take(), Some(ToneEvent::Start));
+        assert_eq!(
+            &log[..len],
+            &[
+                (b'p', 3332, 0),
+                (b'v', n.prescaler, 0),
+                (b'd', 33, 0),
+                (b'c', n.step as u16, 1)
+            ]
+        );
+        run(&mut t, &mut rec, 0, false, &mut ev);
+        let (log, len) = rec.take();
+        assert_eq!((ev, &log[..len]), (None, &[(b'd', 33, 0)][..]));
+        run(&mut t, &mut rec, 0, true, &mut ev);
+        let (log, len) = rec.take();
+        assert_eq!(ev.take(), Some(ToneEvent::Silence));
+        assert_eq!(&log[..len], &[(b'o', 0, 0), (b'v', 0, 0), (b'p', 3332, 0)]);
+        run(&mut t, &mut rec, 0, false, &mut ev);
+        assert_eq!((ev, rec.take().1), (None, 0), "idle: no writes");
+        assert_eq!(tone_duty(5), 15);
     }
 }
