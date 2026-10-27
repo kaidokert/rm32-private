@@ -94,6 +94,12 @@ def summarize(js: pathlib.Path, tail: float):
     }
 
 
+def band_key(s) -> str:
+    """Bands are keyed `board/s00-rN-name`: a step tag (`s06.3c-`) or a
+    battery image tag (`batt63b-`) maps to `s00-`."""
+    return f"{s['board']}/{re.sub(r'^(s[\d.]+|batt)[a-z0-9]*-', 's00-', s['test'])}"
+
+
 def check(out, bands) -> int:
     """A capture passes when it has no kill, no desync, the band's segment
     count, and every segment's duty/eHz/mA inside [lo, hi]. A capture whose
@@ -106,7 +112,7 @@ def check(out, bands) -> int:
     binz run without an r-line `i50max` fails."""
     fails = 0
     for s in out:
-        key = f"{s['board']}/{re.sub(r'^s[\d.]+[a-z0-9]*-', 's00-', s['test'])}"
+        key = band_key(s)
         b = bands.get(key)
         why = []
         if b is None:
@@ -171,7 +177,7 @@ def main() -> int:
             raise SystemExit(f"refusing bands: killed runs {bad}")
         groups: dict[tuple, list] = {}
         for s in out:
-            groups.setdefault((s["board"], s["test"]), []).append(s)
+            groups.setdefault(tuple(band_key(s).split("/", 1)), []).append(s)
         floor = {k: float(v) for k, v in (f.split("=") for f in a.ma_floor)}
         bands = {}
         for (board, test), runs in sorted(groups.items()):

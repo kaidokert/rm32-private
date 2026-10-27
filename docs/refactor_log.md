@@ -1297,3 +1297,24 @@ steps' battery batch is therefore done, but **no step of increment 6 has
 a PSU band check**; S6.1-S6.3 PSU R1-R4 can be flown in one session when
 the PSU is back. Calls for review: 29-37 (32 is the open one: binz R3
 slam high-mode rate).
+
+## Bands rebuilt on the battery-parallel supply (2026-10-26)
+
+The bench supply is now a 3S2P pack wired in parallel with the PSU (the
+PSU gives ~2 A at full speed, the pack the rest and recharges between
+runs; no sag). The operator keeps it. Currents read 1-3 % above the PSU
+bands (Call 31), so the battery gets its own: `docs/gc_bands_batt.json`,
+from the 16 `batt63b` runs (gc-s06.3-psu battery image, 4 interleaved
+R1-R4 rounds per board, all dsy = 0, no kills), v4 recipe plus a binz mA
+floor: `--ma-floor l431=30 --ma-floor binz=30 --min-settled 1.0`. The
+binz floor is new: at 10 % its settled mA scatters sd ~10 mA (absolute,
+72 R3 runs over four A/B-equal images), so +-5 % (~+-9 mA) of 4 tight
+runs missed equal-code runs by a few mA; 30 = 3 sd, the L431's value.
+`gc_summary.py` maps `battNN*-` tags to the `s00-` band keys
+(`band_key`, also used when building).
+
+Checks: self 32/32; every other battery run today passes (batt63a 24/24,
+batt62f 38/38, batt62a 33/33, batt61a/b 4/4); falsifier: the PSU s00
+runs fail 20/32 (59 segments out). `gc_bands_s00.json` is unchanged and
+still passes its own runs. From here, step checks on this bench use
+`--check docs/gc_bands_batt.json`; this closes the Call 31 question.
