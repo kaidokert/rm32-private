@@ -7,11 +7,15 @@ mechanism), verify clean decode with FRESH evidence (settle past the
 reboot churn, flush the serial backlog, then demand two consecutive
 healthy samples: crc advancing, crc_fail delta zero), spin 25% for 6 s
 through the BF motor override, and confirm post-exit recovery. Records a
-PASS/FAIL row per protocol.
+PASS/FAIL row per protocol. A spin passes only on the ESC's own `[run]`
+session summary (debuguart, printed after the stop): exactly one start
+and zc_pk >= MIN_ZC, i.e. the BEMF loop closed. Heartbeat silence alone
+(the old criterion) cannot tell a spin from a choking restart loop.
 
 Bidir phase (--bidir): sets dshot_bidir=ON at DSHOT300, watches for the
-self-validating commit (proto=BiDShot), then reads BF's
-dshot_telemetry_info for the ESC's GCR responses.
+self-validating commit (proto=BiDShot), then spins with BF's
+dshot_telemetry_info read mid-hold: the leg also needs BF eRPM > 0 with
+0.00 % invalid.
 
 Kill guards: motor restored to 1000 + CLI exited on EVERY path; the
 firmware bench guard (OC/vbat, latched) is armed underneath.
@@ -28,6 +32,14 @@ import serial
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 from bench_ports import port  # noqa: E402
+
+RUN_RE = re.compile(
+    r"\[run\] starts=(\d+) ms=(\d+) zc_pk=(\d+) ecom_min=(\d+) "
+    r"erpm_pk=(\d+) dsy=(\d+)"
+)
+# BF dshot_telemetry_info motor row: idx TYPE eRPM RPM Hz INVALID ...
+BF_ROW_RE = re.compile(r"^\s*(\d+)\s+\S+\s+(\d+)\s+\d+\s+\d+\s+([\d.]+)%", re.M)
+MIN_ZC = 1000
 
 LOOP_RE = re.compile(
     r"proto=(\S+) mode=(\S+) newinput=(\d+).*?"
@@ -174,32 +186,45 @@ def wait_detect_any(esc, seconds=30, settle=6.0):
     return False, None
 
 
-def spin_check(bf, esc, pct, hold, index):
-    """Motor override via CLI; verify the ESC went Running (heartbeat
-    silence) and recovered after the exit-reboot."""
+def spin_check(bf, esc, pct, hold, index, telem=False):
+    """Motor override via CLI. Evidence: the ESC's `[run]` summary (one
+    start, BEMF loop closed) and, with `telem`, BF's eRPM read mid-hold.
+    Then demand a fresh re-arm after the exit-reboot."""
     value = int(1000 + pct * 10)
     esc.flush()
     bf.enter()
+    run = None
+    bf_rpm = None
     try:
         bf.cmd(f"motor {index} {value}")
-        # During the hold the [loop] heartbeat is suppressed (Running).
-        loop_seen = 0
-        resets = 0
-        for line in esc.lines(hold):
-            if "[loop" in line:
-                loop_seen += 1
-            if "RESET" in line:
-                resets += 1
+        for line in esc.lines(hold / 2):
+            run = RUN_RE.search(line) or run
+        if telem:
+            out = bf.cmd("dshot_telemetry_info", quiet=0.6)
+            for m in BF_ROW_RE.finditer(out):
+                if int(m.group(1)) == index + 1:
+                    bf_rpm = (int(m.group(2)), float(m.group(3)))
+        for line in esc.lines(hold / 2):
+            run = RUN_RE.search(line) or run
         bf.cmd(f"motor {index} 1000")
     finally:
         try:
             bf.exit_and_close()  # FC reboots; ESC does ONE recovery cycle
         except Exception:
             bf.close()
-    # Allow the post-exit reset + re-detect, then demand fresh re-arm.
-    ok_rec, info = wait_detect_any(esc, seconds=30, settle=6.0)
-    running_ok = loop_seen <= 1 and resets == 0
-    return running_ok, ok_rec, loop_seen, resets, info
+    # The summary prints 0.1 s after the stop, or on the reset the FC
+    # reboot triggers.
+    for line in esc.lines(4.0):
+        run = RUN_RE.search(line) or run
+    ok_rec, info = wait_detect_any(esc, seconds=30, settle=2.0)
+    run_d = None
+    if run:
+        k = ("starts", "ms", "zc_pk", "ecom_min", "erpm_pk", "dsy")
+        run_d = dict(zip(k, map(int, run.groups())))
+    running_ok = bool(run_d) and run_d["starts"] == 1 and run_d["zc_pk"] >= MIN_ZC
+    if telem:
+        running_ok = running_ok and bool(bf_rpm) and bf_rpm[0] > 0 and bf_rpm[1] == 0.0
+    return running_ok, ok_rec, run_d, bf_rpm, info
 
 
 def main():
@@ -235,15 +260,14 @@ def main():
             if not ok_det:
                 rows.append((proto, "FAIL(detect)", info))
                 continue
-            run_ok, rec_ok, loops, resets, rinfo = spin_check(bf, esc, a.pct, a.hold, a.index)
+            run_ok, rec_ok, run_d, _, rinfo = spin_check(bf, esc, a.pct, a.hold, a.index)
             verdict = "PASS" if (run_ok and rec_ok) else "FAIL(spin/recover)"
             print(
-                f"  spin: running={'OK' if run_ok else 'NO'} "
-                f"(loops_during_hold={loops} resets={resets}) "
+                f"  spin: closed_loop={'OK' if run_ok else 'NO'} run={run_d} "
                 f"recover={'OK' if rec_ok else 'NO'} {rinfo}",
                 flush=True,
             )
-            rows.append((proto, verdict, rinfo))
+            rows.append((proto, verdict, run_d))
 
         if a.bidir:
             print("\n=== BIDIR (DSHOT300) ===", flush=True)
@@ -255,11 +279,18 @@ def main():
             # confirms → proto flips to BiDShot.
             ok, info = wait_detect(esc, "BiDShot", seconds=50)
             print(f"  bidir commit: {'OK' if ok else 'FAIL'} {info}", flush=True)
-            bf.enter()
-            telem = bf.cmd("dshot_telemetry_info", quiet=0.6)
-            print("  " + telem.replace("\n", "\n  "), flush=True)
-            bf.exit_and_close()
-            rows.append(("BIDIR-DSHOT300", "PASS" if ok else "FAIL(commit)", info))
+            if not ok:
+                rows.append(("BIDIR-DSHOT300", "FAIL(commit)", info))
+            else:
+                run_ok, rec_ok, run_d, bf_rpm, _ = spin_check(
+                    bf, esc, a.pct, a.hold, a.index, telem=True)
+                print(
+                    f"  spin: closed_loop={'OK' if run_ok else 'NO'} run={run_d} "
+                    f"bf_erpm/invalid={bf_rpm} recover={'OK' if rec_ok else 'NO'}",
+                    flush=True,
+                )
+                verdict = "PASS" if (run_ok and rec_ok) else "FAIL(spin/recover)"
+                rows.append(("BIDIR-DSHOT300", verdict, {**(run_d or {}), "bf": bf_rpm}))
     finally:
         # Kill guard: never leave an override or a CLI session behind.
         try:

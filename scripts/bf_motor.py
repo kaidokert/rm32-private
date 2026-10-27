@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--seconds", type=float, default=8.0)
     ap.add_argument("--telem", action="store_true",
                     help="print BF dshot_telemetry_info (bidir eRPM) mid-hold")
+    ap.add_argument("--stay", action="store_true",
+                    help="restore motor but leave the CLI open: no FC reboot, so "
+                         "the ESC keeps its boot session across holds")
     a = ap.parse_args()
     value = int(1000 + a.pct * 10)
     p = serial.Serial(a.port, 115_200, timeout=0.05)
@@ -65,9 +68,12 @@ def main():
         try:
             p.write(f"motor {a.index} 1000\n".encode())
             time.sleep(0.3)
-            p.write(b"exit\n")  # exit reboots? no: 'exit' leaves CLI, keeps config
-            time.sleep(0.3)
-            print("motor restored to 1000, CLI exited")
+            if a.stay:
+                print("motor restored to 1000, CLI left open")
+            else:
+                p.write(b"exit\n")  # exit reboots the FC
+                time.sleep(0.3)
+                print("motor restored to 1000, CLI exited")
         finally:
             p.close()
 
