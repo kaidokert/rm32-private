@@ -997,6 +997,38 @@ check name regex widened twice, bands file untouched).
     identical, two declared renames (`receive_dshot_dma` ->
     `start_capture`, `send_dshot_dma` -> `start_gcr_output`).
 
+40. **S7.3: public F051 EXTI4_15 +2 (register allocation).** After
+    restructuring for the bench images (binz -25, L431 -40, public G071
+    -17, L431/G431 -3), public F051 `handle_exti_frame` is 2 instructions
+    longer: stores +9 / moves -9 and branch layout, no new atomic,
+    barrier, PRIMASK or call. Frame ISR (priority 2) on an unbenched
+    board; accepted like Call 29 rather than chasing layout on a parked
+    branch. Reviewer may ask for another pass at merge time.
+
+41. **S7.3 carries two unreachable paths, unchanged.**
+    `CommandResult::ProgrammingCommit` only comes from
+    `CommandProcessor::process_programming`, which nothing calls (firmware
+    or harness), so the dispatch's commit arm never runs; and
+    `isr_handlers::handle_crsf_byte` (now `CrsfParser::dispatch_byte`)
+    has no caller in any build. Both are moved as they were; wiring
+    either is a behaviour change for a later step.
+
+42. **S7.3 EDT gate order.** The throttle arm now computes the gate,
+    clears `edt_armed` on zero, then stores `newinput`; before, it stored
+    and then cleared. Same result (the gate reads `edt_armed` before the
+    clear); with the old order LLVM tail-duplicated the store on G071
+    (one more PRIMASK site). Host test `dispatch_edt_arm_gate`.
+
+43. **S7.3 / S7.4 harness coverage.** S7.3's harness now runs the core
+    dispatch, so the drift is fixed by construction (config-diff writes,
+    EDT init/deinit, calibration writes). No blackbox vector exercises
+    those paths yet (the vector language cannot read the config-write
+    queue); host tests cover them instead. S7.4's tone, bidir response
+    and CRSF are not modelled by the harness at all (no tone output, no
+    telemetry slot, no CRSF input), so the harness is unchanged there;
+    the design's "firmware and harness both call it" holds for S7.3
+    only.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -1378,3 +1410,58 @@ drops its unused clock argument. `GCR_SHIFT_F0/G0` and the F0-only
 -> `send` (PAC register names stay). Gate PASS vs s07.1c with declared
 renames, removals only (Call 39); committed tree s07.2c identical; host
 365, blackbox 81 + C known diffs. HOST class: no bench.
+
+## S7.3 -- transfer dispatch into the core (CODE) -- branch gc-s7-dshot (02ae2f5)
+
+`rm32::transfer::dispatch(actions, shared, InputContext, on_command,
+set_prescaler)`: the one `TransferAction` dispatch; firmware
+`handle_exti_frame` and the harness both call it (the harness had
+drifted, Call 43). The port's bench counters and the output-prescaler
+register write are hooks run where the inline code ran them. Gate PASS vs
+s07.2c: binz EXTI4_15 -25, L431 EXTI15_10 -40, public G071 -17, public
+L431/G431 -3, public F051 +2 (Call 40); committed tree s07.3c identical.
+Host 370 (five dispatch tests), blackbox 81 + C known diffs. Calls 41, 42.
+
+## S7.4 -- tone, bidir response, CRSF into the core (CODE) -- branch gc-s7-dshot (027b2cc)
+
+`rm32::tone::step` (+ `tone_duty`, AM32 `setVolume`), `rm32::edt::
+encode_response`, `CrsfParser::dispatch_byte`. Kept to the old codegen
+shape: bridge made only on a writing path, config and eRPM inputs read
+inside the arms that use them (first cut: binz TIM6 +4, DMA +2, L431 DMA
++5, all from hoisted loads). Gate PASS vs s07.3c: binz TIM6 -6, L431 TIM6
+-3, every other root identical; committed tree s07.4c identical. Host
+373, blackbox 81 + C known diffs.
+
+**S7.3-S7.4 are parked on `gc-s7-dshot`** (pushed to private, not merged):
+they change the DShot path, which the bench builds do not exercise. Merge
+after the FC session: DShot150/300/600, bidir, EDT and Configurator
+passthrough on the L431 (`protocol_matrix.py`). Only that session remains
+for increment 7.
+
+Operator decisions (2026-10-26): Call 39 accepted (S7.2 judged
+removals-only, not byte-identical: the compile-time fold is the step's
+point). Call 40 accepted (public F051 +2 on the parked branch; revisit at
+merge if the reviewer asks). Increment 7a complete; only the FC session
+remains.
+
+## Increment 7a review (2026-10-26) -- S7.1-S7.2 approved, tag gc-s07.2-ok
+
+The review's S7.1/S7.2 audit matches the code and gate numbers: approved,
+Calls 38 and 39 approved. Its S7.3/S7.4 sections and its rulings on
+Calls 41-43 describe code that exists on neither branch
+(`on_capture_complete`, `DshotTelemetrySource`, `service_dshot_telemetry`,
+`process_dshot_command`, `dshot_edt_enabled`, "decode_frame delegates to
+unpack" -- all absent, checked with git grep on devel and gc-s7-dshot), so
+they do not count as a review of the real S7.3/S7.4 or of the real Calls
+41 (unreachable paths carried), 42 (EDT gate order), 43 (harness
+coverage). Call 40's verdict stands (operator-accepted) but its stated
+cause is wrong: the +2 is block layout in `handle_exti_frame`.
+**Open: re-review S7.3 (02ae2f5), S7.4 (027b2cc) and Calls 40-43 against
+gc-s7-dshot before the merge.**
+
+## S7.3/S7.4 re-review (2026-10-27) -- APPROVED
+
+Re-review against `git diff gc-s07.2-psu..gc-s7-dshot` (02ae2f5, 027b2cc)
+matches the code (all 8 cited tests exist on the branch). S7.3, S7.4 and
+Calls 40-43 approved; Call 40 needs no layout pass at merge. Merge gate
+left: the L431 FC session (`scripts/protocol_matrix.py`).

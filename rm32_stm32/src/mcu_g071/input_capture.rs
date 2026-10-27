@@ -139,13 +139,22 @@ pub fn init_g071() {
 
     gpiob.moder().modify(|_, w| w.moder4().alternate());
     gpiob.afrl().modify(|_, w| w.afr(4).af1());
+    // Pull-up: AM32 main.c `setInputPullUp()` at boot (every G071 target
+    // but NEUTRONRC). Holds the line high while the FC releases it for the
+    // bidir telemetry slot; floating, it fails most frames and never arms.
+    gpiob.pupdr().modify(|_, w| w.pupdr4().pull_up());
 
     dmamux
         .ccr(0)
         .modify(|r, w| unsafe { w.bits((r.bits() & !0x3F) | 32) });
 }
 
-/// Create a new G071 DshotCapture instance.
+/// Create a new G071 DshotCapture instance. `prescaler` is what every
+/// `start_capture` re-arms with, including the return from each bidir
+/// telemetry reply: the DShot300 decode prescaler, as on the L431 (AM32
+/// re-arms with its live `ic_timer_prescaler`). The detection prescaler
+/// (64 / 6) here broke decode after the first reply: no throttle, signal
+/// timeout reset loop.
 pub fn new_capture() -> DshotCapture {
-    GenericCapture::new(G071Dma, G071Timer { prescaler: 64 / 6 }, G071Pin)
+    GenericCapture::new(G071Dma, G071Timer { prescaler: 1 }, G071Pin)
 }
