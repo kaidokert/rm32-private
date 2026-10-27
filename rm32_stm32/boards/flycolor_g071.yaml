@@ -1,6 +1,6 @@
 name: "Flycolor G071"
 mcu: stm32g071
-tuning: rig
+tuning: am32
 dead_time: 40
 bemf_pins:
   phase_a: PB3   # COMP2 INM IO1

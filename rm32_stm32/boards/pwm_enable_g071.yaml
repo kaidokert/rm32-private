@@ -1,6 +1,6 @@
 name: "G071 PWM_EN"
 mcu: stm32g071
-tuning: rig
+tuning: am32
 dead_time: 60
 bridge_enable: true
 bemf_pins:

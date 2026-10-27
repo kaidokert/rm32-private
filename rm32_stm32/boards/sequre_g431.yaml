@@ -1,6 +1,6 @@
 name: "SEQURE G431"
 mcu: stm32g431
-tuning: rig
+tuning: am32
 dead_time: 80
 current_adc_channel: 5
 voltage_adc_channel: 13

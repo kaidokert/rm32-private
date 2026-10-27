@@ -1091,6 +1091,22 @@ check name regex widened twice, bands file untouched).
     misaligned while frames keep arriving -- a fix belongs to the input
     path (re-arm on a CRC-fail run), its own step after S8.
     **Operator: accepted (2026-10-27).**
+48. **S9.3: `sequre_g431` does not build (pre-existing, 2026-10-27).**
+    build.rs panics `Unknown G431 COMP1 INM pin: PA5`, identically at
+    gc-s08.2-ok (checked in a worktree). Not a missing table entry: on the
+    G431 COMP1's INM inputs are PA4/PA0 only (PA5 routes to COMP2), so the
+    yaml's `phase_a: { comp: 1, inm: PA5 }` describes impossible wiring,
+    and AM32 has no G431 Sequre target to take the real pins from. Left
+    as is (yaml says `tuning: am32`); fixing it needs the board's
+    schematic. The other 12 non-rig boards build under `Am32Tuning`.
+49. **S9.3: design §5.8's `type State` not added.** The rig counters
+    (orbit trip count / duty snapshot / snapshot age, 6 bytes) stay in
+    `MainState`. Moving them into a per-policy state type would change
+    the rigs' `MainState` layout and code, and S9 is HOST only because
+    the rig images stay byte-identical (they do: S9.1-S9.3 ELFs
+    ae2941d6 / 6d7b3494). With `Am32Tuning` the counters are dead
+    stores the compiler keeps: 6 bytes of RAM, no behaviour. Revisit if
+    the rig policies go public (#6).
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
@@ -1743,3 +1759,40 @@ API sanity tests. The core stays fully compile-time.
   3 skipped (2 rig vectors + the tuning API test). ISR dumps identical on
   all six; bench ELFs byte-identical to s09.1 (SHA-256 l431 ae2941d6...,
   binz 6d7b3494...). Firmware untouched. Tag gc-s09.2-ok.
+
+## S9.3 -- `Am32Tuning` for the non-rig boards; size report (HOST) -- branch gc/s09
+
+The 13 non-rig board yamls say `tuning: am32`; `neutron_l431` (the L431
+bench image) and `binz_drv8304h_g071` keep `rig`. New
+`scripts/board_sizes.sh` builds each named board's production image
+(no bench features) and prints its sizes with the yaml's tuning. Before
+(all `rig`, s09.2 tree) vs after:
+
+  | board | text rig | text am32 | delta | data | bss |
+  |---|---|---|---|---|---|
+  | flycolor_g071 | 37580 | 37076 | -504 | 1760 | 1140 |
+  | gen_64k_g071 | 39172 | 38660 | -512 | 1760 | 1140 |
+  | iflight_12s_g071 | 37604 | 37068 | -536 | 1760 | 1140 |
+  | iflight_f051 | 36536 | 36008 | -528 | 1752 | 1140 |
+  | mamba_f55_g071 | 37580 | 37076 | -504 | 1760 | 1140 |
+  | protondrive_g431 | 34708 | 34084 | -624 | 1756 | 1136 |
+  | pwm_enable_g071 | 38348 | 37804 | -544 | 1760 | 1140 |
+  | siskin_f051 | 36512 | 35992 | -520 | 1752 | 1140 |
+  | tbs_12s_g071 | 37604 | 37068 | -536 | 1760 | 1140 |
+  | tbs_4in1_g071 | 37580 | 37076 | -504 | 1760 | 1140 |
+  | vimdrones_l431 | 36036 | 35492 | -544 | 1752 | 1140 |
+  | wraith32v2_f051 | 36512 | 35992 | -520 | 1752 | 1140 |
+
+Text shrinks 504-624 bytes per board (the orbit trip, reclimb clamp and
+fast-rotor desync branch compile out of the main loop); data and bss
+unchanged (Call 49). `sequre_g431` does not build on either side (Call
+48).
+
+- **Gate s09.3 vs s09.2: PASS** (Rust 83/83; C 9 known, 3 skipped). ISR
+  dumps identical on all six images, including the three public images
+  that moved to `am32` (G071 gen_64k, F051 siskin, G431 protondrive):
+  the rig code is main-loop only, and the ISR's `DutyKickHalf` arm stays
+  (the action arrives as a runtime enum value; under `Am32Tuning`
+  nothing requests it). Public L431 (neutron, `rig`) unchanged. Rig ELFs
+  byte-identical to s09.2 (l431 ae2941d6..., binz 6d7b3494...). Tag
+  gc-s09.3-ok.
