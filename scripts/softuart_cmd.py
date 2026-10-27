@@ -10,7 +10,7 @@ config offset, `<n>v` write value via the A4 ring, `S` save settings,
 `i` info line, `B` recorder dump, `w` kill.
 
 Usage:
-    softuart_cmd.py [--port COM41] TOKEN:DELAY [TOKEN:DELAY ...]
+    softuart_cmd.py [--port PORT] TOKEN:DELAY [TOKEN:DELAY ...]
     softuart_cmd.py --set FIELD=VALUE [--save]     # by field name
     softuart_cmd.py --get FIELD [FIELD ...]        # from the 'c' dump
 Example — persist round trip on offset 32:
@@ -72,8 +72,13 @@ def run_tokens(p, tokens, raw=False, quiet=False):
             line = line.strip()
             if not line:
                 continue
-            keep = raw or line.startswith(("[eep", "[cfg", "[i ", "[su",
-                                           "SR", "[bench", "[su]"))
+            # Tags anywhere in the line: a reply can land glued to the tail
+            # of a heartbeat line that was mid-transmit.
+            tags = ("[eep", "[cfg", "[i ", "[su", "SR", "[bench")
+            hit = min((i for i in (line.find(t) for t in tags) if i >= 0), default=-1)
+            keep = raw or hit >= 0
+            if hit > 0 and not raw:
+                line = line[hit:]
             if keep:
                 captured.append(line)
                 if not quiet:
@@ -97,7 +102,7 @@ def read_eeprom_bytes(p):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default="COM41")
+    ap.add_argument("--port", default=None, help="default: bench_ports 'l431'")
     ap.add_argument("tokens", nargs="*", metavar="TOKEN:DELAY")
     ap.add_argument("--raw", action="store_true",
                     help="print all captured lines, not just []-tagged ones")
@@ -109,6 +114,10 @@ def main():
                     help="read fields from the persisted EEPROM dump")
     a = ap.parse_args()
 
+    if a.port is None:
+        sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+        from bench_ports import port
+        a.port = port("l431")
     p = serial.Serial(a.port, 115_200, timeout=0.05)
     rc = 0
     try:

@@ -16,7 +16,7 @@ dshot_telemetry_info for the ESC's GCR responses.
 Kill guards: motor restored to 1000 + CLI exited on EVERY path; the
 firmware bench guard (OC/vbat, latched) is armed underneath.
 
-Usage: protocol_matrix.py [--bf COM42] [--esc COM41]
+Usage: protocol_matrix.py [--bf PORT] [--esc PORT] [--index 0]  (ports: bench_ports.py)
        [--protocols DSHOT600,DSHOT150,DSHOT300,PWM] [--bidir] [--pct 25]
 """
 import argparse
@@ -25,6 +25,9 @@ import sys
 import time
 
 import serial
+
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+from bench_ports import port  # noqa: E402
 
 LOOP_RE = re.compile(
     r"proto=(\S+) mode=(\S+) newinput=(\d+).*?"
@@ -171,14 +174,14 @@ def wait_detect_any(esc, seconds=30, settle=6.0):
     return False, None
 
 
-def spin_check(bf, esc, pct, hold):
+def spin_check(bf, esc, pct, hold, index):
     """Motor override via CLI; verify the ESC went Running (heartbeat
     silence) and recovered after the exit-reboot."""
     value = int(1000 + pct * 10)
     esc.flush()
     bf.enter()
     try:
-        bf.cmd(f"motor 0 {value}")
+        bf.cmd(f"motor {index} {value}")
         # During the hold the [loop] heartbeat is suppressed (Running).
         loop_seen = 0
         resets = 0
@@ -187,7 +190,7 @@ def spin_check(bf, esc, pct, hold):
                 loop_seen += 1
             if "RESET" in line:
                 resets += 1
-        bf.cmd("motor 0 1000")
+        bf.cmd(f"motor {index} 1000")
     finally:
         try:
             bf.exit_and_close()  # FC reboots; ESC does ONE recovery cycle
@@ -201,8 +204,10 @@ def spin_check(bf, esc, pct, hold):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bf", default="COM42")
-    ap.add_argument("--esc", default="COM41")
+    ap.add_argument("--bf", default=None, help="default: bench_ports 'bf'")
+    ap.add_argument("--esc", default=None, help="default: bench_ports 'l431'")
+    ap.add_argument("--index", type=int, default=0,
+                    help="BF CLI motor index (L431 = 0, binz = 1)")
     ap.add_argument(
         "--protocols", default="DSHOT600,DSHOT150,DSHOT300,PWM",
         help="comma list; BF names",
@@ -211,6 +216,8 @@ def main():
     ap.add_argument("--pct", type=float, default=25.0)
     ap.add_argument("--hold", type=float, default=6.0)
     a = ap.parse_args()
+    a.bf = a.bf or port("bf")
+    a.esc = a.esc or port("l431")
 
     esc = EscLog(a.esc)
     bf = Bf(a.bf)
@@ -221,13 +228,14 @@ def main():
             print(f"\n=== {proto} ===", flush=True)
             bf.enter()
             bf.cmd(f"set motor_pwm_protocol = {proto}")
+            bf.cmd("set dshot_bidir = OFF")  # plain leg: want DShot, not BiDShot
             bf.save_and_close()  # FC reboots
             ok_det, info = wait_detect(esc, want, seconds=40)
             print(f"  detect: {'OK' if ok_det else 'FAIL'} {info}", flush=True)
             if not ok_det:
                 rows.append((proto, "FAIL(detect)", info))
                 continue
-            run_ok, rec_ok, loops, resets, rinfo = spin_check(bf, esc, a.pct, a.hold)
+            run_ok, rec_ok, loops, resets, rinfo = spin_check(bf, esc, a.pct, a.hold, a.index)
             verdict = "PASS" if (run_ok and rec_ok) else "FAIL(spin/recover)"
             print(
                 f"  spin: running={'OK' if run_ok else 'NO'} "
@@ -255,9 +263,12 @@ def main():
     finally:
         # Kill guard: never leave an override or a CLI session behind.
         try:
+            # ...and restore the bench standard (bidir DSHOT300).
             bf.enter()
-            bf.cmd("motor 0 1000")
-            bf.exit_and_close()
+            bf.cmd(f"motor {a.index} 1000")
+            bf.cmd("set motor_pwm_protocol = DSHOT300")
+            bf.cmd("set dshot_bidir = ON")
+            bf.save_and_close()
         except Exception:
             bf.close()
         esc.close()
