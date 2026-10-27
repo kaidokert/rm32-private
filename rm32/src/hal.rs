@@ -139,7 +139,7 @@ pub trait MotorHal: crate::platform::Platform {
 
 /// Serial telemetry output (KISS protocol)
 pub trait TelemetryUart {
-    fn send_dma(&mut self, data: &[u8]);
+    fn send(&mut self, data: &[u8]);
 }
 
 /// Bidir DShot output timer prescaler.
@@ -166,8 +166,8 @@ impl DshotOutputPrescaler {
 
 /// Input signal capture (DShot/Servo via DMA)
 pub trait InputCapture {
-    fn receive_dshot_dma(&mut self);
-    fn send_dshot_dma(&mut self);
+    fn start_capture(&mut self);
+    fn start_gcr_output(&mut self);
     fn input_pin_state(&self) -> bool;
     fn set_pull_up(&mut self);
     fn set_pull_down(&mut self);
@@ -175,7 +175,7 @@ pub trait InputCapture {
     /// Set inverted input polarity (for boards with signal inversion).
     fn set_inverted(&mut self, _inverted: bool) {}
     /// Access the DMA receive buffer (DShot/servo frames).
-    fn dma_buffer(&self) -> &[u32; 64];
+    fn edges(&self) -> &[u32; 64];
     /// Access the GCR encode buffer (bidirectional DShot telemetry).
     fn gcr_buffer(&mut self) -> &mut [u32; 37];
     /// Whether the input is currently in output mode (bidir DShot TX).

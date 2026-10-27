@@ -135,6 +135,10 @@ struct HarnessPlatform;
 impl rm32::platform::Platform for HarnessPlatform {
     const TICK_HZ: u32 = 20_000;
     const TIMER_HZ: u32 = 2_000_000;
+    /// The harness's 64 MHz (it passed `cpu_mhz` 64) and the F051-class
+    /// GCR shift its telemetry vectors were recorded with.
+    const CAPTURE_HZ: u32 = 64_000_000;
+    const GCR_SHIFT: u8 = 6;
     const VOLTAGE_DIVIDER_X100: u16 = rm32::board::BoardConfig::DEFAULT.voltage_divider_x100;
     const MILLIVOLT_PER_AMP: u16 = rm32::board::BoardConfig::DEFAULT.millivolt_per_amp;
     const CURRENT_OFFSET: i16 = rm32::board::BoardConfig::DEFAULT.current_offset;
@@ -144,6 +148,8 @@ impl rm32::platform::Platform for HarnessPlatform {
 impl rm32::platform::Platform for MockMotorHal {
     const TICK_HZ: u32 = <HarnessPlatform as rm32::platform::Platform>::TICK_HZ;
     const TIMER_HZ: u32 = <HarnessPlatform as rm32::platform::Platform>::TIMER_HZ;
+    const CAPTURE_HZ: u32 = <HarnessPlatform as rm32::platform::Platform>::CAPTURE_HZ;
+    const GCR_SHIFT: u8 = <HarnessPlatform as rm32::platform::Platform>::GCR_SHIFT;
     const VOLTAGE_DIVIDER_X100: u16 =
         <HarnessPlatform as rm32::platform::Platform>::VOLTAGE_DIVIDER_X100;
     const MILLIVOLT_PER_AMP: u16 = <HarnessPlatform as rm32::platform::Platform>::MILLIVOLT_PER_AMP;
@@ -196,7 +202,7 @@ impl hal::Adc for MockAdc {
 
 struct MockTelem;
 impl hal::TelemetryUart for MockTelem {
-    fn send_dma(&mut self, _data: &[u8]) {}
+    fn send(&mut self, _data: &[u8]) {}
 }
 
 // --- Harness state ---
@@ -341,7 +347,7 @@ impl Harness {
 
     fn handle_transfer(&mut self) {
         // Use library TransferState for all input processing
-        let actions = self.transfer.process(
+        let actions = self.transfer.process::<HarnessPlatform>(
             &self.dma_buffer,
             self.shared.input_set(),
             self.dshot,
@@ -356,7 +362,6 @@ impl Harness {
             &mut self.zero_input_count,
             self.frametime_low,
             self.frametime_high,
-            64, // harness cpu_mhz
         );
 
         // Apply transfer actions
@@ -1059,7 +1064,12 @@ fn main() {
             let running = harness.shared.running();
             let value = dshot::erpm_to_12bit(com_time, running);
             let mut gcr = [0u32; 37];
-            dshot::encode_gcr_frame(value, &mut gcr, padding, dshot::GCR_SHIFT_F0);
+            dshot::encode_gcr_frame(
+                value,
+                &mut gcr,
+                padding,
+                <HarnessPlatform as rm32::platform::Platform>::GCR_SHIFT,
+            );
             let mut csum = 0u16;
             let mut cd = value;
             for _ in 0..3 {

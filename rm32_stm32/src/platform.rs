@@ -16,6 +16,9 @@ impl rm32::platform::Platform for StmPlatform {
     const TICK_HZ: u32 = 20_000;
     /// Interval/commutation timer: CPU clock / (TIMER_PSC + 1).
     const TIMER_HZ: u32 = Chip::CPU_FREQUENCY_MHZ * 1_000_000 / (Chip::TIMER_PSC as u32 + 1);
+    /// The input-capture timer runs from the CPU clock.
+    const CAPTURE_HZ: u32 = Chip::CPU_FREQUENCY_MHZ * 1_000_000;
+    const GCR_SHIFT: u8 = Chip::GCR_SHIFT;
     const VOLTAGE_DIVIDER_X100: u16 = board::VOLTAGE_DIVIDER_X100;
     const MILLIVOLT_PER_AMP: u16 = board::MILLIVOLT_PER_AMP;
     const CURRENT_OFFSET: i16 = board::CURRENT_OFFSET;

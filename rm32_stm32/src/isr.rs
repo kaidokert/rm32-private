@@ -46,6 +46,8 @@ where
 {
     const TICK_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TICK_HZ;
     const TIMER_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::TIMER_HZ;
+    const CAPTURE_HZ: u32 = <crate::platform::StmPlatform as rm32::platform::Platform>::CAPTURE_HZ;
+    const GCR_SHIFT: u8 = <crate::platform::StmPlatform as rm32::platform::Platform>::GCR_SHIFT;
     const VOLTAGE_DIVIDER_X100: u16 =
         <crate::platform::StmPlatform as rm32::platform::Platform>::VOLTAGE_DIVIDER_X100;
     const MILLIVOLT_PER_AMP: u16 =

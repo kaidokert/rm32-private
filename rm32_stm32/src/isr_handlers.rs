@@ -63,7 +63,7 @@ impl IsrCell {
             // benchuart: PA2 is USART2 RX — DShot capture stays unarmed.
             // (No print here — this runs at ISR priority on first entry.)
             #[cfg(not(feature = "benchuart"))]
-            state.hal.input.receive_dshot_dma();
+            state.hal.input.start_capture();
         }
         state
     }
@@ -597,7 +597,7 @@ pub fn handle_dma_tc() {
 
     if shared.armed() && shared.dshot_telemetry() {
         if state.hal.input.is_output() {
-            state.hal.input.receive_dshot_dma();
+            state.hal.input.start_capture();
         } else {
             let gcr = state.hal.input.gcr_buffer();
 
@@ -625,9 +625,14 @@ pub fn handle_dma_tc() {
                     rm32::dshot::erpm_to_12bit(shared.e_com_time() as u16, shared.running())
                 }
             };
-            rm32::dshot::encode_gcr_frame(value_12bit, gcr, 7, crate::mcu::Chip::GCR_SHIFT);
+            rm32::dshot::encode_gcr_frame(
+                value_12bit,
+                gcr,
+                7,
+                <crate::platform::StmPlatform as rm32::platform::Platform>::GCR_SHIFT,
+            );
 
-            state.hal.input.send_dshot_dma();
+            state.hal.input.start_gcr_output();
         }
     }
 }
@@ -638,7 +643,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     let state = ISR_LOCAL.get();
     let shared = isr::shared();
 
-    let buf = state.hal.input.dma_buffer();
+    let buf = state.hal.input.edges();
 
     // Snapshot the first 8 edges for the debug ring buffer; the borrow on
     // `buf` outlives the function and would conflict with later
@@ -666,7 +671,7 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
     };
 
     let mut zic = shared.zero_input_count();
-    let actions = state.transfer.process(
+    let actions = state.transfer.process::<crate::platform::StmPlatform>(
         buf,
         shared.input_set(),
         shared.dshot(),
@@ -681,7 +686,6 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
         &mut zic,
         state.frametime_low,
         state.frametime_high,
-        crate::mcu::Chip::CPU_FREQUENCY_MHZ as u8,
     );
     shared.set_zero_input_count(zic);
 

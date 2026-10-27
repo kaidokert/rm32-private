@@ -189,7 +189,7 @@ pub fn init(
     super::input_capture::init_l431();
     let mut input = super::input_capture::new_capture();
     use rm32::hal::InputCapture;
-    input.receive_dshot_dma();
+    input.start_capture();
 
     // ADC
     let adc = super::adc::new_adc();
@@ -197,7 +197,7 @@ pub fn init(
 
     // UART telemetry. `debuguart` feature steals USART1+PB6 for debug logging,
     // so skip the telemetry hardware init in that build — leaves the wrapper
-    // in place (so main.rs still compiles + can call send_dma, which becomes
+    // in place (so main.rs still compiles + can call send, which becomes
     // a harmless no-op on uninitialized DMA) without stomping on debug_uart.
     #[cfg(feature = "debuguart")]
     let telem = super::telemetry_uart::L431TelemUart::post_init();

@@ -369,6 +369,8 @@ mod tests {
             impl Platform for $name {
                 const TICK_HZ: u32 = 20_000;
                 const TIMER_HZ: u32 = 2_000_000;
+                const CAPTURE_HZ: u32 = 64_000_000;
+                const GCR_SHIFT: u8 = 7;
                 const VOLTAGE_DIVIDER_X100: u16 = $div;
                 const MILLIVOLT_PER_AMP: u16 = $mvpa;
                 const CURRENT_OFFSET: i16 = $off;

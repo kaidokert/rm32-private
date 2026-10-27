@@ -184,7 +184,7 @@ fn main() -> ! {
     rm32_stm32::dprintln!("[rm32] wdg ON (2s)");
 
     // --- Configure input capture inversion before moving to ISR ---
-    // NOTE: `receive_dshot_dma()` deferred until after `init_isr_state` —
+    // NOTE: `start_capture()` deferred until after `init_isr_state` —
     // GenericCapture's `dma_buf` is inside the struct, so its address changes
     // when `hal` is moved into IsrState. Arming DMA before the move sets
     // CMAR to a stack address that becomes stale after the move.
@@ -406,7 +406,7 @@ fn main() -> ! {
     let isr = isr::init_isr_state(isr_state);
     #[cfg(not(feature = "benchuart"))]
     {
-        isr.hal.input.receive_dshot_dma();
+        isr.hal.input.start_capture();
         rm32_stm32::dprintln!("[rm32] isr state installed, DMA armed");
     }
     // benchuart: PA2 belongs to USART2 RX — DShot capture is never armed.
@@ -1868,7 +1868,7 @@ fn main() -> ! {
             shared.set_send_esc_info_flag(false);
             let mut info_pkt = [0u8; 49];
             rm32::telemetry::make_info_packet(&mut info_pkt, main_state.config.as_bytes());
-            telem.send_dma(&info_pkt);
+            telem.send(&info_pkt);
         }
 
         // Self-reset when signal_timeout fires (AM32 main.c:1892-1918 behavior).

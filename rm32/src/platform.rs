@@ -10,6 +10,13 @@ pub trait Platform {
     const TICK_HZ: u32;
     /// Interval / commutation timer count rate, Hz.
     const TIMER_HZ: u32;
+    /// Input-capture timer count rate at prescaler 0, Hz. Protocol
+    /// detection sets the prescaler from it (AM32: `CPU_MHZ / 6` for the
+    /// detection frame, `CPU_MHZ - 1` for servo).
+    const CAPTURE_HZ: u32;
+    /// Bidirectional DShot GCR output: one bit is `1 << GCR_SHIFT` timer
+    /// counts (AM32: 6 on F051-class parts, 7 on G071 / L431 / G431).
+    const GCR_SHIFT: u8;
 
     /// Bus voltage divider as its true ratio x100 (11:1 = 1100).
     const VOLTAGE_DIVIDER_X100: u16;
@@ -73,6 +80,8 @@ pub(crate) struct TestPlatform;
 impl Platform for TestPlatform {
     const TICK_HZ: u32 = 20_000;
     const TIMER_HZ: u32 = 2_000_000;
+    const CAPTURE_HZ: u32 = 64_000_000;
+    const GCR_SHIFT: u8 = 7;
     const VOLTAGE_DIVIDER_X100: u16 = 1100;
     const MILLIVOLT_PER_AMP: u16 = 20;
     const CURRENT_OFFSET: i16 = 0;

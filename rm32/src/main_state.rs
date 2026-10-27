@@ -648,7 +648,7 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                 (self.measurements.consumed_current / 1000) as u16, // µAh → mAh
                 self.timing.e_rpm, // already in units of 100 eRPM (600000/e_com_time)
             );
-            telem.send_dma(&pkt);
+            telem.send(&pkt);
             shared.set_send_telemetry(false);
         }
 
@@ -902,7 +902,7 @@ mod tests {
 
     struct MockTelem;
     impl crate::hal::TelemetryUart for MockTelem {
-        fn send_dma(&mut self, _: &[u8]) {}
+        fn send(&mut self, _: &[u8]) {}
     }
 
     fn make_test_main_state() -> MainState<TestPlatform> {

@@ -69,16 +69,16 @@ pub fn unpack(packet: u16, bidirectional: bool) -> DshotFrame {
     }
 }
 
-/// Layer 2 (timestamps): decode a DShot frame from a DMA capture buffer.
-/// `dma_buffer` contains 32 entries (16 pulse pairs).
+/// Layer 2 (timestamps): decode a DShot frame from 32 captured edges.
+/// `edges` contains 32 entries (16 pulse pairs).
 /// `frametime_low`/`frametime_high` define the valid window.
 pub fn decode_frame(
-    dma_buffer: &[u32; 32],
+    edges: &[u32; 32],
     frametime_low: u16,
     frametime_high: u16,
     bidirectional: bool,
 ) -> DshotFrame {
-    let frametime = (dma_buffer[31].wrapping_sub(dma_buffer[0])) as u16;
+    let frametime = (edges[31].wrapping_sub(edges[0])) as u16;
     let halfpulsetime = frametime >> 5;
 
     if frametime <= frametime_low || frametime >= frametime_high {
@@ -87,7 +87,7 @@ pub fn decode_frame(
 
     let mut dpulse = [0u8; 16];
     for i in 0..16 {
-        let pdiff = (dma_buffer[i * 2 + 1].wrapping_sub(dma_buffer[i * 2])) as u16;
+        let pdiff = (edges[i * 2 + 1].wrapping_sub(edges[i * 2])) as u16;
         dpulse[i] = if pdiff > halfpulsetime { 1 } else { 0 };
     }
 
@@ -133,12 +133,6 @@ pub fn decode_frame(
         }
     }
 }
-
-/// GCR output bit shift — MCU-dependent.
-/// F051/F031/CH32V203: 6 (multiply by 64)
-/// All others (G071, G431, L431, F421, etc.): 7 (multiply by 128)
-pub const GCR_SHIFT_F0: u8 = 6;
-pub const GCR_SHIFT_G0: u8 = 7;
 
 /// Layer 1 (bits): the 20-bit GCR word for a 12-bit telemetry value
 /// (value, inverted nibble-XOR checksum, 4b/5b per nibble), MSB first,
@@ -205,14 +199,13 @@ pub fn encode_telemetry_with_shift(
     encode_gcr_frame(value, gcr_out, padding, gcr_shift);
 }
 
-/// Convenience wrapper using F051-compatible shift (for backward compat with tests).
-pub fn encode_telemetry(com_time: u16, running: bool, gcr_out: &mut [u32], padding: usize) {
-    encode_telemetry_with_shift(com_time, running, gcr_out, padding, GCR_SHIFT_F0);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GCR shifts of the two chip classes (F051-class 6, G071-class 7).
+    const GCR_SHIFT_F0: u8 = 6;
+    const GCR_SHIFT_G0: u8 = 7;
 
     /// S7.1: the bit layer agrees with the timestamp layer on every 16-bit
     /// packet, normal and bidirectional CRC. The capture is synthetic:
@@ -355,7 +348,7 @@ mod tests {
     #[test]
     fn encode_not_running_max_period() {
         let mut gcr = [0u32; 37];
-        encode_telemetry(500, false, &mut gcr, 0);
+        encode_telemetry_with_shift(500, false, &mut gcr, 0, GCR_SHIFT_F0);
         // Not running: period forced to 65535
         // shift_amount for 65535: bit 15 is set -> shift=7
         // dshot_number = (7<<9) | (65535>>7) = 3584|511 = 4095 = 0xFFF
@@ -365,8 +358,8 @@ mod tests {
     fn encode_deterministic() {
         let mut gcr1 = [0u32; 37];
         let mut gcr2 = [0u32; 37];
-        encode_telemetry(1000, true, &mut gcr1, 0);
-        encode_telemetry(1000, true, &mut gcr2, 0);
+        encode_telemetry_with_shift(1000, true, &mut gcr1, 0, GCR_SHIFT_F0);
+        encode_telemetry_with_shift(1000, true, &mut gcr2, 0, GCR_SHIFT_F0);
         assert_eq!(gcr1, gcr2);
     }
 
@@ -374,29 +367,29 @@ mod tests {
     fn encode_different_periods() {
         let mut gcr1 = [0u32; 37];
         let mut gcr2 = [0u32; 37];
-        encode_telemetry(200, true, &mut gcr1, 0);
-        encode_telemetry(2000, true, &mut gcr2, 0);
+        encode_telemetry_with_shift(200, true, &mut gcr1, 0, GCR_SHIFT_F0);
+        encode_telemetry_with_shift(2000, true, &mut gcr2, 0, GCR_SHIFT_F0);
         assert_ne!(gcr1, gcr2);
     }
 
     #[test]
     fn encode_has_data() {
         let mut gcr = [0u32; 37];
-        encode_telemetry(500, true, &mut gcr, 0);
+        encode_telemetry_with_shift(500, true, &mut gcr, 0, GCR_SHIFT_F0);
         assert!(gcr.iter().any(|&v| v != 0));
     }
 
     #[test]
     fn encode_shift_small_period() {
         let mut gcr = [0u32; 37];
-        encode_telemetry(100, true, &mut gcr, 0);
+        encode_telemetry_with_shift(100, true, &mut gcr, 0, GCR_SHIFT_F0);
         // Small period: shift_amount should be 0
     }
 
     #[test]
     fn encode_shift_large_period() {
         let mut gcr = [0u32; 37];
-        encode_telemetry(30000, true, &mut gcr, 0);
+        encode_telemetry_with_shift(30000, true, &mut gcr, 0, GCR_SHIFT_F0);
         // Large period: nonzero shift
     }
 
