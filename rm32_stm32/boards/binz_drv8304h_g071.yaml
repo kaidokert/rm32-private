@@ -4,6 +4,7 @@
 # SWD-flashed at 0x08000000 — there is no AM32 bootloader on this board.
 name: "binz G071 DRV8304H"
 mcu: stm32g071
+tuning: rig
 dead_time: 26            # firmware50 qualified 0-100 % on this board at 26 (AM32 DRV8304H_G071 = 60: 9 % of a 48 kHz period on body diodes, +10 % current)
 voltage_divider_x100: 1194    # bus divider x11.94 (firmware50 BUS_DIVIDER_X100)
 # 3-shunt current is reported as metered mA + 2000 (mcu_g071::adc), so

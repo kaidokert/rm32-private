@@ -1,5 +1,6 @@
 name: "L431 Neutron"
 mcu: stm32l431
+tuning: rig
 dead_time: 45  # AM32 default for L431 Vimdrones (0x2D, ~562 ns @ 80 MHz)
 # ADC cal — Vimdrones L431 bench, schematic-derived + bench-validated in
 # minz (VBAT 3.6k/30k divider = 9.33x ratio; INA180A1 20V/V x 1.5mOhm =

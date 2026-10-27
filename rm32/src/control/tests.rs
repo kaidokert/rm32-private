@@ -169,6 +169,7 @@ mod tests {
         const CURRENT_OFFSET: i16 = 0;
         const USE_NTC: bool = false;
         const PWM_BASE_PERIOD: u16 = 1999;
+        type Tuning = crate::tuning::QualifiedRigTuning;
     }
     impl hal::MotorHal for MockMotorHal {
         type Bridge<'a> = &'a mut MockBridge;

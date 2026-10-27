@@ -144,6 +144,7 @@ impl rm32::platform::Platform for HarnessPlatform {
     const USE_NTC: bool = rm32::board::BoardConfig::DEFAULT.use_ntc;
     /// The F051-class 48 MHz period the vectors were recorded with.
     const PWM_BASE_PERIOD: u16 = 1999;
+    type Tuning = rm32::tuning::QualifiedRigTuning;
 }
 
 impl rm32::platform::Platform for MockMotorHal {
@@ -157,6 +158,7 @@ impl rm32::platform::Platform for MockMotorHal {
     const CURRENT_OFFSET: i16 = <HarnessPlatform as rm32::platform::Platform>::CURRENT_OFFSET;
     const USE_NTC: bool = <HarnessPlatform as rm32::platform::Platform>::USE_NTC;
     const PWM_BASE_PERIOD: u16 = <HarnessPlatform as rm32::platform::Platform>::PWM_BASE_PERIOD;
+    type Tuning = <HarnessPlatform as rm32::platform::Platform>::Tuning;
 }
 
 impl hal::MotorHal for MockMotorHal {

@@ -376,6 +376,7 @@ mod tests {
                 const CURRENT_OFFSET: i16 = $off;
                 const USE_NTC: bool = false;
                 const PWM_BASE_PERIOD: u16 = 1999;
+                type Tuning = crate::tuning::QualifiedRigTuning;
             }
         };
     }

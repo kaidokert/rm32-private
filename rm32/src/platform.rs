@@ -31,6 +31,9 @@ pub trait Platform {
     /// `TIMER1_MAX_ARR`. Shared state starts with it until the main loop
     /// publishes the configured period.
     const PWM_BASE_PERIOD: u16;
+
+    /// Rig-qualified divergences from AM32 ([`crate::tuning`]).
+    type Tuning: crate::tuning::TuningPolicy;
 }
 
 /// Microseconds to interval/commutation timer ticks (truncating). Use in a
@@ -92,6 +95,7 @@ impl Platform for TestPlatform {
     const CURRENT_OFFSET: i16 = 0;
     const USE_NTC: bool = false;
     const PWM_BASE_PERIOD: u16 = 1999;
+    type Tuning = crate::tuning::QualifiedRigTuning;
 }
 
 #[cfg(test)]

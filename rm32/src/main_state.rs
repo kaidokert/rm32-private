@@ -10,6 +10,7 @@ use crate::functions::get_abs_dif;
 use crate::hal::{Adc, TelemetryUart};
 use crate::shared_comm::IsrAction;
 use crate::telemetry;
+use crate::tuning::{DesyncPolicy, TuningPolicy, orbit_current};
 use crate::units::AdcCount;
 use embedded_hal::digital::OutputPin;
 
@@ -39,21 +40,6 @@ pub(crate) fn variable_pwm_mode2<P: Timing>(average_interval: u32, cpu_mhz: u8) 
     } else {
         (average_interval * scale) as u16
     }
-}
-
-/// Wrong-phase-orbit discriminator: current far above the
-/// duty-proportional norm (see ORBIT_TRIP_* in constants.rs). The line
-/// scales with measured vbat since current at a given duty scales with
-/// source voltage.
-#[inline]
-pub(crate) fn orbit_current(current_ma: i16, duty: u16, vbat_cv: u16) -> bool {
-    let line = (duty as i32) * ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA;
-    let scaled = if vbat_cv > 600 {
-        line * (vbat_cv as i32) / ORBIT_CAL_VBAT_CV
-    } else {
-        line
-    };
-    (current_ma as i32) > scaled
 }
 
 /// Compute duty ceiling from eRPM and temperature limits.
@@ -164,14 +150,14 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     /// the changeover guard). Starts settled: a rotor that never polled
     /// is checked exactly as AM32 does.
     chk_since_polling: u8,
-    /// Wrong-phase-orbit trips (see ORBIT_TRIP_MA) — lifetime count.
+    /// Wrong-phase-orbit trips (`OrbitTripConfig`) — lifetime count.
     pub orbit_trips: u32,
     /// Desync-detector re-arm threshold (zero_crosses). Normally the
-    /// AM32 10; raised to DESYNC_REARM_HOLDOFF_ZC for one cycle after a
+    /// AM32 10; raised to the policy's `rearm_holdoff_zc` for one cycle after a
     /// fast-rotor fire so the stay-interrupt response cannot self-loop
     /// against a stale average during commanded transients.
     pub(crate) desync_rearm_zc: u32,
-    /// Consecutive 1 kHz ticks with current above ORBIT_TRIP_MA.
+    /// Consecutive 1 kHz ticks with current above the orbit line.
     pub(crate) orbit_trip_count: u16,
     /// Duty snapshot (refreshed every ~100 ms) for orbit-trip
     /// commanded-transient suppression.
@@ -504,13 +490,20 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                 // the next real crossing. Requires sane current: an
                 // elevated-current desync may be a wrong-phase orbit,
                 // where the demote IS the phase reset.
-                let current_sane = !orbit_current(
+                let current_sane = !orbit_current::<P::Tuning>(
                     self.measurements.actual_current.0,
                     shared.duty_cycle(),
                     self.measurements.battery_voltage.0,
                 );
-                let fast_rotor =
-                    current_sane && shared.commutation_interval() < P::DESYNC_STAY_INTERRUPT_CI;
+                let (fast_rotor, rearm_holdoff_zc) = match <P::Tuning as TuningPolicy>::DESYNC {
+                    DesyncPolicy::Am32 => (false, 0),
+                    DesyncPolicy::HalfKickStayInterrupt {
+                        rearm_holdoff_zc, ..
+                    } => (
+                        current_sane && shared.commutation_interval() < P::DESYNC_STAY_INTERRUPT_CI,
+                        rearm_holdoff_zc,
+                    ),
+                };
                 // Duty kick (AM32: last_duty_cycle = min_startup/2,
                 // unconditional). On the fast-rotor branch the rotor is
                 // still locked, so only halve the duty —
@@ -531,7 +524,7 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                 }
                 // Detector holdoff (see desync_rearm_zc).
                 if desync_from_interrupt_mode && fast_rotor {
-                    self.desync_rearm_zc = DESYNC_REARM_HOLDOFF_ZC;
+                    self.desync_rearm_zc = rearm_holdoff_zc;
                 }
                 if !(desync_from_interrupt_mode && fast_rotor) {
                     // DesyncFallback first: Running→OldRoutine (sets
@@ -613,43 +606,46 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             shared.set_battery_voltage(self.measurements.battery_voltage.0);
             shared.set_degrees_celsius(self.measurements.degrees_celsius.0);
 
-            // Wrong-phase-orbit trip (see ORBIT_TRIP_*):
+            // Wrong-phase-orbit trip (`OrbitTripConfig`, rig tuning only):
             // sustained current far above the duty-proportional norm while
             // locked means the acceptance chain is clocking off switching
             // artifacts in a wrong phase — force the full desync response;
             // the demote IS the phase reset.
-            self.orbit_duty_snap_age += 1;
-            if self.orbit_duty_snap_age >= 100 {
-                self.orbit_duty_snap = shared.duty_cycle();
-                self.orbit_duty_snap_age = 0;
-            }
-            let transient = get_abs_dif(shared.duty_cycle() as i32, self.orbit_duty_snap as i32)
-                > ORBIT_TRANSIENT_DUTY as u32;
-            if shared.running()
-                && shared.zero_crosses() > 1000
-                && !transient
-                && orbit_current(
-                    self.measurements.actual_current.0,
-                    shared.duty_cycle(),
-                    self.measurements.battery_voltage.0,
-                )
-            {
-                self.orbit_trip_count += 1;
-                if self.orbit_trip_count > ORBIT_TRIP_MS {
-                    self.orbit_trip_count = 0;
-                    self.orbit_trips = self.orbit_trips.wrapping_add(1);
-                    self.desync_events = self.desync_events.wrapping_add(1);
-                    shared.set_zero_crosses(0);
-                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
-                    shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
-                    if shared.adjusted_input() > 47
-                        || shared.commutation_interval() > P::DESYNC_STOP_INTERVAL
-                    {
-                        shared.transition(crate::motor_mode::MotorEvent::StopMotor);
-                    }
+            if let Some(orbit) = <P::Tuning as TuningPolicy>::ORBIT_TRIP {
+                self.orbit_duty_snap_age += 1;
+                if self.orbit_duty_snap_age >= 100 {
+                    self.orbit_duty_snap = shared.duty_cycle();
+                    self.orbit_duty_snap_age = 0;
                 }
-            } else {
-                self.orbit_trip_count = 0;
+                let transient =
+                    get_abs_dif(shared.duty_cycle() as i32, self.orbit_duty_snap as i32)
+                        > orbit.transient_duty as u32;
+                if shared.running()
+                    && shared.zero_crosses() > 1000
+                    && !transient
+                    && orbit_current::<P::Tuning>(
+                        self.measurements.actual_current.0,
+                        shared.duty_cycle(),
+                        self.measurements.battery_voltage.0,
+                    )
+                {
+                    self.orbit_trip_count += 1;
+                    if self.orbit_trip_count > orbit.trip_ms {
+                        self.orbit_trip_count = 0;
+                        self.orbit_trips = self.orbit_trips.wrapping_add(1);
+                        self.desync_events = self.desync_events.wrapping_add(1);
+                        shared.set_zero_crosses(0);
+                        shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
+                        shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
+                        if shared.adjusted_input() > 47
+                            || shared.commutation_interval() > P::DESYNC_STOP_INTERVAL
+                        {
+                            shared.transition(crate::motor_mode::MotorEvent::StopMotor);
+                        }
+                    }
+                } else {
+                    self.orbit_trip_count = 0;
+                }
             }
 
             // Low voltage cutoff (AM32): 10 s sustained at
@@ -755,12 +751,14 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             self.measurements.degrees_celsius.0,
             self.config.temperature_limit,
         );
-        // Reclimb clamp : while the lock is unconfirmed
-        // (zero_crosses below threshold — fresh engage or post-fall
-        // recovery), cap the duty ceiling so the reclimb toward a high
-        // commanded duty cannot surge. Releases on confirmation.
-        if shared.zero_crosses() < RECLIMB_CONFIRM_ZC {
-            dmax = dmax.min(RECLIMB_DUTY_CAP);
+        // Reclimb clamp (`ReclimbConfig`, rig tuning only): while the lock
+        // is unconfirmed (fresh engage or post-fall recovery), cap the duty
+        // ceiling so the reclimb toward a high commanded duty cannot surge.
+        // Releases on confirmation.
+        if let Some(reclimb) = <P::Tuning as TuningPolicy>::RECLIMB
+            && shared.zero_crosses() < reclimb.confirm_zc
+        {
+            dmax = dmax.min(reclimb.duty_cap);
         }
         shared.set_duty_maximum(dmax);
 

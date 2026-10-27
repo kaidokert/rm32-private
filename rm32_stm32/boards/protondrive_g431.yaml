@@ -1,5 +1,6 @@
 name: "ProtonDrive"
 mcu: stm32g431
+tuning: rig
 dead_time: 80
 voltage_divider_x100: 1100  # AM32 VOLTAGE_DIVIDER 110 (ratio x10)
 millivolt_per_amp: 20

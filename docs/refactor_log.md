@@ -1675,3 +1675,39 @@ harness keeps `SingleWriter` so the vectors exercise the firmware's
 plain stores while core tests cover `AtomicWriter`; `TestShared` is
 test-only. Nit fixed in this commit: duplicate `#[cfg(test)]` on
 `control::shared_impl`. Next: Increment 9 (S9.1-S9.3, `TuningPolicy`).
+
+## S9.1 -- `TuningPolicy`, `QualifiedRigTuning` = today's constants (HOST) -- branch gc/s09
+
+Design §5.8. New `rm32/src/tuning.rs`: `TuningPolicy` with associated
+consts `ORBIT_TRIP: Option<OrbitTripConfig>`, `RECLIMB:
+Option<ReclimbConfig>`, `DESYNC: DesyncPolicy` (`Am32` |
+`HalfKickStayInterrupt { max_ci_us, rearm_holdoff_zc }`);
+`QualifiedRigTuning` holds the eight constants that left `constants.rs`
+(orbit slope 3, offset 2500 mA, 30 ms, cal 816 cV, transient 150;
+reclimb 1500 ZC / cap 800; stay-interrupt 300 us, re-arm holdoff 100 ZC);
+`Am32Tuning` is all None / `Am32`. `orbit_current::<T>` moved with them
+(false without an orbit trip). `Platform` gains `type Tuning` (no
+default); `Timing::DESYNC_STAY_INTERRUPT_CI` derives from the policy (0
+under `Am32`). `main_state.rs` reads every rig constant through
+`P::Tuning`: the orbit trip block sits under `if let Some(orbit)`, the
+reclimb clamp under `if let Some(reclimb)`, the fast-rotor branch under
+`match DESYNC`.
+
+- **Rigs select it.** Board yamls gain a required `tuning: rig | am32`
+  key (build.rs, no serde default; generates `board::Tuning`). All 15
+  boards say `rig` in this step -- today's behaviour; S9.3 moves the
+  non-rig boards to `am32`. Harness and test platforms:
+  `QualifiedRigTuning`.
+- **Deferred to S9.3:** the design's `type State` (rig counters into a
+  per-policy struct). It only matters once a build selects `Am32Tuning`
+  and the counters' RAM should vanish; S9.1 stays byte-identical
+  without it.
+- **Gate s09.1 vs s08.2: PASS** (Rust 82/82; C harness = 11 known
+  diffs). ISR dumps identical on all six images; text/data/bss sizes
+  identical. Flash images (objcopy -O binary) differ in exactly 3 bytes
+  on each of the six: the line field of three panic `Location` records
+  for `rm32_stm32/src/isr.rs` (161/164/170, were 160/163/169), shifted by
+  the one `type Tuning` line added to `IsrHal`'s `Platform` impl. No
+  code byte changed. First gate run failed clippy (`collapsible_if` on
+  the reclimb `if let`); collapsed to a let-chain. ELF SHA-256: l431
+  ae2941d6..., binz 6d7b3494.... Tag gc-s09.1-ok.

@@ -59,44 +59,6 @@ pub const LVC_NORMAL_THRESHOLD: u16 = 10000;
 /// uses `(10000 - (stepper_sine * 9900))` = 100.
 pub const LVC_STARTUP_THRESHOLD: u16 = 100;
 
-/// Wrong-phase-orbit trip (divergence from AM32): the acceptance chain can
-/// self-clock on switching artifacts in a wrong phase — plausible
-/// zero-crossings, current far above the duty-proportional norm, no
-/// desync-detector jump. The trip is relative (fires when current
-/// exceeds duty*ORBIT_TRIP_SLOPE + ORBIT_TRIP_OFFSET_MA, sustained
-/// ORBIT_TRIP_MS ticks while locked) because a static ampere threshold
-/// cannot separate a wrong-phase orbit at 70% from legitimate 100%
-/// draw. Response = full desync path: the demote IS the phase reset.
-pub const ORBIT_TRIP_SLOPE: i32 = 3;
-pub const ORBIT_TRIP_OFFSET_MA: i32 = 2500;
-/// Consecutive 1 kHz ticks over the line before tripping (ms).
-pub const ORBIT_TRIP_MS: u16 = 30;
-/// Rail voltage (mV) the ORBIT_TRIP line was calibrated on; the line
-/// scales by measured vbat relative to this (battery sessions run
-/// ~12 V where the same duty legitimately draws ~1.5x the current).
-pub const ORBIT_CAL_VBAT_CV: i32 = 816;
-/// Commanded-transient suppression for the orbit trip: while the
-/// applied duty moved more than this within the snapshot window, high
-/// current is expected (slam accel, clone-measured ~10 A on battery)
-/// and the trip must hold off. Steady-state orbits are unaffected.
-pub const ORBIT_TRANSIENT_DUTY: u16 = 150;
-
-/// Desync-detector re-arm holdoff after a fast-rotor fire (divergence
-/// from AM32, see MainState::desync_rearm_zc): the stay-interrupt
-/// response keeps the pipeline running at speed, so the kick's own
-/// deceleration would refire the detector against a stale average —
-/// a self-loop. A real desync still trips on the first check past
-/// the holdoff.
-pub const DESYNC_REARM_HOLDOFF_ZC: u32 = 100;
-
-/// Reclimb clamp (divergence from AM32):
-/// until this many zero crossings confirm the lock, the duty ceiling
-/// is capped at RECLIMB_DUTY_CAP. Covers fresh engage and post-fall
-/// recovery identically; the cap clears the startup duty band while
-/// bounding the recovery acceleration surge.
-pub const RECLIMB_CONFIRM_ZC: u32 = 1500;
-pub const RECLIMB_DUTY_CAP: u16 = 800;
-
 /// Bidir DShot auto-detect confirmation: consecutive successful
 /// inverted-CRC decodes required (while the high-idle hint is active,
 /// unarmed) before committing bidir mode. The hint alone false-fires on
@@ -243,12 +205,17 @@ pub trait Timing: Platform + Sized {
     /// longer than this (500 µs; AM32 1000, `Src/main.c:2457`).
     const DESYNC_STOP_INTERVAL: u32 = us_to_ticks::<Self>(500);
 
-    /// Fast-rotor desync response (divergence from AM32, see main_state.rs
-    /// desync handler): below this commutation interval (300 µs; 600
-    /// ticks) a desync keeps interrupt mode instead of demoting to polling
-    /// — tick-grid polling cannot track windows shorter than ~3 samples,
-    /// so a demotion at speed forces a coast-down/restart cycle.
-    const DESYNC_STAY_INTERRUPT_CI: u32 = us_to_ticks::<Self>(300);
+    /// Fast-rotor desync response (`DesyncPolicy::HalfKickStayInterrupt`,
+    /// see main_state.rs desync handler): below this commutation interval a
+    /// desync keeps interrupt mode instead of demoting to polling. 0 under
+    /// the AM32 policy (never taken).
+    const DESYNC_STAY_INTERRUPT_CI: u32 =
+        match <Self::Tuning as crate::tuning::TuningPolicy>::DESYNC {
+            crate::tuning::DesyncPolicy::Am32 => 0,
+            crate::tuning::DesyncPolicy::HalfKickStayInterrupt { max_ci_us, .. } => {
+                us_to_ticks::<Self>(max_ci_us)
+            }
+        };
 
     /// Stall: no BEMF zero-cross for 22.5 ms (45000 ticks).
     const BEMF_STALL_TIMER_THRESHOLD: u32 = us_to_ticks::<Self>(22_500);
