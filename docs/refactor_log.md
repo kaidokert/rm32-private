@@ -981,6 +981,22 @@ check name regex widened twice, bands file untouched).
     Call 33 main-loop sampling artifact. Segments, slam peak (-193,
     p=0.20) and dwell do not move.
 
+38. **S7.1: `unpack`'s flag is `bidirectional`, not `edt`.** The design
+    (5.4) writes `dshot::unpack(packet, edt)`; the flag the decoder
+    actually takes selects bidirectional DShot's inverted CRC (EDT is a
+    telemetry feature negotiated by command, not a framing mode). Named
+    after what it does; `unpack` returns `DshotFrame` (its `BadCrc`
+    variant), as `decode_frame` does, instead of a `Result`.
+
+39. **S7.2 is removals, not byte-identical.** The plan classes S7.2
+    "disassembly identical". `TransferState::process` is out of line, so
+    `cpu_mhz` reached it as a runtime argument and the detection
+    prescalers (`/6`, `-1`) were computed per frame; as `P::CAPTURE_HZ`
+    they fold. binz `process` -8, L431 -16 instructions, L431
+    `handle_exti_frame` -2 (one argument fewer); every other function
+    identical, two declared renames (`receive_dshot_dma` ->
+    `start_capture`, `send_dshot_dma` -> `start_gcr_output`).
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -1334,3 +1350,31 @@ instructions shorter, so ~2x re-entries per camp window, gate opening
 unchanged).
 Follow-up (next touch of isr_logic.rs): the `bemf_zero_cross` doc
 comment still describes per-port gates/acks; point it at `on_bemf_irq`.
+
+## S7.1 -- DShot bit layer (HOST) -- tag gc-s07.1-psu (9b5ba9f)
+
+`dshot::unpack(packet, bidirectional)` and `dshot::gcr_bits(value)`:
+layer 1 for bit-slicing ports (Call 38). `encode_gcr_frame` calls
+`gcr_bits` (inline(always)); no caller changes. Exhaustive host tests:
+`unpack == decode_frame` on all 65536 packets in both CRC modes;
+`gcr_bits` inverts `encode_gcr_frame` on all 4096 values. Also the
+`bemf_zero_cross` doc comment now points at `on_bemf_irq` (S6 review
+note). Gate PASS vs s06.3c; ISR disassembly identical on all six images
+(committed tree re-gated as s07.1c, identical); host 365, blackbox 81 +
+C known diffs. HOST class: no bench.
+
+## S7.2 -- CAPTURE_HZ, GCR_SHIFT to Platform; DMA names out (HOST) -- tag gc-s07.2-psu (cdcf20e)
+
+`Platform::CAPTURE_HZ` / `GCR_SHIFT` (StmPlatform: CPU clock,
+`Chip::GCR_SHIFT`; harness 64 MHz / 6, the values its vectors were
+recorded with). `TransferState::process<P>` drops `cpu_mhz`; the
+detection prescalers are const fns of `P::CAPTURE_HZ` (same values on
+every chip: 48/64/80/170 MHz -> 8/10/13/28 and MHz-1). `detect_input`
+drops its unused clock argument. `GCR_SHIFT_F0/G0` and the F0-only
+`encode_telemetry` wrapper leave the core. Renames:
+`CaptureConfig.ndtr` -> `edges_per_burst`, core `dma_buffer` params ->
+`edges`, `InputCapture::{receive_dshot_dma, send_dshot_dma, dma_buffer}`
+-> `{start_capture, start_gcr_output, edges}`, `TelemetryUart::send_dma`
+-> `send` (PAC register names stay). Gate PASS vs s07.1c with declared
+renames, removals only (Call 39); committed tree s07.2c identical; host
+365, blackbox 81 + C known diffs. HOST class: no bench.
