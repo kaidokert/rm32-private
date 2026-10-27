@@ -144,6 +144,17 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     pub dsy_demote_slow: u32,
     /// Desync fired while already in polling mode.
     pub dsy_demote_old: u32,
+    /// Detector inputs at the latest desync: last_average_interval,
+    /// average_interval, commutation_interval, zero_crosses (bench).
+    pub dsy_snap: [u32; 4],
+    /// The last four desync-check passes before the latest desync, oldest
+    /// first: zero_crosses | polling << 31, average_interval, duty_cycle,
+    /// duty_maximum (bench).
+    pub dsy_hist: [[u32; 4]; 4],
+    chk_hist: [[u32; 4]; 4],
+    /// Desync-check passes since the last one that ran in polling mode
+    /// (saturating; see the changeover guard).
+    chk_since_polling: u8,
     /// Wrong-phase-orbit trips (see ORBIT_TRIP_MA) — lifetime count.
     pub orbit_trips: u32,
     /// Desync-detector re-arm threshold (zero_crosses). Normally the
@@ -216,6 +227,10 @@ impl<P: Timing> MainState<P, NoLed> {
             dsy_demote_cur: 0,
             dsy_demote_slow: 0,
             dsy_demote_old: 0,
+            dsy_snap: [0; 4],
+            dsy_hist: [[0; 4]; 4],
+            chk_hist: [[0; 4]; 4],
+            chk_since_polling: 0,
             orbit_trips: 0,
             desync_rearm_zc: 10,
             orbit_trip_count: 0,
@@ -409,11 +424,38 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
         // Desync detection (re-arm gate is dynamic — see desync_rearm_zc)
         if self.desync_check && zc > self.desync_rearm_zc {
             self.desync_rearm_zc = 10;
+            self.chk_hist.copy_within(1.., 0);
+            self.chk_hist[3] = [
+                zc | ((shared.old_routine() as u32) << 31),
+                self.timing.average_interval,
+                shared.duty_cycle() as u32,
+                shared.duty_maximum() as u32,
+            ];
             let diff = get_abs_dif(
                 self.timing.last_average_interval as i32,
                 self.timing.average_interval as i32,
             );
-            if diff > (self.timing.average_interval >> 1)
+            // Divergence from AM32: never compare across the polling ->
+            // interrupt changeover. rm32 polls BEMF on the 20 kHz tick grid
+            // (AM32: main-loop rate), so polled commutations run late; at
+            // the changeover the timing snaps to correct, the next
+            // revolution is much faster, and the detector read that step
+            // as a desync (L431 25 % starts: ~50 % tripped at exactly the
+            // first interrupt-mode check, zc 24, then restart-looped;
+            // stock AM32 8/8 clean on the same bench). Each pass averages
+            // the revolution since the previous pass, so the pass after
+            // the changeover can still hold polled commutations: compare
+            // only once both revolutions ran in interrupt mode (two
+            // interrupt-mode passes after the last polling one); until
+            // then a pass only re-seeds last_average_interval.
+            if shared.old_routine() {
+                self.chk_since_polling = 0;
+            } else {
+                self.chk_since_polling = self.chk_since_polling.saturating_add(1);
+            }
+            let across_changeover = self.chk_since_polling < 3;
+            if !across_changeover
+                && diff > (self.timing.average_interval >> 1)
                 && self.timing.average_interval < P::DESYNC_MAX_INTERVAL
             {
                 // AM32's `average_interval = 5000` reset here is dead code
@@ -421,6 +463,13 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                 // reference's behavior (no reset), not its intent;
                 // "fixing" the ordering creates a desync echo that
                 // double-kicks duty during recovery.
+                self.dsy_snap = [
+                    self.timing.last_average_interval,
+                    self.timing.average_interval,
+                    shared.commutation_interval(),
+                    zc,
+                ];
+                self.dsy_hist = self.chk_hist;
                 shared.set_zero_crosses(0);
                 self.desync_events = self.desync_events.wrapping_add(1);
                 let desync_from_interrupt_mode = !shared.old_routine();

@@ -978,6 +978,8 @@ fn main() -> ! {
                 main_state.orbit_trips,
                 rm32_stm32::isr_handlers::EXC_COMMS.load(core::sync::atomic::Ordering::Relaxed),
             ],
+            main_state.dsy_snap,
+            main_state.dsy_hist,
         );
         #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
         {
