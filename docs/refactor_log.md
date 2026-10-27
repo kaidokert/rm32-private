@@ -1318,3 +1318,19 @@ batt62f 38/38, batt62a 33/33, batt61a/b 4/4); falsifier: the PSU s00
 runs fail 20/32 (59 segments out). `gc_bands_s00.json` is unchanged and
 still passes its own runs. From here, step checks on this bench use
 `--check docs/gc_bands_batt.json`; this closes the Call 31 question.
+
+## Increment 6 review (2026-10-26) -- approved, tag gc-s06.3-ok
+
+Peer review approved S6.1-S6.3 and the battery bands. Dispositions:
+29, 30, 33, 34, 35, 36 approved as written; 31 closed by 823a030 (no
+bare-PSU rerun, the battery-parallel supply is the bench); **32 carried**
+(no rate test: pad and latch bisects ruled out timing and placement, S6.3
+came back 4785 vs 4592, 0/3 high; reviewer's reading: the UART step
+command is asynchronous to the 1 kHz guard window, ramp divider and
+sector phase, so the inrush peak's alignment with the fast EWMA varies;
+both modes have margin under the 12 A surge guard on this supply); 37
+approved without the experiment (one level read per Camp, ADC_COMP 36
+instructions shorter, so ~2x re-entries per camp window, gate opening
+unchanged).
+Follow-up (next touch of isr_logic.rs): the `bemf_zero_cross` doc
+comment still describes per-port gates/acks; point it at `on_bemf_irq`.
