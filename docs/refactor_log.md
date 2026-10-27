@@ -1443,3 +1443,18 @@ removals-only, not byte-identical: the compile-time fold is the step's
 point). Call 40 accepted (public F051 +2 on the parked branch; revisit at
 merge if the reviewer asks). Increment 7a complete; only the FC session
 remains.
+
+## Increment 7a review (2026-10-26) -- S7.1-S7.2 approved, tag gc-s07.2-ok
+
+The review's S7.1/S7.2 audit matches the code and gate numbers: approved,
+Calls 38 and 39 approved. Its S7.3/S7.4 sections and its rulings on
+Calls 41-43 describe code that exists on neither branch
+(`on_capture_complete`, `DshotTelemetrySource`, `service_dshot_telemetry`,
+`process_dshot_command`, `dshot_edt_enabled`, "decode_frame delegates to
+unpack" -- all absent, checked with git grep on devel and gc-s7-dshot), so
+they do not count as a review of the real S7.3/S7.4 or of the real Calls
+41 (unreachable paths carried), 42 (EDT gate order), 43 (harness
+coverage). Call 40's verdict stands (operator-accepted) but its stated
+cause is wrong: the +2 is block layout in `handle_exti_frame`.
+**Open: re-review S7.3 (02ae2f5), S7.4 (027b2cc) and Calls 40-43 against
+gc-s7-dshot before the merge.**
