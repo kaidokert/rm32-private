@@ -957,6 +957,30 @@ check name regex widened twice, bands file untouched).
     gate from that value; the one-tick AllOff return skips a latch. Its
     48-run ABAB (`captures/*/abab1/`) is kept but superseded.
 
+35. **S6.3: F051 and G431 gain the COMP gate.** They acked the EXTI line
+    at entry and evaluated every edge; every COMP vector now runs the
+    core gate (`handle_comp_irq`). G431 clears and checks both comparator
+    lines (as its ack did) and re-raises the active one. Public F051
+    ADC_COMP +71, G431 COMP1_2_3 +65 (the gate itself). Not benched (no
+    board); qualified at their bring-up, as the plan records.
+
+36. **S6.3: the cold-latch fallback is gone.** The L431 and G071 wrappers
+    used a fresh e_com/3 when `gate_avg` read 0. AM32 reads
+    `average_interval` with no fallback; the tick latches from boot, and
+    while the latch is 0 so, nearly always, is e_com/3. On M4 the
+    fallback cost 13 shift-adds in the root (`div3_i32`).
+
+37. **S6.3: binz camp counter x2.0-2.2, imean -77; behaviour flat.** Every
+    binz R3/R4 run doubled `camps` (e.g. 12594 -> 27238) with fewer
+    `comp_entries`. The old G071 wrapper counted a camp only when a
+    second, later comparator read was still post-ZC (two out-of-line
+    `comp_at_pre_zc_level` calls); S6.3 counts each gate Camp decision,
+    and a camp re-entry is about half as long, so a camp window holds
+    about twice the re-entries. Hypothesis, not tested: count camp
+    windows (first entry per window) on both images. imean -77 is the
+    Call 33 main-loop sampling artifact. Segments, slam peak (-193,
+    p=0.20) and dwell do not move.
+
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
 `rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
@@ -1234,3 +1258,42 @@ Bonferroni (3 raw < 0.05, ~6 expected). Plus 4 extra R3 pairs, a pad
 experiment (5 + 5) and a bisect triplet (5 x 3): Calls 32, 33.
 Battery: covered by these runs (the pack was on for the whole step).
 Verdict: step criteria met; R3 slam high-mode rate open (Call 32).
+
+## S6.3 -- COMP acceptance gate into the core (RISKY) -- tag gc-s06.3-psu (2385fc0)
+
+`rm32::control::isr_logic::on_bemf_irq` is AM32's `COMP_IRQHandler`
+gate (pending -> open: clear, `Open`; closed at the pre-ZC level: clear,
+re-read, `repend` if it flipped; closed post-ZC: camp). The port's
+shared `isr_handlers::handle_comp_irq` runs `handle_comp` on `Open` and
+keeps the bench counters; an `entered` hook runs the entry counter before
+the gate, where the old wrappers counted it. `BemfSensor` gains
+`pending` / `clear_pending` / `repend` (ExtiOps per MCU); every COMP
+vector is one call. New host test covers every gate branch (363 pass).
+
+Gate (`GC_RENAME=comp_at_pre_zc_level=handle_comp_irq`) PASS vs s06.2f;
+committed tree re-gated as s06.3c, identical. Removals: binz ADC_COMP
+-36, L431 COMP -14, L431 TIM6 -17; F051 / G431 add the gate (Call 35).
+**WCET gate on the COMP root: binz ADC_COMP 694 -> 680 cyc @2ws (219 ->
+185 insns, AM32 ratio 1.67 -> 1.41).** On the way: counting after the
+gate made LLVM copy the counter into every path (+9, extra ldrex); the
+cold fallback cost 13 instructions on M4 (Call 36).
+
+Bench (battery, battery-guard images; A = gc-s06.2-psu `batt63a`, B =
+2385fc0 `batt63b`): ABAB R1-R4 x 3 rounds per board, 48 runs, all OK, no
+kill, dsy_fw = 0. One L431 B R3 recorder dump lost in transport (log
+clean) and one A R2 that collided with a second run I sent in the same
+message: both set aside under `captures/l431/aborted/` and repeated.
+`ab_segments.py batt63a batt63b` 0 significant, 0 at raw p < 0.05. R3
+slam peak 4785 vs 4592 (p=0.20), high mode 1/3 vs 0/3 (Call 32 data).
+Camps x2 (Call 37). Battery: covered by these runs.
+Verdict: no S6.3 behaviour change on L431 / G071.
+
+## Increment 6 -- summary for review
+
+S6.1 gc-s06.1-psu (42aa6c3), S6.2 gc-s06.2-psu (38373b7), S6.3
+gc-s06.3-psu (2385fc0). Every root on both bench images is smaller than
+at gc-s05.3-psu. All bench work ran on the battery (Call 31): the RISKY
+steps' battery batch is therefore done, but **no step of increment 6 has
+a PSU band check**; S6.1-S6.3 PSU R1-R4 can be flown in one session when
+the PSU is back. Calls for review: 29-37 (32 is the open one: binz R3
+slam high-mode rate).
