@@ -1550,3 +1550,42 @@ entry's commit:
   orbit trip (`orbit=1 fast=1`, `first=0/0/0/0`: the |delta avg| detector
   never fired). The orbit path is untouched here; 1/4 vs f0625ca 0/3 is
   not separable at this n. Open, watch in S8.
+
+## S8.1 -- SharedComm split into groups, no default bodies (CODE) -- branch gc/s08
+
+Design §5.5. `shared_comm.rs` now has six groups with no default
+bodies: `MotorStatus` (mode, commutation timing, direction, changeover
+and desync handoffs), `Throttle`, `Drive` (tim1_arr, filter level, min
+BEMF counts, auto advance), `Protections` (duty ceilings), `Telemetry`
+(requests, interval counter, EDT measurements), `Commands` (ISR actions,
+settings flag, control-tick counters). `SharedComm` is their blanket
+union. The four mode predicates (`armed`/`running`/`old_routine`/
+`stepper_sine`) are pure derivations of `motor_mode` and live in the
+blanket-implemented `MotorStatusExt`, so nothing can override them.
+
+- **Defaults removed.** Every implementation now states every value.
+  `SharedState` already implemented all 75 methods, so its bodies moved
+  verbatim (scripted regroup refuses any dropped or invented method).
+  `TestShared` had leaned on 20 defaults: the mode setters and `_isr0`
+  variants are now written out on `Cell` (same logic the defaults had),
+  and the seven silently-constant ones (`stall_protection_adjust`,
+  `current_limit_adjust`, `battery_voltage`, `actual_current`,
+  `degrees_celsius`, `save_settings_flag`, `send_esc_info_flag`) are real
+  `Cell` fields. `TestShared` is `#[cfg(test)]` now (tests only).
+- **tim1_arr from the bridge base period.** New `Platform::PWM_BASE_PERIOD`
+  (no default, per the trait's rule); `SharedState::new::<P>()` and
+  `TestShared` initialise `tim1_arr` from it, not 1999. STM32 port:
+  `Chip::TIM1_AUTORELOAD` (L431 3332, G071 2665, F051 1999, G431 7082).
+  Harness and test platforms: 1999 (the vectors' F051-class period).
+  No behaviour change on the firmware: `main.rs` publishes
+  `timer1_max_arr` before the ISRs start; the initial value only stops
+  being a wrong one.
+- **Gate s08.1 vs s07.4m: PASS** (Rust vectors 82/82; C harness 11 =
+  the 11 known diffs). ISR dumps identical on all six images. The
+  removals sub-check first reported FAIL on binz/pub G071/pub F051
+  TIM14: three "new functions" that are the `_isr0` impls under the
+  renamed trait (`MotorState` -> `MotorStatus` in the mangled name,
+  +0 instructions). Re-run with the declared rename
+  `GC_RENAME='shared_comm..MotorState$GT$=shared_comm..MotorStatus$GT$'`:
+  PASS on all six. ELF SHA-256: l431 ed25ecf9..., binz ccc4b4ba...
+  (differ from s07.4m by symbol names and the tim1_arr `.data` word).

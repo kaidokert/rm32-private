@@ -14,7 +14,9 @@ mod tests {
 
     use crate::control::isr_logic;
     use crate::control::shared_impl::TestShared;
-    use crate::shared_comm::{IsrAction, IsrTiming as _, MainControl as _, MotorState as _};
+    use crate::shared_comm::{
+        Commands as _, IsrAction, MotorStatus as _, MotorStatusExt as _, Throttle as _,
+    };
 
     fn make_armed_timeout() -> u32 {
         0
@@ -166,6 +168,7 @@ mod tests {
         const MILLIVOLT_PER_AMP: u16 = 20;
         const CURRENT_OFFSET: i16 = 0;
         const USE_NTC: bool = false;
+        const PWM_BASE_PERIOD: u16 = 1999;
     }
     impl hal::MotorHal for MockMotorHal {
         type Bridge<'a> = &'a mut MockBridge;
@@ -1493,7 +1496,7 @@ mod tests {
         shared.mode.set(crate::motor_mode::MotorMode::Running);
         shared.commutation_interval.set(200);
         hal.interval.count = 45001;
-        crate::shared_comm::MainControl::request_isr_action(
+        crate::shared_comm::Commands::request_isr_action(
             &shared,
             crate::shared_comm::IsrAction::CommutateKick,
         );
@@ -1514,7 +1517,7 @@ mod tests {
         assert_eq!(hal.interval.count, 0);
         // action consumed
         assert_eq!(
-            crate::shared_comm::MainControl::isr_action(&shared),
+            crate::shared_comm::Commands::isr_action(&shared),
             crate::shared_comm::IsrAction::None
         );
     }

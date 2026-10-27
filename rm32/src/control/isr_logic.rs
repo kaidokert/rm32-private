@@ -359,7 +359,7 @@ pub fn on_bemf_irq<S, B, I, E>(
     entered: E,
 ) -> BemfIrq
 where
-    S: crate::shared_comm::IsrTiming,
+    S: crate::shared_comm::MotorStatus,
     B: BemfSensor,
     I: IntervalTimer,
     E: FnOnce(),

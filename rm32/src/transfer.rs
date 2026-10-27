@@ -514,6 +514,7 @@ mod tests {
                 const MILLIVOLT_PER_AMP: u16 = 20;
                 const CURRENT_OFFSET: i16 = 0;
                 const USE_NTC: bool = false;
+                const PWM_BASE_PERIOD: u16 = 1999;
             }
         )*};
     }

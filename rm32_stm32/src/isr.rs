@@ -55,6 +55,8 @@ where
     const CURRENT_OFFSET: i16 =
         <crate::platform::StmPlatform as rm32::platform::Platform>::CURRENT_OFFSET;
     const USE_NTC: bool = <crate::platform::StmPlatform as rm32::platform::Platform>::USE_NTC;
+    const PWM_BASE_PERIOD: u16 =
+        <crate::platform::StmPlatform as rm32::platform::Platform>::PWM_BASE_PERIOD;
 }
 
 impl<P, I, C, IT, CT, PH> hal::MotorHal for IsrHal<P, I, C, IT, CT, PH>

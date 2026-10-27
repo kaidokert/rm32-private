@@ -1151,7 +1151,7 @@ mod tests {
     #[test]
     fn lvc_mode1_per_cell_triggers_disarm() {
         use crate::motor_mode::MotorMode;
-        use crate::shared_comm::MainControl;
+        use crate::shared_comm::Commands;
         use crate::shared_state::SharedState;
 
         let shared = SharedState::new::<TestPlatform>();
@@ -1177,13 +1177,13 @@ mod tests {
             !shared.armed(),
             "motor should be disarmed after LVC trigger"
         );
-        assert_eq!(MainControl::isr_action(&shared), IsrAction::AllOff);
+        assert_eq!(Commands::isr_action(&shared), IsrAction::AllOff);
     }
 
     #[test]
     fn lvc_does_not_run_before_one_khz_dispatch() {
         use crate::motor_mode::MotorMode;
-        use crate::shared_comm::MainControl;
+        use crate::shared_comm::Commands;
         use crate::shared_state::SharedState;
 
         let shared = SharedState::new::<TestPlatform>();
@@ -1198,7 +1198,7 @@ mod tests {
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
         assert!(shared.armed());
-        assert_eq!(MainControl::isr_action(&shared), IsrAction::None);
+        assert_eq!(Commands::isr_action(&shared), IsrAction::None);
     }
 
     #[test]

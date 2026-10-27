@@ -142,6 +142,8 @@ impl rm32::platform::Platform for HarnessPlatform {
     const MILLIVOLT_PER_AMP: u16 = rm32::board::BoardConfig::DEFAULT.millivolt_per_amp;
     const CURRENT_OFFSET: i16 = rm32::board::BoardConfig::DEFAULT.current_offset;
     const USE_NTC: bool = rm32::board::BoardConfig::DEFAULT.use_ntc;
+    /// The F051-class 48 MHz period the vectors were recorded with.
+    const PWM_BASE_PERIOD: u16 = 1999;
 }
 
 impl rm32::platform::Platform for MockMotorHal {
@@ -154,6 +156,7 @@ impl rm32::platform::Platform for MockMotorHal {
     const MILLIVOLT_PER_AMP: u16 = <HarnessPlatform as rm32::platform::Platform>::MILLIVOLT_PER_AMP;
     const CURRENT_OFFSET: i16 = <HarnessPlatform as rm32::platform::Platform>::CURRENT_OFFSET;
     const USE_NTC: bool = <HarnessPlatform as rm32::platform::Platform>::USE_NTC;
+    const PWM_BASE_PERIOD: u16 = <HarnessPlatform as rm32::platform::Platform>::PWM_BASE_PERIOD;
 }
 
 impl hal::MotorHal for MockMotorHal {

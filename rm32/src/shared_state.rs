@@ -129,7 +129,7 @@ impl SharedState {
             actual_current: AtomicU16::new(0),
             battery_voltage: AtomicU16::new(0),
             degrees_celsius: AtomicU16::new(0),
-            tim1_arr: AtomicU16::new(1999),
+            tim1_arr: AtomicU16::new(P::PWM_BASE_PERIOD),
             duty_maximum: AtomicU16::new(2000),
             filter_level: AtomicU8::new(5),
             min_bemf_counts: AtomicU8::new(2),
@@ -587,7 +587,7 @@ impl SharedState {
     }
 }
 
-impl crate::shared_comm::MotorState for SharedState {
+impl crate::shared_comm::MotorStatus for SharedState {
     fn motor_mode(&self) -> MotorMode {
         self.motor_mode()
     }
@@ -633,12 +633,6 @@ impl crate::shared_comm::MotorState for SharedState {
                 .store(MotorMode::Running as u8, Ordering::Release);
         }
     }
-}
-
-impl crate::shared_comm::IsrTiming for SharedState {
-    fn tick_count_inc(&self) {
-        SharedState::tick_count_inc(self);
-    }
     fn zero_crosses(&self) -> u32 {
         self.zero_crosses()
     }
@@ -678,12 +672,6 @@ impl crate::shared_comm::IsrTiming for SharedState {
     fn set_interval_timer_count(&self, v: u32) {
         SharedState::set_interval_timer_count(self, v);
     }
-    fn signal_timeout(&self) -> u16 {
-        self.signal_timeout()
-    }
-    fn increment_signal_timeout(&self) {
-        self.increment_signal_timeout();
-    }
     fn duty_cycle(&self) -> u16 {
         SharedState::duty_cycle(self)
     }
@@ -696,56 +684,11 @@ impl crate::shared_comm::IsrTiming for SharedState {
     fn set_forward(&self, v: bool) {
         SharedState::set_forward(self, v);
     }
-    fn one_khz_counter_inc(&self) {
-        SharedState::one_khz_counter_inc(self);
+    fn desync_check_pending(&self) -> bool {
+        SharedState::desync_check_pending(self)
     }
-    fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
-        SharedState::one_khz_counter_check_and_reset(self, divider)
-    }
-    fn telem_counter_check_and_inc(&self, limit: u16) -> bool {
-        SharedState::telem_counter_check_and_inc(self, limit)
-    }
-}
-
-impl crate::shared_comm::MainControl for SharedState {
-    fn adjusted_input(&self) -> u16 {
-        SharedState::adjusted_input(self)
-    }
-    fn set_adjusted_input(&self, v: u16) {
-        SharedState::set_adjusted_input(self, v);
-    }
-    fn duty_cycle_setpoint(&self) -> u16 {
-        SharedState::duty_cycle_setpoint(self)
-    }
-    fn set_duty_cycle_setpoint(&self, v: u16) {
-        SharedState::set_duty_cycle_setpoint(self, v);
-    }
-    fn stall_protection_adjust(&self) -> u16 {
-        SharedState::stall_protection_adjust(self)
-    }
-    fn set_stall_protection_adjust(&self, v: u16) {
-        SharedState::set_stall_protection_adjust(self, v);
-    }
-    fn current_limit_adjust(&self) -> u16 {
-        SharedState::current_limit_adjust(self)
-    }
-    fn set_current_limit_adjust(&self, v: u16) {
-        SharedState::set_current_limit_adjust(self, v);
-    }
-    fn prop_brake_active(&self) -> bool {
-        SharedState::prop_brake_active(self)
-    }
-    fn set_prop_brake_active(&self, v: bool) {
-        SharedState::set_prop_brake_active(self, v);
-    }
-    fn isr_action(&self) -> crate::shared_comm::IsrAction {
-        SharedState::isr_action(self)
-    }
-    fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
-        SharedState::request_isr_action(self, action);
-    }
-    fn clear_isr_action(&self, action: crate::shared_comm::IsrAction) {
-        SharedState::clear_isr_action(self, action);
+    fn set_desync_check_pending(&self, v: bool) {
+        SharedState::set_desync_check_pending(self, v);
     }
     fn changeover_step(&self) -> u8 {
         SharedState::changeover_step(self)
@@ -753,57 +696,9 @@ impl crate::shared_comm::MainControl for SharedState {
     fn set_changeover_step(&self, step: u8) {
         SharedState::set_changeover_step(self, step);
     }
-    fn desync_check_pending(&self) -> bool {
-        SharedState::desync_check_pending(self)
-    }
-    fn set_desync_check_pending(&self, v: bool) {
-        SharedState::set_desync_check_pending(self, v);
-    }
-    fn tim1_arr(&self) -> u16 {
-        SharedState::tim1_arr(self)
-    }
-    fn set_tim1_arr(&self, v: u16) {
-        SharedState::set_tim1_arr(self, v);
-    }
-    fn duty_maximum(&self) -> u16 {
-        SharedState::duty_maximum(self)
-    }
-    fn set_duty_maximum(&self, v: u16) {
-        SharedState::set_duty_maximum(self, v);
-    }
-    fn filter_level(&self) -> u8 {
-        SharedState::filter_level(self)
-    }
-    fn set_filter_level(&self, v: u8) {
-        SharedState::set_filter_level(self, v);
-    }
-    fn min_bemf_counts(&self) -> u8 {
-        SharedState::min_bemf_counts(self)
-    }
-    fn set_min_bemf_counts(&self, v: u8) {
-        SharedState::set_min_bemf_counts(self, v);
-    }
-    fn auto_advance(&self) -> u8 {
-        SharedState::auto_advance(self)
-    }
-    fn set_auto_advance(&self, v: u8) {
-        SharedState::set_auto_advance(self, v);
-    }
-    fn set_actual_current(&self, v: i16) {
-        SharedState::set_actual_current(self, v);
-    }
-    fn set_battery_voltage(&self, v: u16) {
-        SharedState::set_battery_voltage(self, v);
-    }
-    fn set_degrees_celsius(&self, v: i16) {
-        SharedState::set_degrees_celsius(self, v);
-    }
-    fn battery_voltage(&self) -> u16 {
-        SharedState::battery_voltage(self)
-    }
 }
 
-impl crate::shared_comm::SharedComm for SharedState {
+impl crate::shared_comm::Throttle for SharedState {
     fn input_set(&self) -> bool {
         SharedState::input_set(self)
     }
@@ -825,17 +720,86 @@ impl crate::shared_comm::SharedComm for SharedState {
     fn set_newinput(&self, v: u16) {
         SharedState::set_newinput(self, v);
     }
+    fn adjusted_input(&self) -> u16 {
+        SharedState::adjusted_input(self)
+    }
+    fn set_adjusted_input(&self, v: u16) {
+        SharedState::set_adjusted_input(self, v);
+    }
+    fn duty_cycle_setpoint(&self) -> u16 {
+        SharedState::duty_cycle_setpoint(self)
+    }
+    fn set_duty_cycle_setpoint(&self, v: u16) {
+        SharedState::set_duty_cycle_setpoint(self, v);
+    }
+    fn signal_timeout(&self) -> u16 {
+        self.signal_timeout()
+    }
+    fn increment_signal_timeout(&self) {
+        self.increment_signal_timeout();
+    }
+    fn prop_brake_active(&self) -> bool {
+        SharedState::prop_brake_active(self)
+    }
+    fn set_prop_brake_active(&self, v: bool) {
+        SharedState::set_prop_brake_active(self, v);
+    }
+}
+
+impl crate::shared_comm::Drive for SharedState {
+    fn tim1_arr(&self) -> u16 {
+        SharedState::tim1_arr(self)
+    }
+    fn set_tim1_arr(&self, v: u16) {
+        SharedState::set_tim1_arr(self, v);
+    }
+    fn filter_level(&self) -> u8 {
+        SharedState::filter_level(self)
+    }
+    fn set_filter_level(&self, v: u8) {
+        SharedState::set_filter_level(self, v);
+    }
+    fn min_bemf_counts(&self) -> u8 {
+        SharedState::min_bemf_counts(self)
+    }
+    fn set_min_bemf_counts(&self, v: u8) {
+        SharedState::set_min_bemf_counts(self, v);
+    }
+    fn auto_advance(&self) -> u8 {
+        SharedState::auto_advance(self)
+    }
+    fn set_auto_advance(&self, v: u8) {
+        SharedState::set_auto_advance(self, v);
+    }
+}
+
+impl crate::shared_comm::Protections for SharedState {
+    fn duty_maximum(&self) -> u16 {
+        SharedState::duty_maximum(self)
+    }
+    fn set_duty_maximum(&self, v: u16) {
+        SharedState::set_duty_maximum(self, v);
+    }
+    fn stall_protection_adjust(&self) -> u16 {
+        SharedState::stall_protection_adjust(self)
+    }
+    fn set_stall_protection_adjust(&self, v: u16) {
+        SharedState::set_stall_protection_adjust(self, v);
+    }
+    fn current_limit_adjust(&self) -> u16 {
+        SharedState::current_limit_adjust(self)
+    }
+    fn set_current_limit_adjust(&self, v: u16) {
+        SharedState::set_current_limit_adjust(self, v);
+    }
+}
+
+impl crate::shared_comm::Telemetry for SharedState {
     fn send_telemetry(&self) -> bool {
         SharedState::send_telemetry(self)
     }
     fn set_send_telemetry(&self, v: bool) {
         SharedState::set_send_telemetry(self, v);
-    }
-    fn save_settings_flag(&self) -> bool {
-        SharedState::save_settings_flag(self)
-    }
-    fn set_save_settings_flag(&self, v: bool) {
-        SharedState::set_save_settings_flag(self, v);
     }
     fn send_esc_info_flag(&self) -> bool {
         SharedState::send_esc_info_flag(self)
@@ -843,11 +807,53 @@ impl crate::shared_comm::SharedComm for SharedState {
     fn set_send_esc_info_flag(&self, v: bool) {
         SharedState::set_send_esc_info_flag(self, v);
     }
+    fn telem_counter_check_and_inc(&self, limit: u16) -> bool {
+        SharedState::telem_counter_check_and_inc(self, limit)
+    }
+    fn battery_voltage(&self) -> u16 {
+        SharedState::battery_voltage(self)
+    }
+    fn set_battery_voltage(&self, v: u16) {
+        SharedState::set_battery_voltage(self, v);
+    }
+    fn set_actual_current(&self, v: i16) {
+        SharedState::set_actual_current(self, v);
+    }
+    fn set_degrees_celsius(&self, v: i16) {
+        SharedState::set_degrees_celsius(self, v);
+    }
+}
+
+impl crate::shared_comm::Commands for SharedState {
+    fn isr_action(&self) -> crate::shared_comm::IsrAction {
+        SharedState::isr_action(self)
+    }
+    fn request_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        SharedState::request_isr_action(self, action);
+    }
+    fn clear_isr_action(&self, action: crate::shared_comm::IsrAction) {
+        SharedState::clear_isr_action(self, action);
+    }
+    fn save_settings_flag(&self) -> bool {
+        SharedState::save_settings_flag(self)
+    }
+    fn set_save_settings_flag(&self, v: bool) {
+        SharedState::set_save_settings_flag(self, v);
+    }
+    fn tick_count_inc(&self) {
+        SharedState::tick_count_inc(self);
+    }
+    fn one_khz_counter_inc(&self) {
+        SharedState::one_khz_counter_inc(self);
+    }
+    fn one_khz_counter_check_and_reset(&self, divider: u8) -> bool {
+        SharedState::one_khz_counter_check_and_reset(self, divider)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::shared_comm::{IsrAction, MainControl};
+    use crate::shared_comm::{Commands, IsrAction, MotorStatus};
 
     use super::*;
 
@@ -855,32 +861,32 @@ mod tests {
     fn isr_action_handoff_is_clearable() {
         let shared = SharedState::new::<crate::platform::TestPlatform>();
 
-        assert_eq!(MainControl::isr_action(&shared), IsrAction::None);
-        MainControl::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
-        MainControl::request_isr_action(&shared, IsrAction::AllOff);
-        assert_eq!(MainControl::isr_action(&shared), IsrAction::AllOff);
-        MainControl::clear_isr_action(&shared, IsrAction::AllOff);
-        assert_eq!(MainControl::isr_action(&shared), IsrAction::None);
+        assert_eq!(Commands::isr_action(&shared), IsrAction::None);
+        Commands::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
+        Commands::request_isr_action(&shared, IsrAction::AllOff);
+        assert_eq!(Commands::isr_action(&shared), IsrAction::AllOff);
+        Commands::clear_isr_action(&shared, IsrAction::AllOff);
+        assert_eq!(Commands::isr_action(&shared), IsrAction::None);
     }
 
     #[test]
     fn clear_isr_action_keeps_newer_higher_priority_request() {
         let shared = SharedState::new::<crate::platform::TestPlatform>();
 
-        MainControl::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
-        MainControl::request_isr_action(&shared, IsrAction::AllOff);
-        MainControl::clear_isr_action(&shared, IsrAction::ResetIntervalTimer);
+        Commands::request_isr_action(&shared, IsrAction::ResetIntervalTimer);
+        Commands::request_isr_action(&shared, IsrAction::AllOff);
+        Commands::clear_isr_action(&shared, IsrAction::ResetIntervalTimer);
 
-        assert_eq!(MainControl::isr_action(&shared), IsrAction::AllOff);
+        assert_eq!(Commands::isr_action(&shared), IsrAction::AllOff);
     }
 
     #[test]
     fn changeover_step_handoff_roundtrips() {
         let shared = SharedState::new::<crate::platform::TestPlatform>();
 
-        assert_eq!(MainControl::changeover_step(&shared), 0);
-        MainControl::set_changeover_step(&shared, 5);
-        assert_eq!(MainControl::changeover_step(&shared), 5);
+        assert_eq!(MotorStatus::changeover_step(&shared), 0);
+        MotorStatus::set_changeover_step(&shared, 5);
+        assert_eq!(MotorStatus::changeover_step(&shared), 5);
     }
 
     #[test]
@@ -902,11 +908,11 @@ mod tests {
     fn desync_check_pending_roundtrips() {
         let shared = SharedState::new::<crate::platform::TestPlatform>();
 
-        assert!(!MainControl::desync_check_pending(&shared));
-        MainControl::set_desync_check_pending(&shared, true);
-        assert!(MainControl::desync_check_pending(&shared));
-        MainControl::set_desync_check_pending(&shared, false);
-        assert!(!MainControl::desync_check_pending(&shared));
+        assert!(!MotorStatus::desync_check_pending(&shared));
+        MotorStatus::set_desync_check_pending(&shared, true);
+        assert!(MotorStatus::desync_check_pending(&shared));
+        MotorStatus::set_desync_check_pending(&shared, false);
+        assert!(!MotorStatus::desync_check_pending(&shared));
     }
 
     #[test]

@@ -26,6 +26,11 @@ pub trait Platform {
     const CURRENT_OFFSET: i16;
     /// Temperature from an external NTC instead of the MCU's sensor.
     const USE_NTC: bool;
+
+    /// Motor PWM timer period (auto-reload) at the base carrier, AM32
+    /// `TIMER1_MAX_ARR`. Shared state starts with it until the main loop
+    /// publishes the configured period.
+    const PWM_BASE_PERIOD: u16;
 }
 
 /// Microseconds to interval/commutation timer ticks (truncating). Use in a
@@ -86,6 +91,7 @@ impl Platform for TestPlatform {
     const MILLIVOLT_PER_AMP: u16 = 20;
     const CURRENT_OFFSET: i16 = 0;
     const USE_NTC: bool = false;
+    const PWM_BASE_PERIOD: u16 = 1999;
 }
 
 #[cfg(test)]

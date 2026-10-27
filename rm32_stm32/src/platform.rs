@@ -23,4 +23,6 @@ impl rm32::platform::Platform for StmPlatform {
     const MILLIVOLT_PER_AMP: u16 = board::MILLIVOLT_PER_AMP;
     const CURRENT_OFFSET: i16 = board::CURRENT_OFFSET;
     const USE_NTC: bool = board::USE_NTC;
+    /// TIM1 auto-reload for 24 kHz at the chip clock (AM32 `TIMER1_MAX_ARR`).
+    const PWM_BASE_PERIOD: u16 = Chip::TIM1_AUTORELOAD;
 }
