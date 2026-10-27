@@ -316,6 +316,72 @@ fn route_bemf<B: BemfSensor>(sensor: &mut B, commutation: &Commutation) {
     sensor.select_phase(hal::floating_phase(commutation.step), commutation.rising);
 }
 
+/// What `on_bemf_irq` did with a comparator interrupt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BemfIrq {
+    /// No edge pending (shared vector, or already handled): nothing done.
+    Spurious,
+    /// Gate open: pending cleared; the caller runs `bemf_zero_cross`.
+    Open,
+    /// Gate closed, comparator at the pre-ZC level: a noise blip, cleared
+    /// (re-raised if the level flipped during the clear).
+    Noise,
+    /// Gate closed, comparator at the post-ZC level: left pending, so the
+    /// interrupt re-enters until the gate opens. Bounded: the interval
+    /// timer free-runs, so it passes the gate within `gate_avg / 2`.
+    Camp,
+}
+
+/// The COMP interrupt's acceptance gate (AM32 `COMP_IRQHandler`,
+/// stm32l4xx_it.c:276-290 / stm32g0xx_it.c): the gate opens once the
+/// interval timer has run past half the control tick's latched average
+/// (`IsrTiming::gate_avg`, stale on purpose; read directly as AM32 reads
+/// `average_interval` -- the old ports' fresh e_com/3 fallback for an
+/// unlatched 0 is gone: the tick latches from boot, and while the latch is
+/// 0 so, nearly always, is e_com/3). Gate open on an edge -> `Open` (the
+/// caller then runs `bemf_zero_cross`, which masks on accept and stays
+/// armed on a persistence reject). Closed -> `Noise` or `Camp`.
+///
+/// The pre-ZC re-read after the clear (`repend`) closes the edge-swallow
+/// race found in the L431 fall post-mortem (2026-07-26): a real crossing
+/// landing between the level read and the clear would otherwise be
+/// cleared with the blip.
+///
+/// `entered` runs once an edge is confirmed pending, before the gate (a
+/// port's entry counter: there it costs what it did in the old wrapper;
+/// counted after the gate, LLVM copies it into every gate path).
+#[inline(always)]
+pub fn on_bemf_irq<S, B, I, E>(
+    shared: &S,
+    sensor: &mut B,
+    interval: &I,
+    rising: bool,
+    entered: E,
+) -> BemfIrq
+where
+    S: crate::shared_comm::IsrTiming,
+    B: BemfSensor,
+    I: IntervalTimer,
+    E: FnOnce(),
+{
+    if !sensor.pending() {
+        return BemfIrq::Spurious;
+    }
+    entered();
+    if interval.count() > shared.gate_avg() >> 1 {
+        sensor.clear_pending();
+        BemfIrq::Open
+    } else if sensor.level() == rising {
+        sensor.clear_pending();
+        if sensor.level() != rising {
+            sensor.repend();
+        }
+        BemfIrq::Noise
+    } else {
+        BemfIrq::Camp
+    }
+}
+
 /// BEMF polling (old_routine path).
 fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     ctx.hal.bemf().mask_irq();

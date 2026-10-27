@@ -78,4 +78,19 @@ impl<C: CompOps, E: ExtiOps> BemfSensor for BemfComparator<C, E> {
     fn mask_irq(&mut self) {
         self.exti.mask_and_clear();
     }
+
+    #[inline(always)]
+    fn pending(&self) -> bool {
+        self.exti.pending()
+    }
+
+    #[inline(always)]
+    fn clear_pending(&mut self) {
+        self.exti.clear_pending();
+    }
+
+    #[inline(always)]
+    fn repend(&mut self) {
+        self.exti.repend();
+    }
 }

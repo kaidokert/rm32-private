@@ -25,18 +25,9 @@ fn TIM1_UP_TIM16() {
 
 #[interrupt]
 fn COMP1_2_3() {
-    // Ack COMP1/COMP2 EXTI pending flags (lines 21/22) at entry. The
-    // shared bemf_zero_cross has early-return paths that skip
-    // mask_interrupts (the only other place the lines are cleared) —
-    // without this pre-ack a rejected edge leaves the pending bit set
-    // and NVIC re-fires forever (ISR storm; same class as the fixed
-    // L431 COMP bug — see the contract note on
-    // rm32::control::isr_logic::bemf_zero_cross).
-    let exti = unsafe { &*pac::EXTI::PTR };
-    unsafe {
-        exti.pr1().write(|w| w.bits((1 << 21) | (1 << 22)));
-    }
-    isr_handlers::handle_comp();
+    // The core's acceptance gate (S6.3; G431 had ack-at-entry, so this is
+    // a behaviour change, qualified at G431 bring-up).
+    isr_handlers::handle_comp_irq();
 }
 
 // DMA1 Channel 1: input capture transfer complete

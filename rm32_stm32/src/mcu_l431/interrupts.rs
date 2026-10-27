@@ -67,70 +67,12 @@ pub static LEAN_COMMS: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomi
 
 #[interrupt]
 fn COMP() {
-    // AM32 stm32l4xx_it.c:276-290 — the half-average-interval acceptance
-    // gate + pending-bit camping (parity rung 5b; this replaces the
-    // mask-at-entry policy that made rm32 take the FIRST edge in every
-    // window and lose the window on a persistence reject):
-    //
-    //   gate OPEN  (interval CNT > average_interval/2): ack the line and
-    //     run the acceptance path. bemf_zero_cross masks the comparator
-    //     itself on accept; a persistence reject stays UNMASKED and armed
-    //     for the true crossing later in the window.
-    //   gate CLOSED, comparator at PRE-ZC level: a noise blip — ack it
-    //     and stay armed.
-    //   gate CLOSED, comparator at POST-ZC level: CAMP — leave the
-    //     pending bit set so NVIC re-fires this ISR until the gate opens
-    //     and the (early) crossing is evaluated. Bounded: TIM2 free-runs,
-    //     so CNT crosses avg/2 in at most avg/2 ticks.
-    //
-    // Storm safety without mask-at-entry: the gate absorbs early edges,
-    // accepts mask the line, and ten_khz_tick masks COMP every tick while
-    // !running (the Armed-idle storm path). The comparator is also no
-    // longer enabled at all during polling mode (exclusivity, isr_logic).
-    let exti = unsafe { &*pac::EXTI::PTR };
-    if exti.pr1.read().bits() & (1 << 22) == 0 {
-        return;
-    }
-    #[cfg(feature = "benchuart")]
-    LEAN_COMP_ENTRIES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    let shared = crate::isr::shared();
-    // Gate avg: the control tick's 20 kHz-latched STALE average
-    // (rm32 `IsrTiming::gate_avg`), fresh e_com/3 only while the latch is
-    // still cold. CONTROL logic, in every build (regression 07-27: a
-    // zctrace-free build fell back to fresh here and failed to lock).
-    let avg = {
-        let a = shared.gate_avg();
-        if a != 0 {
-            a
-        } else {
-            // Latch still cold (first ticks after boot) — fresh fallback.
-            (shared.e_com_time() / 3).max(0) as u32
-        }
-    };
-    let cnt = unsafe { (*pac::TIM2::PTR).cnt.read().bits() };
-    // Edge probe: every confirmed-pending entry counts (camp re-fires
-    // included — this is the storm meter), first edge time captured.
-    #[cfg(feature = "zctrace")]
-    crate::edge_probe::edge_seen(cnt);
-    if cnt > (avg >> 1) {
-        unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
-        isr_handlers::handle_comp();
-    } else if isr_handlers::comp_at_pre_zc_level() {
-        unsafe { exti.pr1.write(|w| w.bits(1 << 22)) };
-        // Edge-swallow race fix (fall post-mortem campaign, 07-26): a
-        // real crossing landing between the level read above and the
-        // PR clear gets its pending bit cleared with the noise blip —
-        // at short windows this is the acceptance-side deaf-window
-        // seed candidate. Re-check the level after the clear: if it
-        // flipped to post-ZC, the swallowed edge was real — re-raise
-        // the line via SWIER so the camp/accept machinery re-evaluates.
-        if !isr_handlers::comp_at_pre_zc_level() {
-            unsafe { exti.swier1.write(|w| w.bits(1 << 22)) };
-        }
-        #[cfg(feature = "zctrace")]
-        crate::edge_probe::gated_clear();
-    }
-    // else: camp — pending stays set, ISR re-fires until the gate opens.
+    // AM32 stm32l4xx_it.c:276-290: the core's half-average-interval gate
+    // with pending-bit camping (parity rung 5b, replacing mask-at-entry,
+    // which took the first edge in every window). Storm safety: the gate
+    // absorbs early edges, accepts mask the line, and ten_khz_tick masks
+    // COMP every tick while !running; the comparator is off in polling.
+    isr_handlers::handle_comp_irq();
 }
 
 // DMA1 Channel 5: input capture transfer complete

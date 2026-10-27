@@ -111,6 +111,20 @@ impl ExtiOps for G431Exti {
             exti!().pr1().write(|w| w.bits(LINE_21 | LINE_22));
         }
     }
+    // Pending / clear cover both comparator lines (the old ack-at-entry
+    // cleared both); the software re-trigger targets the active one.
+    #[inline(always)]
+    fn pending(&self) -> bool {
+        unsafe { exti!().pr1().read().bits() & (LINE_21 | LINE_22) != 0 }
+    }
+    #[inline(always)]
+    fn clear_pending(&self) {
+        unsafe { exti!().pr1().write(|w| w.bits(LINE_21 | LINE_22)) };
+    }
+    #[inline(always)]
+    fn repend(&self) {
+        unsafe { exti!().swier1().write(|w| w.bits(active_line())) };
+    }
 }
 
 pub type G431BemfComparator = BemfComparator<G431Comp, G431Exti>;

@@ -495,15 +495,64 @@ pub fn handle_comp() {
     }
 }
 
-/// COMP gate helper for the L431 wrapper's gate-closed classification:
-/// true if the comparator currently sits at the PRE-zero-cross level
-/// (`output_level() == rising` — the level the persistence filter
-/// rejects). COMP-ISR context only (touches `ISR_LOCAL`).
-#[cfg(any(feature = "stm32l431", feature = "stm32g071"))]
-pub fn comp_at_pre_zc_level() -> bool {
+/// Tick probes (zctrace, L431 WAXWING): true if the comparator sits at the
+/// PRE-zero-cross level (`level() == rising`, the level the persistence
+/// filter rejects).
+#[cfg(any(feature = "zctrace", all(feature = "benchuart", feature = "stm32l431")))]
+fn comp_at_pre_zc_level() -> bool {
     use rm32::hal::BemfSensor as _;
     let state = ISR_LOCAL.get();
     state.hal.comp.level() == state.commutation.rising()
+}
+
+/// Comparator interrupt, every MCU: the core's acceptance gate
+/// (`rm32::control::isr_logic::on_bemf_irq`, AM32 `COMP_IRQHandler`), then
+/// the acceptance path when it is open. Bench counters only here.
+#[inline(always)]
+pub fn handle_comp_irq() {
+    use rm32::control::isr_logic::BemfIrq;
+    let state = ISR_LOCAL.get();
+    let irq = rm32::control::isr_logic::on_bemf_irq(
+        isr::shared(),
+        &mut state.hal.comp,
+        &state.hal.interval,
+        state.commutation.rising(),
+        || {
+            #[cfg(feature = "benchuart")]
+            {
+                use core::sync::atomic::Ordering::Relaxed;
+                #[cfg(feature = "stm32g071")]
+                COMP_ENTRIES.store(COMP_ENTRIES.load(Relaxed).wrapping_add(1), Relaxed);
+                #[cfg(feature = "stm32l431")]
+                crate::mcu_l431::interrupts::LEAN_COMP_ENTRIES.fetch_add(1, Relaxed);
+            }
+        },
+    );
+    if irq == BemfIrq::Spurious {
+        return;
+    }
+    #[cfg(feature = "zctrace")]
+    {
+        // Edge probe (L431 instrumentation): the timer read moved after the
+        // gate when the gate moved into the core (S6.3).
+        use rm32::hal::IntervalTimer as _;
+        crate::edge_probe::edge_seen(ISR_LOCAL.get().hal.interval.count());
+    }
+    match irq {
+        BemfIrq::Open => handle_comp(),
+        BemfIrq::Noise => {
+            #[cfg(feature = "zctrace")]
+            crate::edge_probe::gated_clear();
+        }
+        BemfIrq::Camp => {
+            #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
+            {
+                use core::sync::atomic::Ordering::Relaxed;
+                COMP_CAMPS.store(COMP_CAMPS.load(Relaxed).wrapping_add(1), Relaxed);
+            }
+        }
+        BemfIrq::Spurious => {}
+    }
 }
 
 /// EDT-debug: typed frames sent + last 12-bit value (heartbeat consumer).

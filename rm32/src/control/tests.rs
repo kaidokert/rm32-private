@@ -65,6 +65,11 @@ mod tests {
         fn mask_irq(&mut self) {
             self.mask_called = true;
         }
+        fn pending(&self) -> bool {
+            true
+        }
+        fn clear_pending(&mut self) {}
+        fn repend(&mut self) {}
     }
     struct MockBridge {
         last_duty: u16,
@@ -199,6 +204,99 @@ mod tests {
             let order = order as *const MockOrder;
             hal.bridge.order = order;
             hal
+        }
+    }
+
+    /// S6.3 gate sensor: pending flag, a scripted level sequence (one
+    /// value per `level` read), and a log of clear (`c`) / repend (`r`).
+    struct GateSensor {
+        pending: bool,
+        levels: [bool; 2],
+        n_levels: usize,
+        reads: core::cell::Cell<usize>,
+        log: [u8; 2],
+        n_log: usize,
+    }
+    impl GateSensor {
+        fn new(pending: bool, levels: &[bool]) -> Self {
+            let mut l = [false; 2];
+            l[..levels.len()].copy_from_slice(levels);
+            Self {
+                pending,
+                levels: l,
+                n_levels: levels.len(),
+                reads: core::cell::Cell::new(0),
+                log: [0; 2],
+                n_log: 0,
+            }
+        }
+        fn push(&mut self, c: u8) {
+            self.log[self.n_log] = c;
+            self.n_log += 1;
+        }
+    }
+    impl hal::BemfSensor for GateSensor {
+        fn select_phase(&mut self, _: hal::Phase, _: bool) {}
+        fn enable_irq(&mut self) {}
+        fn mask_irq(&mut self) {}
+        fn level(&self) -> bool {
+            let i = self.reads.get();
+            assert!(i < self.n_levels, "unscripted level read");
+            self.reads.set(i + 1);
+            self.levels[i]
+        }
+        fn pending(&self) -> bool {
+            self.pending
+        }
+        fn clear_pending(&mut self) {
+            self.push(b'c');
+        }
+        fn repend(&mut self) {
+            self.push(b'r');
+        }
+    }
+    struct GateTimer(u32);
+    impl hal::IntervalTimer for GateTimer {
+        fn count(&self) -> u32 {
+            self.0
+        }
+        fn set_count(&mut self, v: u32) {
+            self.0 = v;
+        }
+    }
+
+    /// S6.3: `on_bemf_irq` is AM32's COMP_IRQHandler gate. avg 1000:
+    /// open past 500 (clear, Open); closed at the pre-ZC level (level ==
+    /// rising) clears, and re-raises if the level flipped during the
+    /// clear; closed at the post-ZC level camps (pending left set);
+    /// nothing pending does nothing, and `entered` runs only when pending.
+    #[test]
+    fn bemf_irq_gate_matches_am32() {
+        use isr_logic::{BemfIrq, on_bemf_irq};
+        let shared = TestShared::new();
+        shared.gate_avg.set(1000);
+        let rising = true;
+        let cases: [(bool, u32, &[bool], BemfIrq, &[u8]); 5] = [
+            (false, 900, &[], BemfIrq::Spurious, b""),
+            (true, 501, &[], BemfIrq::Open, b"c"),
+            (true, 500, &[true, true], BemfIrq::Noise, b"c"),
+            (true, 500, &[true, false], BemfIrq::Noise, b"cr"),
+            (true, 10, &[false], BemfIrq::Camp, b""),
+        ];
+        for (pending, cnt, levels, want, log) in cases {
+            let mut sensor = GateSensor::new(pending, levels);
+            let mut entered = 0;
+            let got = on_bemf_irq(&shared, &mut sensor, &GateTimer(cnt), rising, || {
+                entered += 1
+            });
+            assert_eq!(got, want, "cnt {cnt} levels {levels:?}");
+            assert_eq!(
+                &sensor.log[..sensor.n_log],
+                log,
+                "cnt {cnt} levels {levels:?}"
+            );
+            assert_eq!(entered, pending as u32);
+            assert_eq!(sensor.reads.get(), levels.len(), "level reads: {levels:?}");
         }
     }
 

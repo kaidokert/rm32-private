@@ -35,6 +35,11 @@ impl hal::BemfSensor for MockComp {
     fn mask_irq(&mut self) {
         self.mask_interrupts.set(self.mask_interrupts.get() + 1);
     }
+    fn pending(&self) -> bool {
+        true
+    }
+    fn clear_pending(&mut self) {}
+    fn repend(&mut self) {}
 }
 
 use std::rc::Rc;

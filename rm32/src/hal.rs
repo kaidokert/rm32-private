@@ -91,6 +91,12 @@ pub trait BemfSensor {
     fn filter_read(&self) -> bool {
         self.level()
     }
+    /// The comparator's edge interrupt is pending.
+    fn pending(&self) -> bool;
+    /// Clear the pending edge.
+    fn clear_pending(&mut self);
+    /// Re-raise the edge interrupt in software (STM32: EXTI SWIER).
+    fn repend(&mut self);
 }
 
 /// Debug pulse output — toggles a GPIO on commutation for RPM measurement.
