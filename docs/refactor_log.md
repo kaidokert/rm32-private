@@ -1076,3 +1076,477 @@ check name regex widened twice, bands file untouched).
     (~500 CRC fails, stale first interval ~62,350) until one
     signal-timeout reset -- the one-edge misalignment class. L431 SWD
     needs `--speed 100` since the 2026-10-27 power cycle.
+
+## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
+
+`rm32/src/platform.rs` (trait, no defaults), `MotorHal: Platform`,
+`rm32_stm32::platform::StmPlatform`, `IsrHal` implements `Platform` by
+delegating to it; harness `HarnessPlatform`, control-test mock likewise.
+Nothing reads the consts yet.
+
+Gate PASS vs s03.4; ISR dumps identical on all six images. Bench images
+differ from s03.4 only in panic-location line numbers (binz: 3 bytes).
+Host tests 384. `scripts/gc_round.sh` added: one As-run reference run per
+call (relay, flash, name), so the step loop is one command per hold.
+
+Bench 8/8 in band. One binz R3 OCFAST trip and one L431 R3 recorder dump
+that never read back whole (CH340 corruption, no kill, dsy=0) were rerun;
+originals in captures/bisect_s04.1/ (Call 2).
+
+## S4.2 -- constants via `us_to_ticks` / `ms_to_control_ticks` (HOST) -- tag gc-s04.2-psu
+
+`rm32::platform::{us_to_ticks, ms_to_control_ticks}` and the blanket
+`constants::Timing` trait (26 constants, documented in physical units
+with AM32's literal quoted); `MainState<P, LED>`, `SystemTick<P>`,
+`SharedState::new::<P>()`. Mechanism and scope: Calls 3-5. New host test
+`am32_clocks_fold_to_am32_literals` (every constant at 20 kHz / 2 MHz ==
+AM32's literal): 385 host tests (was 384).
+
+Gate PASS vs s04.1; ISR dumps identical on all six images. Main-loop
+inlining changed (text G071 -184, F051 -112, L431 -64, G431 -80, binz
+bench -224, L431 bench -20 B; Call 4). Bench 8/8 in band first time.
+
+## S4.3 -- `six_intervals_to_us` / `e_com_us_to_avg_ticks` (HOST) -- tag gc-s04.3-psu
+
+`rm32::platform::six_intervals_to_us::<P>` (AM32's `(sum + 4) >> 1` at
+2 MHz, keeping AM32's +4 bias) replaces the bare shift in
+`Commutation::record_interval` (now generic over `P`);
+`e_com_us_to_avg_ticks::<P>` (AM32's `/ 3`, divide-free) replaces the two
+`div3_i32(e_com)` calls in isr_logic and the main loop's `/ 3` (Call 6).
+Non-2 MHz branches are const-folded away on every current port. New host
+test `two_mhz_conversions_are_am32_arithmetic`: 386 host tests.
+
+Gate PASS vs s04.2; ISR dumps identical on all six images (main-loop text
+-48..+120 B from inlining). Bench 8/8 in band first time.
+
+## S4.4 -- board ADC constants compile-time, divide-free (CODE) -- tag gc-s04.4-psu
+
+`MainState` loses `voltage_divider_x100`, `millivolt_per_amp`,
+`current_offset`, `use_ntc`; `Platform` gains them (Call 7).
+`AdcCount::centivolts::<P>()` / `milliamps::<P>()` replace
+`to_centivolts(div)` / `to_milliamps(off, mvpa)`. New host tests
+`adc_conversions_equal_s2_3_for_every_count` (every board's tuple, the
+harness default, offset-498 and no-sensor variants, raw 0..4095, both
+conversions, equal to S2.3 to the count) and `affine_div_matches_division`:
+388 host tests (was 386).
+
+Gate PASS vs s04.3; ISR dumps identical on all six images (the conversion
+is main-loop code). Intended change shown: M0 soft-division call sites
+G071 public 69 -> 67, F051 58 -> 56, binz 79 -> 77 (the two removed are in
+`__cortex_m_rt_main`; no function gained one); `__aeabi_lmul` 2 -> 1; text
+G071 -536, F051 -628, L431 -520, G431 -600, binz -536, L431 bench -528 B,
+mostly `NTC_TABLE` (512 B, dead with `USE_NTC` false) plus panic-data
+reshuffle. Bench 8/8 in band first pass; binz `imean` shift: Call 8.
+**DEFECT (found in S4.5): binz current wrapped above ~2.1 A; fixed in
+S4.4f, Call 9. The S4.4 claim "equals S2.3" held only for 0..4095.**
+
+## S4.4f -- ADC conversions exact over all of u16 (CODE, fix) -- tag gc-s04.4f-psu
+
+The S4.4 defect and its fix: Call 9. `units::ADC_MAX` = `u16::MAX`;
+`AffineDiv` gains the 64-bit fallback form; exhaustive test over
+0..=65535; new `binz_current_above_12_bits_is_exact`: 389 host tests
+(388 + 1). `gc_summary.py` accepts a step suffix (`s04.4f-`) when mapping
+runs to the s00 bands.
+
+Gate PASS vs s04.4; ISR dumps identical on all six images. Soft-division
+call counts unchanged on every M0 image; `__aeabi_lmul` binz 2 -> 3,
+public G071 / F051 unchanged. Bench 8/8 in band; binz `i50max` 3452 (R1),
+4461 (R3), 3601 (R4) -- the S4.4 2095 ceiling is gone.
+
+## S4.5 -- main-loop-rate counters onto the control tick (CODE) -- tag gc-s04.5-psu
+
+`MainState::ten_khz_counter` / `led_counter` (incremented per main-loop
+pass) become `consumed_epoch` / `led_epoch` measured against
+`SharedState::tick_count`, whose increment moves into core `ten_khz_tick`
+(Call 10). New test `consumed_current_samples_once_per_second_of_control_ticks`
+(25 000 loop passes without ticks never sample; TICK_HZ+1 ticks sample
+once) and a harness assert that the tick count advances: 390 host tests
+(389 + 1). Blackbox vectors 81/81.
+
+Gate PASS vs s04.4f. Intended ISR change shown, nothing else: only the
+TIM6 root differs on every image (all other roots byte-identical); net
+instruction change is the moved increment (M4 +2: `add.w` + table
+alignment; M0 +0, register renaming and literal offsets). Bench 8/8 in
+band (second round; first round discarded, Call 11).
+
+## S5.1 -- core `step_legs` const fn; ports build `PLAN` / `ROLES` from it (HOST) -- tag gc-s05.1-psu
+
+New `rm32::bridge::{LegRole, step_legs}` (AM32 `comStep` table) with host
+tests `step_legs_is_am32_comstep` and `invalid_steps_float_everything`:
+392 host tests (390 + 2). G071 `PLAN` and L431 `ROLES` built from it
+(Call 13).
+
+Gate PASS vs s04.5. HOST proof: ISR dumps identical on all six images;
+G071 `PLAN` (288 B, read from the ELF) byte-identical on both G071 images;
+text sizes identical on all six; the binz flash image is byte-identical
+to S4.5's. Bench 8/8 in band (binz R3 run once more after an OCFAST
+trip on the identical image, Call 12).
+
+## S5.2 -- `Bridge` trait replaces `PwmOutput` + `PhaseOutput` (CODE) -- tag gc-s05.2-psu -- SUPERSEDED by S5.2r2 (Call 15)
+
+(As first logged. "Gate PASS" below hid `ISR removals: FAIL` on all six
+images; the shown diff was not limited to the intended change.)
+
+Core `Bridge` trait; `MotorHal::bridge()`; isr_logic, sounds and
+`commutation_timer_expired` drive the bridge; method renames per the
+design (`set_auto_reload` -> `set_period`, `generate_update_event` ->
+`latch`, `set_prescaler` -> `set_tone_divider`, compare1..3 ->
+`set_phase_duties`). Port `StmBridge` (Call 14). 392 host tests
+(unchanged count), blackbox 81/81.
+
+Gate PASS vs s05.1. ISR change shown: only the two roots that drive the
+bridge differ (TIM6 and the COM timer); every other root byte-identical.
+Instruction counts equal or lower on every image (TIM6: G071 -7, F051
+-22, L431/G431 -2, L431 bench -4, binz -7; COM: G071/binz -2, others +0).
+Masked diff (registers, immediates, branch targets): register allocation,
+address arithmetic and stack spills only, no call added or removed; the
+one store that disappeared (binz COM, `rising` flag at `[r0, #22]`) is
+tail-merged into the shared store both wrap branches now jump to. binz
+WCET: COM 906 cycles @2ws (was 909), TIM6 unchanged. Text -8..-96 B.
+Bench 8/8 in band first pass.
+
+## S5.2r2 -- `Bridge` rework: ISR-identical (CODE) -- tag gc-s05.2r2-psu
+
+Port files that touch `IsrHal` restored from S5.1 and re-applied
+minimally (Call 14 d-f): core `BridgeLegs` + `Bridge: BridgeLegs`, GAT
+borrowed `StmBridge` view, COM path on `BridgeLegs`. 392 host tests
+(unchanged count), blackbox 81/81.
+
+Gate vs s05.1: `ISR diff: identical` on all six images, every root's
+instruction count equal (binz TIM14 1491, TIM6 3768; G071 1447/3583;
+F051 1885/4020; L431 1539/3150; G431 1475/3083; L431 bench 1700/3449).
+`ISR removals: FAIL` on all six, caused only by the trait-path rename of
+five gate methods (Call 15). Bench 8/8 in band first pass (band-check
+regex, Call 16). Intermediate s05.2r (borrowed view without the trait
+split) was gated, not benched: it still changed the COM root (+3 L431,
++8 binz instructions) through the two-pointer argument.
+
+Guard-kill bisect for S5.1 done and logged under Call 12 (no regression;
+16 ABAB runs, 0 trips); `imean` finding under Call 8.
+
+## S5.2r3 -- gate supertrait keeps `hal::PhaseOutput`: removals PASS (CODE) -- tag gc-s05.2r3-psu
+
+`BridgeLegs` renamed to `rm32::hal::PhaseOutput` and moved into hal.rs
+(Call 14 g); nothing else. Gate vs s05.1: `ISR diff: identical` and
+`ISR removals: PASS` on all six images; no FAIL in any of the 14 gate
+outputs; binz WCET COM 549 insns / 909 cycles, TIM6 2647 (= S5.1). 392
+host tests, blackbox 81/81. Bench 8/8 in band first pass.
+
+## S5.2f -- review fixes (CODE) -- tag gc-s05.2f-psu
+
+From the increment 4-5a review: (a) the COMP gate latch converts e_com
+with `e_com_us_to_avg_ticks::<StmPlatform>` (was `div3_i32`, i.e. a
+2 MHz timer assumed); (b) `AffineDiv` and `AdcScale` are `pub(crate)`,
+`AffineDiv` keeps its proved `x_max` and `apply` debug-asserts it (new
+test, should_panic); (c) the port tone code drives `bridge()` (Call 19);
+(d) LED: no change (Call 17); (e) `gc_summary.py` i50max check (Call
+18); (f) Call 8 corrected. Host tests 392 -> 393; blackbox 81/81.
+
+Gate vs s05.2r3: `ISR diff: identical` and removals PASS on all six
+images; no FAIL in any gate output. Bench R1-R4 once per board, 8/8 in
+band including the new i50max check (L431 R3 repeated once after a
+serial dump failure, Call 20).
+
+## S5.3 -- drive-mode decision into the core (RISKY) -- tag gc-s05.3-psu
+
+The AUTO drive-mode policy (`comp_pwm && !old_routine`) leaves the port's
+`PhaseDriver::effective_comp_pwm` for `rm32::bridge::drive_complementary`
+(Call 21). `PhaseOutput::com_step` and `all_pwm` take the decision as an
+argument; the core computes it at each of its six call sites from
+`config.use_comp_pwm()` and `shared`, and `commutation_timer_expired` takes
+a `comp_pwm` argument (the port passes `state.config.use_comp_pwm()`).
+`PhaseDriver` loses its `comp_pwm` field, `new(bool)`, `set_comp_pwm` and
+the main.rs wiring step: a missed wiring step can no longer leave the
+silicon in diode drive while the config says complementary. Tone: Call
+22. Bench 'D' key: Call 23. `com_step` / `all_pwm` pinned
+`#[inline(never)]` (they were already out of line). Host tests 393 -> 394
+(new: the COM path passes the core decision, 4 mode x config cases);
+blackbox 81/81.
+
+ELF SHA-256 (prefix): binz 9fd764014cc6, l431 33c1dff0b428, pub g071
+3374dc5e2b3b, f051 119513ed111c, l431 2ffbfb6450ce, g431 840bef90dcb1.
+
+Gate vs s05.2f: removals PASS on all six images, no FAIL in any gate
+output. Every ISR root shrank: l431 TIM16 -129 / TIM6 -148, binz TIM14
+-9 / TIM6 -36, pub g071 -1 / -45, f051 -25 / -61, l431 -50 / -62, g431
+-89 / -103 instructions. The removed code is the per-call
+`effective_comp_pwm` (a COMP_PWM_LIVE match plus an `old_routine` read,
+inlined at each `phase_pwm` and twice in `com_step`); `all_pwm` now reads
+`old_routine` once instead of three times. binz static WCET: TIM6 5118
+-> 5080 cycles; TIM14 909 -> 918 (+9 cycles, 0.14 us): the
+`old_routine` read moved from `com_step` into `commutation_timer_expired`
+and the bool crosses as an argument, same work on every path.
+
+Bench (PSU, ABAB, same session): A = S5.2f images (`s53a`), B = S5.3
+(`s53b`), R1-R4 three times per board, order A/B, B/A, A/B; 48/48 OK, no
+kill, desync or reboot, no R3 overcurrent trip; band check 48/48;
+`scripts/ab_segments.py s53a s53b` 0/120 banded metrics significant (Call
+24); `ab_r3_peaks.py s53a s53b`: R3 peak 4351 +- 312 vs 4185 +- 264
+(p=0.52), dwell 2177 vs 2173. RISKY: added to the battery batch, see
+`docs/gc_battery_s05.3.md`.
+
+## S5.3 battery batch -- tag gc-s05.3-ok (on 6fbd0a7)
+
+3S battery, both boards on one pack, `docs/gc_battery_s05.3.md`: A =
+gc-s05.2f-psu (`batt53a`), B = gc-s05.3-psu (`batt53b`), battery-guard
+images, rounds A/B, B/A, A/B, binz b1-b3 then L431 b1-b3, one run per
+command; 36 runs plus three repeats (Call 27).
+
+- Every run completed: no guard kill, one boot, 100 % reached and held
+  except one L431 b2 run on each side.
+- 100 %: binz settled eHz within -0.5 / -0.2 / -0.2 % of A and mA within
+  -1.0 / -1.2 / -1.1 % (b1 / b2 / b3, n = 3 a side); L431 b1 and b3
+  within 0.3 %.
+- `ab_segments.py batt53a batt53b`: 99 metrics, 0 significant after
+  Bonferroni, 2 at raw p < 0.05 (~5 expected).
+- The bar as written was not met, on either side: L431 B b2 (round 2)
+  orbit-tripped at the slam and wedged (848 desyncs); A did the same in a
+  follow-up (`orb53a-s5`, 860). Bisect: present at gc-s00-baseline (Call
+  26). binz b1 desyncs on both sides, also pre-existing (Call 28). The
+  bar's dsy column was blind to all of these (Call 25).
+
+Verdict: no S5.3 difference on battery; the failures are pre-existing and
+logged as Calls 25, 26 and 28 for the operator. Bisect images (L431, 48 kHz, battery):
+battb00k48 878475ea34f8, bk-s03.1 f928153b3209, bk-s03.3 8119f935b7b1,
+bk-s03.4 afa1d2c84e8c, bk-s04.1 679aa19a749e.
+
+## S6.1 -- `BemfSensor` trait; `BemfPins` to the port (CODE) -- tag gc-s06.1-psu (42aa6c3)
+
+`hal::Comparator` -> `hal::BemfSensor` (design 5.2): `select_phase(Phase,
+rising)`, `enable_irq`, `mask_irq`, `level`, `filter_read`. The core owns
+the step -> floating-phase map (`hal::floating_phase`, branch-free table;
+AM32 `changeCompInput`: 1/4 C, 2/5 A, 3/6 B) and routes through one
+out-of-line `route_bemf`. The port comparator no longer caches
+step/rising. `BemfPins` moved to `rm32_stm32::board_ext`. `clear_pending`
+/ `repend` deferred to S6.3, where `on_bemf_irq` first needs them. New
+host tests: floating-phase table, commutation selects the new step's
+phase (rm32 361 pass).
+
+Gate (`GC_RENAME=change_input=route_bemf`) PASS vs s05.3c; committed tree
+re-gated as s06.1c, ISR dumps identical to the gated tree. Removals PASS
+on 5/6 images, public G071 EXTI4_15 +1 accepted (Call 29). binz WCET:
+TIM14 918 -> 897 cyc, TIM6 5080 -> 4995, ADC_COMP 698 unchanged. Bench
+ELFs: l431 a4aef5add519, binz 5040f9c691ad.
+
+Bench (on the battery, Call 31): R1-R4 both boards, all complete, no kill,
+dsy_fw = 0; band check 2/8 (current 1-3 % high, battery bus); controls
+with s05.3c images show the same offset; L431 R4 battery-image ABAB 2 a
+side equal within 0.5 %. Verdict: no S6.1 difference.
+
+## S6.2 -- gate average latched by the core control tick (RISKY) -- tag gc-s06.2-psu (38373b7)
+
+3cc6ee2 + 38373b7 (fix-up, Call 34). `ten_khz_tick` reads the average
+interval at the ramp-limit site (where it always was) and latches it into
+`SharedState::gate_avg` (`IsrTiming::gate_avg`, a `core` AtomicU32: a
+`portable_atomic` load is PRIMASK-wrapped on M0 and put a critical section
+on the priority-0 COMP path). L431 / G071 COMP ISRs read it;
+`rm32_stm32::comp_gate` deleted. AM32 staleness kept (20 kHz latch, never
+fresh e_com/3, clamped at 0 only). New host test: tick latches; the
+AllOff tick keeps the previous value.
+
+Gate PASS vs s06.1c, removals only on all six images, no FAIL (binz TIM6
+-13, ADC_COMP -1; L431 TIM6 -17, COMP -2). binz WCET from s06.2f gate.
+
+Bench (battery, battery-guard images; A = gc-s06.1-psu `batt62a`, B =
+38373b7 `batt62f`): ABAB R1-R4 x 3 rounds per board, 48 runs, all OK, no
+kill, dsy_fw = 0; `ab_segments.py batt62a batt62f` 0 significant after
+Bonferroni (3 raw < 0.05, ~6 expected). Plus 4 extra R3 pairs, a pad
+experiment (5 + 5) and a bisect triplet (5 x 3): Calls 32, 33.
+Battery: covered by these runs (the pack was on for the whole step).
+Verdict: step criteria met; R3 slam high-mode rate open (Call 32).
+
+## S6.3 -- COMP acceptance gate into the core (RISKY) -- tag gc-s06.3-psu (2385fc0)
+
+`rm32::control::isr_logic::on_bemf_irq` is AM32's `COMP_IRQHandler`
+gate (pending -> open: clear, `Open`; closed at the pre-ZC level: clear,
+re-read, `repend` if it flipped; closed post-ZC: camp). The port's
+shared `isr_handlers::handle_comp_irq` runs `handle_comp` on `Open` and
+keeps the bench counters; an `entered` hook runs the entry counter before
+the gate, where the old wrappers counted it. `BemfSensor` gains
+`pending` / `clear_pending` / `repend` (ExtiOps per MCU); every COMP
+vector is one call. New host test covers every gate branch (363 pass).
+
+Gate (`GC_RENAME=comp_at_pre_zc_level=handle_comp_irq`) PASS vs s06.2f;
+committed tree re-gated as s06.3c, identical. Removals: binz ADC_COMP
+-36, L431 COMP -14, L431 TIM6 -17; F051 / G431 add the gate (Call 35).
+**WCET gate on the COMP root: binz ADC_COMP 694 -> 680 cyc @2ws (219 ->
+185 insns, AM32 ratio 1.67 -> 1.41).** On the way: counting after the
+gate made LLVM copy the counter into every path (+9, extra ldrex); the
+cold fallback cost 13 instructions on M4 (Call 36).
+
+Bench (battery, battery-guard images; A = gc-s06.2-psu `batt63a`, B =
+2385fc0 `batt63b`): ABAB R1-R4 x 3 rounds per board, 48 runs, all OK, no
+kill, dsy_fw = 0. One L431 B R3 recorder dump lost in transport (log
+clean) and one A R2 that collided with a second run I sent in the same
+message: both set aside under `captures/l431/aborted/` and repeated.
+`ab_segments.py batt63a batt63b` 0 significant, 0 at raw p < 0.05. R3
+slam peak 4785 vs 4592 (p=0.20), high mode 1/3 vs 0/3 (Call 32 data).
+Camps x2 (Call 37). Battery: covered by these runs.
+Verdict: no S6.3 behaviour change on L431 / G071.
+
+## Increment 6 -- summary for review
+
+S6.1 gc-s06.1-psu (42aa6c3), S6.2 gc-s06.2-psu (38373b7), S6.3
+gc-s06.3-psu (2385fc0). Every root on both bench images is smaller than
+at gc-s05.3-psu. All bench work ran on the battery (Call 31): the RISKY
+steps' battery batch is therefore done, but **no step of increment 6 has
+a PSU band check**; S6.1-S6.3 PSU R1-R4 can be flown in one session when
+the PSU is back. Calls for review: 29-37 (32 is the open one: binz R3
+slam high-mode rate).
+
+## Bands rebuilt on the battery-parallel supply (2026-10-26)
+
+The bench supply is now a 3S2P pack wired in parallel with the PSU (the
+PSU gives ~2 A at full speed, the pack the rest and recharges between
+runs; no sag). The operator keeps it. Currents read 1-3 % above the PSU
+bands (Call 31), so the battery gets its own: `docs/gc_bands_batt.json`,
+from the 16 `batt63b` runs (gc-s06.3-psu battery image, 4 interleaved
+R1-R4 rounds per board, all dsy = 0, no kills), v4 recipe plus a binz mA
+floor: `--ma-floor l431=30 --ma-floor binz=30 --min-settled 1.0`. The
+binz floor is new: at 10 % its settled mA scatters sd ~10 mA (absolute,
+72 R3 runs over four A/B-equal images), so +-5 % (~+-9 mA) of 4 tight
+runs missed equal-code runs by a few mA; 30 = 3 sd, the L431's value.
+`gc_summary.py` maps `battNN*-` tags to the `s00-` band keys
+(`band_key`, also used when building).
+
+Checks: self 32/32; every other battery run today passes (batt63a 24/24,
+batt62f 38/38, batt62a 33/33, batt61a/b 4/4); falsifier: the PSU s00
+runs fail 20/32 (59 segments out). `gc_bands_s00.json` is unchanged and
+still passes its own runs. From here, step checks on this bench use
+`--check docs/gc_bands_batt.json`; this closes the Call 31 question.
+
+## Increment 6 review (2026-10-26) -- approved, tag gc-s06.3-ok
+
+Peer review approved S6.1-S6.3 and the battery bands. Dispositions:
+29, 30, 33, 34, 35, 36 approved as written; 31 closed by 823a030 (no
+bare-PSU rerun, the battery-parallel supply is the bench); **32 carried**
+(no rate test: pad and latch bisects ruled out timing and placement, S6.3
+came back 4785 vs 4592, 0/3 high; reviewer's reading: the UART step
+command is asynchronous to the 1 kHz guard window, ramp divider and
+sector phase, so the inrush peak's alignment with the fast EWMA varies;
+both modes have margin under the 12 A surge guard on this supply); 37
+approved without the experiment (one level read per Camp, ADC_COMP 36
+instructions shorter, so ~2x re-entries per camp window, gate opening
+unchanged).
+Follow-up (next touch of isr_logic.rs): the `bemf_zero_cross` doc
+comment still describes per-port gates/acks; point it at `on_bemf_irq`.
+
+## S7.1 -- DShot bit layer (HOST) -- tag gc-s07.1-psu (9b5ba9f)
+
+`dshot::unpack(packet, bidirectional)` and `dshot::gcr_bits(value)`:
+layer 1 for bit-slicing ports (Call 38). `encode_gcr_frame` calls
+`gcr_bits` (inline(always)); no caller changes. Exhaustive host tests:
+`unpack == decode_frame` on all 65536 packets in both CRC modes;
+`gcr_bits` inverts `encode_gcr_frame` on all 4096 values. Also the
+`bemf_zero_cross` doc comment now points at `on_bemf_irq` (S6 review
+note). Gate PASS vs s06.3c; ISR disassembly identical on all six images
+(committed tree re-gated as s07.1c, identical); host 365, blackbox 81 +
+C known diffs. HOST class: no bench.
+
+## S7.2 -- CAPTURE_HZ, GCR_SHIFT to Platform; DMA names out (HOST) -- tag gc-s07.2-psu (cdcf20e)
+
+`Platform::CAPTURE_HZ` / `GCR_SHIFT` (StmPlatform: CPU clock,
+`Chip::GCR_SHIFT`; harness 64 MHz / 6, the values its vectors were
+recorded with). `TransferState::process<P>` drops `cpu_mhz`; the
+detection prescalers are const fns of `P::CAPTURE_HZ` (same values on
+every chip: 48/64/80/170 MHz -> 8/10/13/28 and MHz-1). `detect_input`
+drops its unused clock argument. `GCR_SHIFT_F0/G0` and the F0-only
+`encode_telemetry` wrapper leave the core. Renames:
+`CaptureConfig.ndtr` -> `edges_per_burst`, core `dma_buffer` params ->
+`edges`, `InputCapture::{receive_dshot_dma, send_dshot_dma, dma_buffer}`
+-> `{start_capture, start_gcr_output, edges}`, `TelemetryUart::send_dma`
+-> `send` (PAC register names stay). Gate PASS vs s07.1c with declared
+renames, removals only (Call 39); committed tree s07.2c identical; host
+365, blackbox 81 + C known diffs. HOST class: no bench.
+
+## S7.3 -- transfer dispatch into the core (CODE) -- branch gc-s7-dshot (02ae2f5)
+
+`rm32::transfer::dispatch(actions, shared, InputContext, on_command,
+set_prescaler)`: the one `TransferAction` dispatch; firmware
+`handle_exti_frame` and the harness both call it (the harness had
+drifted, Call 43). The port's bench counters and the output-prescaler
+register write are hooks run where the inline code ran them. Gate PASS vs
+s07.2c: binz EXTI4_15 -25, L431 EXTI15_10 -40, public G071 -17, public
+L431/G431 -3, public F051 +2 (Call 40); committed tree s07.3c identical.
+Host 370 (five dispatch tests), blackbox 81 + C known diffs. Calls 41, 42.
+
+## S7.4 -- tone, bidir response, CRSF into the core (CODE) -- branch gc-s7-dshot (027b2cc)
+
+`rm32::tone::step` (+ `tone_duty`, AM32 `setVolume`), `rm32::edt::
+encode_response`, `CrsfParser::dispatch_byte`. Kept to the old codegen
+shape: bridge made only on a writing path, config and eRPM inputs read
+inside the arms that use them (first cut: binz TIM6 +4, DMA +2, L431 DMA
++5, all from hoisted loads). Gate PASS vs s07.3c: binz TIM6 -6, L431 TIM6
+-3, every other root identical; committed tree s07.4c identical. Host
+373, blackbox 81 + C known diffs.
+
+**S7.3-S7.4 are parked on `gc-s7-dshot`** (pushed to private, not merged):
+they change the DShot path, which the bench builds do not exercise. Merge
+after the FC session: DShot150/300/600, bidir, EDT and Configurator
+passthrough on the L431 (`protocol_matrix.py`). Only that session remains
+for increment 7.
+
+Operator decisions (2026-10-26): Call 39 accepted (S7.2 judged
+removals-only, not byte-identical: the compile-time fold is the step's
+point). Call 40 accepted (public F051 +2 on the parked branch; revisit at
+merge if the reviewer asks). Increment 7a complete; only the FC session
+remains.
+
+## Increment 7a review (2026-10-26) -- S7.1-S7.2 approved, tag gc-s07.2-ok
+
+The review's S7.1/S7.2 audit matches the code and gate numbers: approved,
+Calls 38 and 39 approved. Its S7.3/S7.4 sections and its rulings on
+Calls 41-43 describe code that exists on neither branch
+(`on_capture_complete`, `DshotTelemetrySource`, `service_dshot_telemetry`,
+`process_dshot_command`, `dshot_edt_enabled`, "decode_frame delegates to
+unpack" -- all absent, checked with git grep on devel and gc-s7-dshot), so
+they do not count as a review of the real S7.3/S7.4 or of the real Calls
+41 (unreachable paths carried), 42 (EDT gate order), 43 (harness
+coverage). Call 40's verdict stands (operator-accepted) but its stated
+cause is wrong: the +2 is block layout in `handle_exti_frame`.
+**Open: re-review S7.3 (02ae2f5), S7.4 (027b2cc) and Calls 40-43 against
+gc-s7-dshot before the merge.**
+
+## S7.3/S7.4 re-review (2026-10-27) -- APPROVED
+
+Re-review against `git diff gc-s07.2-psu..gc-s7-dshot` (02ae2f5, 027b2cc)
+matches the code (all 8 cited tests exist on the branch). S7.3, S7.4 and
+Calls 40-43 approved; Call 40 needs no layout pass at merge. Merge gate
+left: the L431 FC session (`scripts/protocol_matrix.py`).
+
+## S7 FC session & merge (2026-10-27) -- gate baseline s07.4m, tag gc-s07.4-ok
+
+Merged gc-s7-dshot -> devel d30c3d3 (protocol matrix 5/5 legs on f0625ca),
+issue #7 12/12 (Call 46, docs/issue7/), EDT restored at ON (Call 44).
+Review of d30c3d3..ff9ebe0 (2026-10-27): approved, with fixes, all in this
+entry's commit:
+
+- **refactor_log restored.** 83d2c16's Call 44 rewrite sliced to the
+  first "45." it found -- at the file's end -- and deleted S4.1 through
+  the S7.3/S7.4 re-review (453 lines). Rebuilt from afc236a with Calls
+  44-46 together in the numbered list.
+- **f0625ca broke 3 blackbox vectors** (desync_detection,
+  desync_recovery, desync_recovery_bidir): the changeover count started
+  at 0, i.e. "changeover pending", so established interrupt-mode runs
+  could not desync for 3 passes. Merged red: the commit hook runs no
+  vectors, and my harness checks rebuilt `-p rm32`, not `-p rm32-harness`.
+  Fix: the count starts settled (`CHANGEOVER_SETTLED = 3`), a stop or any
+  polling tick resets it to 0 (review item: no stale count across a
+  stop). A rotor that never polled is checked exactly as AM32. New vector
+  `desync_changeover_guard`: one polling tick, then AM32's ZC-12 desync
+  is held and fires at the ZC-18 pass; C-known-diff (AM32 fires at 12).
+  Rust 82/82.
+- **Bench fields gated:** `dsy_snap`, `dsy_hist`, `chk_hist` and their
+  per-revolution stores are `#[cfg(feature = "bench-diag")]`;
+  `chk_since_polling` stays (control state).
+- **Gate s07.4m vs s07.4c: PASS.** Public ISR dumps identical on all four
+  chips. Bench images differ by additions only: binz TIM14 +24
+  instructions, cpsid 18 -> 20 (1109ca7's `EXC_COMMS` counter under
+  debuguart; M0 atomics are critical sections), so the binz removals
+  sub-check reports FAIL by design. s07.4m is the S8.1 baseline.
+- **Bench re-qual (battery images of this tree):** L431 25 % starts 8/8
+  clean; binz 1/1. Ladder PASS both boards (L431 1.844M, binz 1.896M
+  comms). Slam: binz PASS; L431 3/4 PASS -- slam 1 had dsy=2 from one
+  orbit trip (`orbit=1 fast=1`, `first=0/0/0/0`: the |delta avg| detector
+  never fired). The orbit path is untouched here; 1/4 vs f0625ca 0/3 is
+  not separable at this n. Open, watch in S8.

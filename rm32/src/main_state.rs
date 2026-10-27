@@ -58,6 +58,11 @@ pub(crate) fn orbit_current(current_ma: i16, duty: u16, vbat_cv: u16) -> bool {
 
 /// Compute duty ceiling from eRPM and temperature limits.
 /// Returns the more restrictive of the two (or 2000 if neither applies).
+/// Desync-check passes after polling mode (or a stop) before the detector
+/// compares revolutions again: the first two interrupt-mode passes can
+/// still average polled commutations (refactor_log Call 45).
+const CHANGEOVER_SETTLED: u8 = 3;
+
 pub(crate) fn duty_ceiling(
     e_com_time: i32,
     motor_kv: u16,
@@ -146,14 +151,18 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     pub dsy_demote_old: u32,
     /// Detector inputs at the latest desync: last_average_interval,
     /// average_interval, commutation_interval, zero_crosses (bench).
+    #[cfg(feature = "bench-diag")]
     pub dsy_snap: [u32; 4],
     /// The last four desync-check passes before the latest desync, oldest
     /// first: zero_crosses | polling << 31, average_interval, duty_cycle,
     /// duty_maximum (bench).
+    #[cfg(feature = "bench-diag")]
     pub dsy_hist: [[u32; 4]; 4],
+    #[cfg(feature = "bench-diag")]
     chk_hist: [[u32; 4]; 4],
-    /// Desync-check passes since the last one that ran in polling mode
-    /// (saturating; see the changeover guard).
+    /// Desync-check passes since polling mode or a stop (saturating; see
+    /// the changeover guard). Starts settled: a rotor that never polled
+    /// is checked exactly as AM32 does.
     chk_since_polling: u8,
     /// Wrong-phase-orbit trips (see ORBIT_TRIP_MA) — lifetime count.
     pub orbit_trips: u32,
@@ -227,10 +236,13 @@ impl<P: Timing> MainState<P, NoLed> {
             dsy_demote_cur: 0,
             dsy_demote_slow: 0,
             dsy_demote_old: 0,
+            #[cfg(feature = "bench-diag")]
             dsy_snap: [0; 4],
+            #[cfg(feature = "bench-diag")]
             dsy_hist: [[0; 4]; 4],
+            #[cfg(feature = "bench-diag")]
             chk_hist: [[0; 4]; 4],
-            chk_since_polling: 0,
+            chk_since_polling: CHANGEOVER_SETTLED,
             orbit_trips: 0,
             desync_rearm_zc: 10,
             orbit_trip_count: 0,
@@ -421,16 +433,25 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             self.protection.bemf_timeout = BEMF_TIMEOUT_STRICT;
         }
 
+        // A stop or a polling stretch restarts the changeover count, so a
+        // start never inherits a settled count from the previous session.
+        if !shared.running() || shared.old_routine() {
+            self.chk_since_polling = 0;
+        }
+
         // Desync detection (re-arm gate is dynamic — see desync_rearm_zc)
         if self.desync_check && zc > self.desync_rearm_zc {
             self.desync_rearm_zc = 10;
-            self.chk_hist.copy_within(1.., 0);
-            self.chk_hist[3] = [
-                zc | ((shared.old_routine() as u32) << 31),
-                self.timing.average_interval,
-                shared.duty_cycle() as u32,
-                shared.duty_maximum() as u32,
-            ];
+            #[cfg(feature = "bench-diag")]
+            {
+                self.chk_hist.copy_within(1.., 0);
+                self.chk_hist[3] = [
+                    zc | ((shared.old_routine() as u32) << 31),
+                    self.timing.average_interval,
+                    shared.duty_cycle() as u32,
+                    shared.duty_maximum() as u32,
+                ];
+            }
             let diff = get_abs_dif(
                 self.timing.last_average_interval as i32,
                 self.timing.average_interval as i32,
@@ -448,12 +469,10 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             // only once both revolutions ran in interrupt mode (two
             // interrupt-mode passes after the last polling one); until
             // then a pass only re-seeds last_average_interval.
-            if shared.old_routine() {
-                self.chk_since_polling = 0;
-            } else {
+            if !shared.old_routine() {
                 self.chk_since_polling = self.chk_since_polling.saturating_add(1);
             }
-            let across_changeover = self.chk_since_polling < 3;
+            let across_changeover = self.chk_since_polling < CHANGEOVER_SETTLED;
             if !across_changeover
                 && diff > (self.timing.average_interval >> 1)
                 && self.timing.average_interval < P::DESYNC_MAX_INTERVAL
@@ -463,13 +482,16 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                 // reference's behavior (no reset), not its intent;
                 // "fixing" the ordering creates a desync echo that
                 // double-kicks duty during recovery.
-                self.dsy_snap = [
-                    self.timing.last_average_interval,
-                    self.timing.average_interval,
-                    shared.commutation_interval(),
-                    zc,
-                ];
-                self.dsy_hist = self.chk_hist;
+                #[cfg(feature = "bench-diag")]
+                {
+                    self.dsy_snap = [
+                        self.timing.last_average_interval,
+                        self.timing.average_interval,
+                        shared.commutation_interval(),
+                        zc,
+                    ];
+                    self.dsy_hist = self.chk_hist;
+                }
                 shared.set_zero_crosses(0);
                 self.desync_events = self.desync_events.wrapping_add(1);
                 let desync_from_interrupt_mode = !shared.old_routine();

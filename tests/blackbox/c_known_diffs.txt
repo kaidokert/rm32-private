@@ -8,6 +8,7 @@
 # vector                  first mismatch on the C harness
 beacon_tones            # tick=1 play_tone_flag=0, expected 2
 bidir_autodetect        # tick=110 dshot_telemetry=1, expected 0
+desync_changeover_guard # tick=13 zero_crosses=1, expected 12 -- AM32 fires at the changeover; rm32 skips it (Call 45)
 desync_detection        # tick=13 old_routine=1, expected 0
 edt_armed_throttle_gate # tick=1 newinput=0, expected 1500
 edt_disarm_on_zero      # tick=1 edt_arm_enable=0, expected 1
