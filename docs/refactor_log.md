@@ -1076,6 +1076,20 @@ check name regex widened twice, bands file untouched).
     (~500 CRC fails, stale first interval ~62,350) until one
     signal-timeout reset -- the one-edge misalignment class. L431 SWD
     needs `--speed 100` since the 2026-10-27 power cycle.
+47. **S8.2 ABAB: binz A3 ladder re-run after a mid-run input loss
+    (2026-10-27).** On the A image (s08.1 battery, c6f858e -- 6/6 clean
+    in S8.1's ABAB) the ESC armed and started on the first 10 % rung,
+    then every DShot frame failed CRC (264) with the stale first interval
+    ~62,340 followed by clean 37/69 edges -- the one-edge capture
+    misalignment of Call 46's boot case, now seen mid-run -- until
+    signal timeout (0.51 s) reset the chip, which then could not re-arm
+    under nonzero throttle (`run: None`, 3 resets). Motor side clean
+    (dsy=0, orbit=0). Not S8.2: A image, and no input-path code changed
+    in S8. Re-ran A3 on the same image (A3r PASS) to complete the
+    ABAB; the aborted run is kept (captures/gc/s08.2/bench/
+    binz_A3_ladder.log). Open: the G071 capture never realigns once
+    misaligned while frames keep arriving -- a fix belongs to the input
+    path (re-arm on a CRC-fail run), its own step after S8.
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
@@ -1637,3 +1651,14 @@ Design §5.5, review #4.
   `strd r6,r4,[sp]` -> `[sp,#4]` ... on L431 TIM1_UP_TIM16): `&writer`
   occupies one more argument slot. No added call, barrier, exclusive,
   mask or constant. ELF SHA-256: l431 cb35de27..., binz 265bc258....
+- **Bench ABAB (battery∥PSU, FC/BF DSHOT300), one run per command,
+  A = s08.1 battery images (c6f858e), B = 4adc84e battery images:** L431
+  and binz each A1 B1 A2 B2 A3 B3, bf_ladder + bf_slam per flash.
+  **B side 12/12 PASS**, starts=1 dsy=0 resets=0, orbit trips 0 in all
+  six B slams. A side 12/12 PASS after one re-run (Call 47: binz A3
+  ladder lost the DShot input to a one-edge capture misalignment on
+  the A image; A3r PASS); orbit trips 0 in all six A slams. L431 ladder
+  comms A 1.846/1.850/1.848M, B 1.849/1.847/1.847M; slam A
+  350k/349k/350k, B 350k/350k/348k. binz ladder A 1.900/1.902/1.903M,
+  B 1.901/1.902/1.904M; slam A 362k/361k/362k, B 362k/362k/362k. This
+  is S8.2's battery run. Logs captures/gc/s08.2/bench/. Tag gc-s08.2-ok.
