@@ -635,10 +635,14 @@ impl Harness {
                         &mut self.hal.interval,
                         &mut self.hal.com_timer,
                     );
-                    isr_logic::commutation_timer_expired::<HarnessPlatform, _, _, _, _>(
+                    // SAFETY: the harness is single-threaded; nothing runs
+                    // between the plain stores' reads and writes.
+                    let writer = unsafe { rm32::shared_comm::SingleWriter::new() };
+                    isr_logic::commutation_timer_expired::<HarnessPlatform, _, _, _, _, _>(
                         &mut self.commutation,
                         &mut self.bemf,
                         &self.shared,
+                        &writer,
                         &mut self.hal.com_timer,
                         &mut self.hal.comp,
                         &mut self.hal.bridge,

@@ -422,10 +422,11 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 
 /// Commutation timer expired (TIM14/TIM16 ISR body).
 #[allow(clippy::too_many_arguments)]
-pub fn commutation_timer_expired<P, S, C, B, T>(
+pub fn commutation_timer_expired<P, S, C, B, T, W>(
     commutation: &mut Commutation,
     bemf: &mut BemfState,
     shared: &S,
+    writer: &W,
     com_timer: &mut T,
     comp: &mut C,
     bridge: &mut B,
@@ -438,6 +439,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
     C: hal::BemfSensor,
     B: hal::PhaseOutput,
     T: hal::ComTimer,
+    W: crate::shared_comm::ModeWriter,
 {
     com_timer.disable_interrupt();
     if !shared.running() {
@@ -472,7 +474,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
         let to_old = crate::platform::e_com_us_to_avg_ticks::<P>(e_com) as u32
             > exit_interval + P::OLD_ROUTINE_REENTRY_MARGIN;
         if to_old {
-            shared.set_old_routine_isr0(true);
+            writer.set_old_routine(shared, true);
         }
         let new_ci = bemf.update_timing_from_timer(ci0);
         shared.set_commutation_interval(new_ci);
@@ -485,11 +487,11 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
             comp.enable_irq();
         }
         bemf.reset_after_commutation();
-        shared.increment_zero_crosses_isr0();
+        writer.increment_zero_crosses(shared);
     } else {
         // Polling mode (old_routine): comparator interrupts stay off.
         bemf.reset_after_commutation();
-        shared.increment_zero_crosses_isr0();
+        writer.increment_zero_crosses(shared);
         let zc = shared.zero_crosses();
         // Polling→interrupt changeover (AM32): the
         // zc>=20 form applies ONLY with stall_protection / rc_car_reverse;
@@ -504,7 +506,7 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
             ci0 < exit_interval
         };
         if changeover_met {
-            shared.transition_isr0(MotorEvent::BemfLocked);
+            writer.transition(shared, MotorEvent::BemfLocked);
             // Changeover: arm the interrupt path now (AM32 zcfoundroutine
             // enables comparator interrupts at this exact transition).
             comp.enable_irq();

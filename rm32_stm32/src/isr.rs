@@ -113,6 +113,8 @@ pub struct IsrState<H> {
     pub frametime_low: u16,
     pub frametime_high: u16,
     pub voltage_based_ramp: bool,
+    /// Plain-store token for the commutation ISR (`init::single_writer`).
+    pub writer: rm32::shared_comm::SingleWriter,
 }
 
 // Target-specific type alias — defined in mcu_xxx/chip.rs, re-exported via mcu::*.

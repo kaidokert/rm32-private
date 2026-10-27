@@ -925,10 +925,11 @@ mod tests {
                 last_phase: None,
             };
             let mut phase = MockBridge::default();
-            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
                 &mut comm,
                 &mut bemf,
                 &shared,
+                &crate::shared_comm::AtomicWriter,
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
@@ -987,10 +988,11 @@ mod tests {
                     last_phase: None,
                 };
                 let mut phase = MockBridge::default();
-                isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+                isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
                     &mut comm,
                     &mut bemf,
                     &shared,
+                    &crate::shared_comm::AtomicWriter,
                     &mut com_timer,
                     &mut comp,
                     &mut phase,
@@ -1027,10 +1029,11 @@ mod tests {
         };
 
         let step_before = comm.step;
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,
@@ -1068,10 +1071,11 @@ mod tests {
         };
         let step_before = comm.step();
 
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,
@@ -1106,10 +1110,11 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,
@@ -1141,10 +1146,11 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,
@@ -1185,10 +1191,11 @@ mod tests {
                 ..Default::default()
             };
 
-            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
                 &mut comm,
                 &mut bemf,
                 &shared,
+                &crate::shared_comm::AtomicWriter,
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
@@ -1224,10 +1231,11 @@ mod tests {
                 ..Default::default()
             };
 
-            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+            isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
                 &mut comm,
                 &mut bemf,
                 &shared,
+                &crate::shared_comm::AtomicWriter,
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
@@ -1267,10 +1275,11 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,
@@ -1302,10 +1311,11 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,
@@ -1337,10 +1347,11 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,
@@ -1373,10 +1384,11 @@ mod tests {
             ..Default::default()
         };
 
-        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _>(
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
             &mut comm,
             &mut bemf,
             &shared,
+            &crate::shared_comm::AtomicWriter,
             &mut com_timer,
             &mut comp,
             &mut phase,

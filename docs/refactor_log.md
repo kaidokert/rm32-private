@@ -1598,3 +1598,42 @@ blanket-implemented `MotorStatusExt`, so nothing can override them.
   1.900/1.900/1.901M; slam A 361k/361k/362k, B 360k/361k/362k. Logs
   captures/gc/s08.1/bench/. (The s07.4m L431 slam-1 orbit trip did not
   recur in 6 more L431 slams on either image.) Tag gc-s08.1-ok.
+
+## S8.2 -- `SingleWriter` token, `unsafe` `_isr0` (RISKY) -- branch gc/s08
+
+Design §5.5, review #4.
+
+- **Core.** `transition_isr0`, `set_old_routine_isr0` and
+  `increment_zero_crosses_isr0` are `unsafe fn` with the precondition in
+  a `# Safety` section (no context writing `motor_mode`/`zero_crosses`
+  between the read and the write; every other writer uses an update a
+  preempting store invalidates). New `ModeWriter` trait with two
+  implementations: `AtomicWriter` (safe, the atomic RMW versions -- the
+  default for any port) and `SingleWriter`, a zero-sized, non-`Clone`
+  token whose only constructor is `unsafe fn new()`; its `ModeWriter`
+  methods are the one place the core calls the `_isr0` stores.
+  `commutation_timer_expired` takes `writer: &W` (`W: ModeWriter`) and
+  makes its three mode/zc updates through it: monomorphised, no runtime
+  choice.
+- **STM32 port.** `init::single_writer()` carries the Cortex-M argument,
+  the only place it holds: single core, one NVIC; the commutation timer
+  is at the top preemption level of the writers (COMP shares it and
+  cannot preempt); M4 exception entry/return clears the exclusive
+  monitor so a preempted STREX retries; M0 atomics are critical
+  sections; the DShot DMA ISR that L431 `adjust_irq_priorities` may lift
+  above the commutation timer writes neither word (audited:
+  `handle_dma_tc` only reads). Each chip's `init` mints the token after
+  its NVIC priority block (G071/L431 explicit levels; F051/G431 leave
+  every IRQ at 0, no nesting at all) and returns it in `InitResult`;
+  main moves it into `IsrState.writer`; `handle_tim14` passes
+  `&state.writer`. The harness mints one under a single-threaded SAFETY
+  note (it keeps exercising the plain stores); core tests use
+  `AtomicWriter`.
+- **Gate s08.2 vs s08.1: PASS** (Rust 82/82; C harness = 11 known
+  diffs). ISR dumps DIFFERENT on all six images, removals PASS on all
+  six, +0 instructions on every root. The diff in every case is only the
+  commutation ISR's stack-argument slots for `commutation_timer_expired`
+  moving by 4 bytes (`str r3,[sp,#4]` -> `[sp,#8]` ... on binz TIM14,
+  `strd r6,r4,[sp]` -> `[sp,#4]` ... on L431 TIM1_UP_TIM16): `&writer`
+  occupies one more argument slot. No added call, barrier, exclusive,
+  mask or constant. ELF SHA-256: l431 cb35de27..., binz 265bc258....

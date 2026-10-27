@@ -367,10 +367,18 @@ pub fn handle_tim14() {
         use rm32::hal::IntervalTimer as _;
         crate::edge_probe::tim16_fired(state.hal.interval.count());
     }
-    rm32::control::isr_logic::commutation_timer_expired::<crate::platform::StmPlatform, _, _, _, _>(
+    rm32::control::isr_logic::commutation_timer_expired::<
+        crate::platform::StmPlatform,
+        _,
+        _,
+        _,
+        _,
+        _,
+    >(
         &mut state.commutation,
         &mut state.bemf,
         shared,
+        &state.writer,
         &mut state.hal.com_timer,
         &mut state.hal.comp,
         &mut state.hal.phase,

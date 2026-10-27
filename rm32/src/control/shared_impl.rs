@@ -135,10 +135,10 @@ impl MotorStatus for TestShared {
         }
     }
     // Single-threaded: the _isr0 variants are the plain versions.
-    fn transition_isr0(&self, event: MotorEvent) {
+    unsafe fn transition_isr0(&self, event: MotorEvent) {
         self.transition(event);
     }
-    fn set_old_routine_isr0(&self, v: bool) {
+    unsafe fn set_old_routine_isr0(&self, v: bool) {
         self.set_old_routine(v);
     }
     fn zero_crosses(&self) -> u32 {
@@ -153,7 +153,7 @@ impl MotorStatus for TestShared {
             self.zero_crosses.set(v + 1);
         }
     }
-    fn increment_zero_crosses_isr0(&self) {
+    unsafe fn increment_zero_crosses_isr0(&self) {
         self.increment_zero_crosses();
     }
     fn commutation_interval(&self) -> u32 {

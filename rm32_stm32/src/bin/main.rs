@@ -131,6 +131,7 @@ fn main() -> ! {
         mut sys,
         mut adc,
         mut telem,
+        writer,
     } = rm32_stm32::init::init(BOARD.dead_time, BOARD_EXT.bemf_pins);
 
     // Re-arm USART1 after the clock tree shuffle (and in case any peripheral
@@ -215,6 +216,7 @@ fn main() -> ! {
         frametime_low: 100,
         frametime_high: 60_000,
         voltage_based_ramp: BOARD.voltage_based_ramp,
+        writer,
     };
 
     // --- Build main loop state ---
