@@ -1437,3 +1437,9 @@ they change the DShot path, which the bench builds do not exercise. Merge
 after the FC session: DShot150/300/600, bidir, EDT and Configurator
 passthrough on the L431 (`protocol_matrix.py`). Only that session remains
 for increment 7.
+
+Operator decisions (2026-10-26): Call 39 accepted (S7.2 judged
+removals-only, not byte-identical: the compile-time fold is the step's
+point). Call 40 accepted (public F051 +2 on the parked branch; revisit at
+merge if the reviewer asks). Increment 7a complete; only the FC session
+remains.
