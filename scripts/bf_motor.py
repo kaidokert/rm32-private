@@ -38,6 +38,8 @@ def main():
     ap.add_argument("--index", type=int, default=0, help="CLI motor index (0-based)")
     ap.add_argument("--pct", type=float, default=25.0, help="throttle percent (0-100)")
     ap.add_argument("--seconds", type=float, default=8.0)
+    ap.add_argument("--telem", action="store_true",
+                    help="print BF dshot_telemetry_info (bidir eRPM) mid-hold")
     a = ap.parse_args()
     value = int(1000 + a.pct * 10)
     p = serial.Serial(a.port, 115_200, timeout=0.05)
@@ -50,7 +52,13 @@ def main():
         p.write(f"motor {a.index} {value}\n".encode())
         print(f"motor {a.index} -> {value} ({a.pct:.0f}%), holding {a.seconds}s")
         print(drain(p, 0.3).strip())
-        time.sleep(a.seconds)
+        if a.telem:
+            time.sleep(a.seconds / 2)
+            p.write(b"dshot_telemetry_info\n")
+            print(drain(p, 0.4).strip())
+            time.sleep(a.seconds / 2)
+        else:
+            time.sleep(a.seconds)
         return 0
     finally:
         # Kill guard: restore + exit on EVERY path.
