@@ -1047,6 +1047,10 @@ check name regex widened twice, bands file untouched).
     `R----` (x2), off `RTVCS` (x2: L431 36-37 C 12.00 V, binz 27-28 C
     12.25 V), A/B/A order. FC now: ESC_SENSOR off, `dshot_edt = ON`,
     `dshot_bidir = ON` (captures/gc/issue7/bf_diff_after_edt_bisect.txt).
+    Known-good tag first, ESC side: L431 flashed with
+    pre-main-merge-20260816 (EDT validated 07-31/08-01): ESC_SENSOR off
+    `RTVCS` (36 C, 12.00 V), on `R----` -- same split, so the ESC
+    commit is not the variable. L431 back on f0625ca: off `RTVCS`.
     No BF code change needed. KISS-serial ESC telemetry and EDT are
     mutually exclusive in BF by design: re-enable ESC_SENSOR only for a
     KISS session.
