@@ -1589,3 +1589,12 @@ blanket-implemented `MotorStatusExt`, so nothing can override them.
   `GC_RENAME='shared_comm..MotorState$GT$=shared_comm..MotorStatus$GT$'`:
   PASS on all six. ELF SHA-256: l431 ed25ecf9..., binz ccc4b4ba...
   (differ from s07.4m by symbol names and the tim1_arr `.data` word).
+- **Bench ABAB (battery∥PSU, FC/BF DSHOT300), one run per command,
+  A = s07.4m battery images, B = c6f858e battery images:** L431 and binz
+  each A1 B1 A2 B2 A3 B3, bf_ladder + bf_slam per flash: **24/24 PASS**,
+  every run starts=1 dsy=0 resets=0, **orbit trips 0 in all 12 slams**.
+  L431 ladder comms A 1.836/1.841/1.845M, B 1.838/1.846/1.844M; slam A
+  349k/328k/349k, B 348k/349k/350k. binz ladder A 1.899/1.901/1.901M, B
+  1.900/1.900/1.901M; slam A 361k/361k/362k, B 360k/361k/362k. Logs
+  captures/gc/s08.1/bench/. (The s07.4m L431 slam-1 orbit trip did not
+  recur in 6 more L431 slams on either image.) Tag gc-s08.1-ok.
