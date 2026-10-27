@@ -9,7 +9,6 @@ pub mod context;
 pub mod input;
 pub mod isr_logic;
 #[cfg(test)]
-#[cfg(test)]
 pub mod shared_impl;
 pub mod state;
 #[cfg(test)]

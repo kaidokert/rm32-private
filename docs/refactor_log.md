@@ -1663,3 +1663,15 @@ Design §5.5, review #4.
   350k/349k/350k, B 350k/350k/348k. binz ladder A 1.900/1.902/1.903M,
   B 1.901/1.902/1.904M; slam A 362k/361k/362k, B 362k/362k/362k. This
   is S8.2's battery run. Logs captures/gc/s08.2/bench/. Tag gc-s08.2-ok.
+
+## Increment 8 review (2026-10-27) -- APPROVED, tags gc-s08.1-ok, gc-s08.2-ok
+
+S8.1, S8.2 and Call 47 approved. Answers: the group boundaries stand
+(desync/changeover handoffs in `MotorStatus`, ISR actions and tick
+counters in `Commands`); the `SingleWriter` argument is complete on all
+four chips (equal priorities never preempt; M0 RMWs mask, M4 exception
+entry clears the monitor; L431 DMA swap is read-only on both words); the
+harness keeps `SingleWriter` so the vectors exercise the firmware's
+plain stores while core tests cover `AtomicWriter`; `TestShared` is
+test-only. Nit fixed in this commit: duplicate `#[cfg(test)]` on
+`control::shared_impl`. Next: Increment 9 (S9.1-S9.3, `TuningPolicy`).
