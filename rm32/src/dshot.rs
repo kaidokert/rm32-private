@@ -28,7 +28,7 @@ pub mod commands {
 }
 
 /// Result of decoding a DShot frame
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DshotFrame {
     /// Valid throttle value (0-2047) with telemetry request flag
     Throttle { value: u16, telemetry: bool },
@@ -40,7 +40,36 @@ pub enum DshotFrame {
     InvalidTiming,
 }
 
-/// Decode a DShot frame from a DMA capture buffer.
+/// Layer 1 (bits): decode a 16-bit DShot packet, MSB first: 11-bit value,
+/// telemetry bit, 4-bit CRC. For ports that slice bits in hardware (PIO,
+/// RMT, SPI). `bidirectional` selects the inverted CRC that bidirectional
+/// DShot uses. Same result as `decode_frame` on a capture of that packet.
+pub fn unpack(packet: u16, bidirectional: bool) -> DshotFrame {
+    let value = packet >> 5;
+    let telemetry = packet & 0x10 != 0;
+    let calc_crc = (packet >> 4 ^ packet >> 8 ^ packet >> 12) & 0xF;
+    let mut check_crc = packet & 0xF;
+    if bidirectional {
+        check_crc = !check_crc & 0xF;
+    }
+    if calc_crc != check_crc {
+        DshotFrame::BadCrc
+    } else if value > 47 {
+        DshotFrame::Throttle { value, telemetry }
+    } else if value > 0 {
+        DshotFrame::Command {
+            cmd: value,
+            telemetry,
+        }
+    } else {
+        DshotFrame::Throttle {
+            value: 0,
+            telemetry,
+        }
+    }
+}
+
+/// Layer 2 (timestamps): decode a DShot frame from a DMA capture buffer.
 /// `dma_buffer` contains 32 entries (16 pulse pairs).
 /// `frametime_low`/`frametime_high` define the valid window.
 pub fn decode_frame(
@@ -111,10 +140,12 @@ pub fn decode_frame(
 pub const GCR_SHIFT_F0: u8 = 6;
 pub const GCR_SHIFT_G0: u8 = 7;
 
-/// Encode a raw 12-bit value into GCR buffer for bidir DShot response.
-/// Used for both eRPM and EDT frames.
-pub fn encode_gcr_frame(value_12bit: u16, gcr_out: &mut [u32], padding: usize, gcr_shift: u8) {
-    // Calculate checksum (XOR of nibbles, inverted)
+/// Layer 1 (bits): the 20-bit GCR word for a 12-bit telemetry value
+/// (value, inverted nibble-XOR checksum, 4b/5b per nibble), MSB first,
+/// before the 20 -> 21 bit transition coding. For ports that shift bits
+/// out in hardware.
+#[inline(always)]
+pub fn gcr_bits(value_12bit: u16) -> u32 {
     let mut csum = 0u16;
     let mut csum_data = value_12bit;
     for _ in 0..3 {
@@ -125,11 +156,16 @@ pub fn encode_gcr_frame(value_12bit: u16, gcr_out: &mut [u32], padding: usize, g
 
     let full_number = (value_12bit << 4) | csum;
 
-    // GCR RLL encode 16 to 20 bit
-    let gcr_number: u32 = (GCR_ENCODE_TABLE[(full_number >> 12) as usize] as u32) << 15
+    (GCR_ENCODE_TABLE[(full_number >> 12) as usize] as u32) << 15
         | (GCR_ENCODE_TABLE[((full_number >> 8) & 0xF) as usize] as u32) << 10
         | (GCR_ENCODE_TABLE[((full_number >> 4) & 0xF) as usize] as u32) << 5
-        | (GCR_ENCODE_TABLE[(full_number & 0xF) as usize] as u32);
+        | (GCR_ENCODE_TABLE[(full_number & 0xF) as usize] as u32)
+}
+
+/// Layer 2: encode a raw 12-bit value into GCR buffer for bidir DShot response.
+/// Used for both eRPM and EDT frames.
+pub fn encode_gcr_frame(value_12bit: u16, gcr_out: &mut [u32], padding: usize, gcr_shift: u8) {
+    let gcr_number = gcr_bits(value_12bit);
 
     // GCR RLL encode 20 to 21 bit
     let multiplier = 1u32 << gcr_shift;
@@ -177,6 +213,44 @@ pub fn encode_telemetry(com_time: u16, running: bool, gcr_out: &mut [u32], paddi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// S7.1: the bit layer agrees with the timestamp layer on every 16-bit
+    /// packet, normal and bidirectional CRC. The capture is synthetic:
+    /// 100 ticks per bit, a 1 is 75 ticks high, a 0 is 37.
+    #[test]
+    fn unpack_matches_decode_frame_exhaustively() {
+        for packet in 0..=u16::MAX {
+            let mut buf = [0u32; 32];
+            for i in 0..16 {
+                let one = packet >> (15 - i) & 1 == 1;
+                buf[2 * i] = 1000 + 100 * i as u32;
+                buf[2 * i + 1] = buf[2 * i] + if one { 75 } else { 37 };
+            }
+            for bidir in [false, true] {
+                assert_eq!(
+                    unpack(packet, bidir),
+                    decode_frame(&buf, 0, u16::MAX, bidir),
+                    "packet {packet:#06x} bidir {bidir}"
+                );
+            }
+        }
+    }
+
+    /// S7.1: `gcr_bits` is the word `encode_gcr_frame` transition-codes:
+    /// undoing the 20 -> 21 coding of every 12-bit value gives it back.
+    #[test]
+    fn gcr_bits_matches_encode_gcr_frame_exhaustively() {
+        for v in 0..4096u16 {
+            let mut gcr = [0u32; 23];
+            encode_gcr_frame(v, &mut gcr, 0, GCR_SHIFT_G0);
+            let mut word = 0u32;
+            for k in 0..20 {
+                let bit = (gcr[k + 2] ^ gcr[k + 1]) >> GCR_SHIFT_G0 & 1;
+                word = word << 1 | bit;
+            }
+            assert_eq!(gcr_bits(v), word, "value {v}");
+        }
+    }
 
     /// Build a DShot DMA buffer from an 11-bit value.
     fn build_frame(value: u16, telem: bool, inverted_crc: bool) -> [u32; 32] {

@@ -520,12 +520,11 @@ pub fn commutation_timer_expired<P, S, C, B, T>(
 /// this function to ack the EXTI line, the early-return causes NVIC to
 /// re-fire the COMP ISR forever → ISR storm → main-loop starvation.
 ///
-/// Mitigation: the platform-specific COMP ISR wrapper owns the EXTI pending
-/// bit. F051 (`ADC_COMP`) and G431 (`COMP1_2_3`) ack it at entry; L431
-/// (`COMP`) and G071 (`ADC_COMP`) follow AM32's half-average-interval gate:
-/// ack when the gate is open or the edge is pre-ZC noise, and leave it
-/// pending ("camp") until the gate opens otherwise. See each port's
-/// `interrupts.rs`.
+/// Mitigation: `on_bemf_irq` owns the EXTI pending bit on every port. It
+/// runs AM32's half-average-interval gate before this function: clear when
+/// the gate is open (this function runs) or the edge is pre-ZC noise, and
+/// leave it pending ("camp") until the gate opens otherwise. Every COMP
+/// vector is `isr_handlers::handle_comp_irq`.
 pub fn bemf_zero_cross<C: hal::BemfSensor, I: hal::IntervalTimer, T: hal::ComTimer>(
     commutation: &Commutation,
     bemf: &mut BemfState,
