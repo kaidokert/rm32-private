@@ -5,7 +5,10 @@ dead_time: 80
 current_adc_channel: 5
 voltage_adc_channel: 13
 dual_adc: true
+# AM32 HARDWARE_GROUP_G4_D (Inc/targets.h): phase A on COMP2, B and C on
+# COMP1. The earlier copy had A/B's comparators swapped, which is not
+# routable (PA5 is a COMP2 input) and failed the build.
 bemf_pins:
-  phase_a: { comp: 1, inm: PA5, inp: PA1 }
-  phase_b: { comp: 2, inm: PA4, inp: PA3 }
+  phase_a: { comp: 2, inm: PA5, inp: PA3 }
+  phase_b: { comp: 1, inm: PA4, inp: PA1 }
   phase_c: { comp: 1, inm: PA0, inp: PA1 }

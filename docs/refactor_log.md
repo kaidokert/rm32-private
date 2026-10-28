@@ -1099,6 +1099,16 @@ check name regex widened twice, bands file untouched).
     and AM32 has no G431 Sequre target to take the real pins from. Left
     as is (yaml says `tuning: am32`); fixing it needs the board's
     schematic. The other 12 non-rig boards build under `Am32Tuning`.
+    **Resolved (operator: mirror AM32):** AM32 does have it --
+    `SEQURE_G431` uses `HARDWARE_GROUP_G4_D` (my "no G431 Sequre target"
+    above was wrong; I grepped the wrong name). G4_D puts phase A on COMP2
+    (INM PA5, INP PA3) and B/C on COMP1 (PA4/PA1, PA0/PA1); the yaml had
+    A and B's comparators swapped -- an original copy mistake. Yaml now
+    mirrors G4_D; `sequre_g431 am32 34084 1756 1136`. Still unmirrored
+    in that yaml vs AM32 (not build blockers): ADC channels (AM32 V=ch3,
+    I=ch4; yaml 13/5, copied from protondrive), divider 480, 5 mV/A, 8 MHz
+    HSE; and the G431 port hard-codes protondrive-style bridge pins (G4_D
+    low sides are PB15/14/13). Not bench-relevant until G431 bring-up.
 49. **S9.3: design §5.8's `type State` not added.** The rig counters
     (orbit trip count / duty snapshot / snapshot age, 6 bytes) stay in
     `MainState`. Moving them into a per-policy state type would change
@@ -1107,6 +1117,7 @@ check name regex widened twice, bands file untouched).
     ae2941d6 / 6d7b3494). With `Am32Tuning` the counters are dead
     stores the compiler keeps: 6 bytes of RAM, no behaviour. Revisit if
     the rig policies go public (#6).
+    **Operator: accepted (2026-10-27).**
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
@@ -1776,6 +1787,7 @@ bench image) and `binz_drv8304h_g071` keep `rig`. New
   | iflight_f051 | 36536 | 36008 | -528 | 1752 | 1140 |
   | mamba_f55_g071 | 37580 | 37076 | -504 | 1760 | 1140 |
   | protondrive_g431 | 34708 | 34084 | -624 | 1756 | 1136 |
+  | sequre_g431 | (did not build) | 34084 | -- | 1756 | 1136 |
   | pwm_enable_g071 | 38348 | 37804 | -544 | 1760 | 1140 |
   | siskin_f051 | 36512 | 35992 | -520 | 1752 | 1140 |
   | tbs_12s_g071 | 37604 | 37068 | -536 | 1760 | 1140 |
