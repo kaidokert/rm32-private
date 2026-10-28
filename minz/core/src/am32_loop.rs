@@ -203,19 +203,33 @@ impl Sched<'_> {
 #[inline]
 pub fn min_bemf_schedule(drive: &Drive) {
     if drive.zero_crosses.load(Ordering::Relaxed) < 5 {
-        drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
-        drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
+        drive
+            .min_bemf_up
+            .store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
+        drive
+            .min_bemf_down
+            .store(TARGET_MIN_BEMF_COUNTS * 2, Ordering::Relaxed);
     } else {
-        drive.min_bemf_up.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
-        drive.min_bemf_down.store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
+        drive
+            .min_bemf_up
+            .store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
+        drive
+            .min_bemf_down
+            .store(TARGET_MIN_BEMF_COUNTS, Ordering::Relaxed);
     }
 }
 
 /// average_interval band (main.c:2283): average_interval = e_com_time / 3.
 #[inline]
 pub fn store_average_interval(sched: &Sched, e_com_time: i32) -> u32 {
-    let average_interval = if e_com_time > 0 { (e_com_time / 3) as u32 } else { 0 };
-    sched.average_interval.store(average_interval, Ordering::Relaxed);
+    let average_interval = if e_com_time > 0 {
+        (e_com_time / 3) as u32
+    } else {
+        0
+    };
+    sched
+        .average_interval
+        .store(average_interval, Ordering::Relaxed);
     average_interval
 }
 
@@ -305,7 +319,8 @@ pub fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
         Some(UartCmd::SetThrottle(inn)) => {
             duty.uart_duty_input.store(inn, Ordering::Relaxed);
             // adjusted_input mirror (main.c:1410)
-            duty.adjusted_input.store(if inn <= 48 { 0 } else { inn }, Ordering::Relaxed);
+            duty.adjusted_input
+                .store(if inn <= 48 { 0 } else { inn }, Ordering::Relaxed);
             bench.uart_deadman_ticks.store(0, Ordering::Relaxed);
         }
         Some(UartCmd::TraceToggle) => {
@@ -323,7 +338,9 @@ pub fn apply_uart_cmd(duty: &Duty, bench: &Bench, cmd: Option<UartCmd>) {
         Some(UartCmd::DelayInFreeUp) => bump_delay(bench.delay_in_free, DELAY_BUMP_CYC as i32),
         Some(UartCmd::DelayInFreeDown) => bump_delay(bench.delay_in_free, -(DELAY_BUMP_CYC as i32)),
         Some(UartCmd::DelayOutFreeUp) => bump_delay(bench.delay_out_free, DELAY_BUMP_CYC as i32),
-        Some(UartCmd::DelayOutFreeDown) => bump_delay(bench.delay_out_free, -(DELAY_BUMP_CYC as i32)),
+        Some(UartCmd::DelayOutFreeDown) => {
+            bump_delay(bench.delay_out_free, -(DELAY_BUMP_CYC as i32))
+        }
         None => {}
     }
 }
@@ -359,7 +376,9 @@ pub fn uart_deadman_tick(duty: &Duty, bench: &Bench) {
     if dm > UART_DEADMAN_LIMIT {
         duty.uart_duty_input.store(0, Ordering::Relaxed);
         duty.adjusted_input.store(0, Ordering::Relaxed);
-        bench.uart_deadman_ticks.store(UART_DEADMAN_LIMIT + 1, Ordering::Relaxed);
+        bench
+            .uart_deadman_ticks
+            .store(UART_DEADMAN_LIMIT + 1, Ordering::Relaxed);
     } else {
         bench.uart_deadman_ticks.store(dm, Ordering::Relaxed);
     }
@@ -520,13 +539,25 @@ mod tests {
         let drive = ds.drive();
         drive.zero_crosses.store(4, Ordering::Relaxed);
         min_bemf_schedule(&drive);
-        assert_eq!(drive.min_bemf_up.load(Ordering::Relaxed), TARGET_MIN_BEMF_COUNTS * 2);
-        assert_eq!(drive.min_bemf_down.load(Ordering::Relaxed), TARGET_MIN_BEMF_COUNTS * 2);
+        assert_eq!(
+            drive.min_bemf_up.load(Ordering::Relaxed),
+            TARGET_MIN_BEMF_COUNTS * 2
+        );
+        assert_eq!(
+            drive.min_bemf_down.load(Ordering::Relaxed),
+            TARGET_MIN_BEMF_COUNTS * 2
+        );
         // At 5 and above: back to the target.
         drive.zero_crosses.store(5, Ordering::Relaxed);
         min_bemf_schedule(&drive);
-        assert_eq!(drive.min_bemf_up.load(Ordering::Relaxed), TARGET_MIN_BEMF_COUNTS);
-        assert_eq!(drive.min_bemf_down.load(Ordering::Relaxed), TARGET_MIN_BEMF_COUNTS);
+        assert_eq!(
+            drive.min_bemf_up.load(Ordering::Relaxed),
+            TARGET_MIN_BEMF_COUNTS
+        );
+        assert_eq!(
+            drive.min_bemf_down.load(Ordering::Relaxed),
+            TARGET_MIN_BEMF_COUNTS
+        );
     }
 
     #[test]
@@ -617,7 +648,10 @@ mod tests {
         // Startup window (zc<30): low setpoint clamps UP to MIN_STARTUP_DUTY.
         drive.zero_crosses.store(0, Ordering::Relaxed);
         set_input_clamp(&drive, &duty, 100);
-        assert_eq!(duty.duty_cycle_setpoint.load(Ordering::Relaxed), MIN_STARTUP_DUTY);
+        assert_eq!(
+            duty.duty_cycle_setpoint.load(Ordering::Relaxed),
+            MIN_STARTUP_DUTY
+        );
 
         // Startup window: full throttle clamps DOWN to STARTUP_MAX_DUTY_CYCLE.
         set_input_clamp(&drive, &duty, 2047);
@@ -652,15 +686,23 @@ mod tests {
         assert_eq!(duty.uart_duty_input.load(Ordering::Relaxed), 999);
 
         // At the limit: next tick latches limit+1 and zeroes throttle.
-        bench.uart_deadman_ticks.store(UART_DEADMAN_LIMIT, Ordering::Relaxed);
+        bench
+            .uart_deadman_ticks
+            .store(UART_DEADMAN_LIMIT, Ordering::Relaxed);
         uart_deadman_tick(&duty, &bench);
-        assert_eq!(bench.uart_deadman_ticks.load(Ordering::Relaxed), UART_DEADMAN_LIMIT + 1);
+        assert_eq!(
+            bench.uart_deadman_ticks.load(Ordering::Relaxed),
+            UART_DEADMAN_LIMIT + 1
+        );
         assert_eq!(duty.uart_duty_input.load(Ordering::Relaxed), 0);
         assert_eq!(duty.adjusted_input.load(Ordering::Relaxed), 0);
 
         // Stays latched (does not run past limit+1).
         uart_deadman_tick(&duty, &bench);
-        assert_eq!(bench.uart_deadman_ticks.load(Ordering::Relaxed), UART_DEADMAN_LIMIT + 1);
+        assert_eq!(
+            bench.uart_deadman_ticks.load(Ordering::Relaxed),
+            UART_DEADMAN_LIMIT + 1
+        );
     }
 
     #[test]
@@ -747,7 +789,10 @@ mod tests {
         apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayInFreeUp));
         assert_eq!(bench.delay_in_free.load(Ordering::Relaxed), DELAY_BUMP_CYC);
         apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayInFreeUp));
-        assert_eq!(bench.delay_in_free.load(Ordering::Relaxed), 2 * DELAY_BUMP_CYC);
+        assert_eq!(
+            bench.delay_in_free.load(Ordering::Relaxed),
+            2 * DELAY_BUMP_CYC
+        );
         // out-free is an independent cell.
         assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), 0);
 
@@ -767,6 +812,9 @@ mod tests {
         assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), DELAY_CAP_CYC);
         // Down from the cap steps back by exactly one bump.
         apply_uart_cmd(&duty, &bench, Some(UartCmd::DelayOutFreeDown));
-        assert_eq!(bench.delay_out_free.load(Ordering::Relaxed), DELAY_CAP_CYC - DELAY_BUMP_CYC);
+        assert_eq!(
+            bench.delay_out_free.load(Ordering::Relaxed),
+            DELAY_CAP_CYC - DELAY_BUMP_CYC
+        );
     }
 }

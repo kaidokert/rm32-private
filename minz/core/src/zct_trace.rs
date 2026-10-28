@@ -95,7 +95,12 @@ mod tests {
         static COMM_N: AtomicU32 = AtomicU32::new(0);
         static BATCHING: AtomicBool = AtomicBool::new(false);
         let zct = ZctTrace {
-            ring: ZctRing { ring: &RING, head: &HEAD, tail: &TAIL, drop: &DROP },
+            ring: ZctRing {
+                ring: &RING,
+                head: &HEAD,
+                tail: &TAIL,
+                drop: &DROP,
+            },
             comm_n: &COMM_N,
             batching: &BATCHING,
         };

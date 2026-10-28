@@ -348,7 +348,11 @@ pub(crate) mod mock {
     impl Comparator for &MockHal {
         fn output_level(&self) -> bool {
             let mut seq = self.comp_seq.borrow_mut();
-            if seq.is_empty() { self.comp_value.get() } else { seq.remove(0) }
+            if seq.is_empty() {
+                self.comp_value.get()
+            } else {
+                seq.remove(0)
+            }
         }
         fn set_step(&mut self, step: u8, rising: bool) {
             self.calls.borrow_mut().push("set_step");
