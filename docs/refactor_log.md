@@ -1996,3 +1996,4 @@ All runs starts=1. Every B run passed first time; orbit trips 0 in all
     one-edge capture misalignment, present on both A and B images and
     already queued as its own fix. The A1r rerun passed. Not a bisect:
     the failing image is the baseline, not devel head.
+    **Operator: accepted (2026-10-27).**
