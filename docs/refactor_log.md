@@ -1965,7 +1965,8 @@ Call 49.
 ## Bench re-qual of devel head (gc-requal-1027, 2026-10-27)
 
 FC bench, battery∥PSU, BF DSHOT300. A = gc-s08.2-ok battery images
-(l431 37ede12a, binz 4f72029a); B = devel 22150ed battery images
+(l431 37ede12a, binz 4f72029a; provenance checked after the session:
+an in-tree rebuild of the tag gives byte-identical ELFs); B = devel 22150ed battery images
 (l431 5195ff3f, binz 31c1fb9b; covers Call 50 and the #94 merge).
 A/B/A/B per board, one run per command; logs in
 captures/gc/requal-1027/bench/.
