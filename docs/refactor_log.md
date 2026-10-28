@@ -1961,3 +1961,37 @@ binz_drv8304h_g071 from gc-s10.3-ok at the next bench session). With
 S10.3, all ten increments of refactor_execution_plan.md are on devel.
 Housekeeping applied: Call 50 moved into the numbered Calls list after
 Call 49.
+
+## Bench re-qual of devel head (gc-requal-1027, 2026-10-27)
+
+FC bench, battery∥PSU, BF DSHOT300. A = gc-s08.2-ok battery images
+(l431 37ede12a, binz 4f72029a); B = devel 22150ed battery images
+(l431 5195ff3f, binz 31c1fb9b; covers Call 50 and the #94 merge).
+A/B/A/B per board, one run per command; logs in
+captures/gc/requal-1027/bench/.
+
+| board | side | ladder (comms, dsy, resets) | slam (comms, dsy, resets) | orbit |
+|---|---|---|---|---|
+| l431 | A1 | 1838590, 0, 0 | 348457, 0, 0 | 0 |
+| l431 | B1 | 1844152, 0, 0 | 348762, 0, 0 | 0 |
+| l431 | A2 | 1846224, 0, 0 | 349982, 0, 0 | 0 |
+| l431 | B2 | 1846955, 0, 0 | 349444, 0, 0 | 0 |
+| l431 | A3 | 1850394, 0, 0 | 349756, 0, 0 | 0 |
+| l431 | B3 | 1851848, 0, 0 | 348561, 0, 0 | 0 |
+| binz | A1 | FAIL (run None, 3 resets) → rerun A1r 1899325, 0, 0 | 361198, 0, 0 | 0 |
+| binz | B1 | 1900123, 0, 0 | 361728, 0, 0 | 0 |
+| binz | A2 | 1901019, 0, 0 | 361971, 0, 0 | 0 |
+| binz | B2 | 1900533, 0, 0 | 361401, 0, 0 | 0 |
+| binz | A3 | 1901564, 0, 0 | 361658, 0, 0 | 0 |
+| binz | B3 | 1903537, 0, 0 | 362464, 0, 0 | 0 |
+
+All runs starts=1. Every B run passed first time; orbit trips 0 in all
+12 slams. One failure, on the A (old) image: Call 51.
+
+51. **Re-qual: binz A1 ladder failed on the gc-s08.2-ok image.** 500 ms
+    into the run (1377 comms) a signal_timeout RESET fired with
+    crc_fail=264, newinput=246, in_set=1 — byte-for-byte the S8.2 A3
+    signature (crc_fail=264, newinput=246). That is Call 47's G071
+    one-edge capture misalignment, present on both A and B images and
+    already queued as its own fix. The A1r rerun passed. Not a bisect:
+    the failing image is the baseline, not devel head.
