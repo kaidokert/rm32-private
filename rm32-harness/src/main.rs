@@ -963,6 +963,15 @@ enum AnyHarness {
 fn command<T: TuningPolicy>(harness: &mut Harness<T>, line: &str) -> bool {
     if line.starts_with("quit") {
         return false;
+    } else if line.starts_with("rates") {
+        // The runner converts time-based vector lines with these.
+        type P<T> = HarnessPlatform<T>;
+        println!(
+            "tick_hz={} timer_hz={}",
+            <P<T> as rm32::platform::Platform>::TICK_HZ,
+            <P<T> as rm32::platform::Platform>::TIMER_HZ
+        );
+        io::stdout().flush().unwrap();
     } else if line.starts_with("reset") {
         harness.reset();
         println!("reset");

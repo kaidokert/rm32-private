@@ -11,7 +11,7 @@ Or from repo root:
 
 import pytest
 from pathlib import Path
-from harness import AM32Harness, read_tuning, run_test_vectors
+from harness import AM32Harness, read_tuning, run_test_vectors, ticks_for
 
 VECTORS_DIR = Path(__file__).parent / "vectors"
 
@@ -89,6 +89,19 @@ class TestHarnessAPI:
     def test_arm_convenience(self, harness):
         state = harness.arm()
         assert state["armed"] == 1
+
+    def test_duration_operands(self, harness):
+        """Time-based `ticks` operands convert exactly at the harness rate
+        and refuse anything that is not a whole tick count."""
+        assert harness.tick_hz() == 20000
+        assert ticks_for("19999", 20000) == 19999
+        assert ticks_for("999.95ms", 20000) == 19999
+        assert ticks_for("999.95ms", 40000) == 39998
+        assert ticks_for("2100ms", 20000) == ticks_for("2.1s", 20000) == 42000
+        assert ticks_for("50us", 20000) == 1
+        for bad in ("25us", "0ms", "1.5", "5 ms", "-1ms"):
+            with pytest.raises(ValueError):
+                ticks_for(bad, 20000)
 
     def test_tuning_selects_policy(self, harness):
         """`tuning` must really swap the policy: the rig vector's

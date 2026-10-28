@@ -18,4 +18,4 @@ tick 1 | throttle=500 | armed=1
 
 # Pre-set just below threshold and let it accumulate
 config low_voltage_count=9999
-ticks 100 | throttle=500 | armed=0
+ticks 5ms | throttle=500 | armed=0

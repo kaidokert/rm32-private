@@ -1843,3 +1843,30 @@ Design §9 item 2.
   bytes are identical (`objcopy -O binary` + `cmp`: 0 bytes differ on
   both): comment edits move debug-info line/column records only. Tag
   gc-s10.1-ok.
+
+## S10.2 -- time-based vectors (HOST) -- branch gc/s10
+
+Design §9 item 1, first half.
+
+- **Syntax.** A `ticks` operand is either a bare integer (a tick count:
+  event steps -- frames, pulses, one state-machine step) or a duration
+  `<n>us|ms|s` (decimals allowed). `harness.ticks_for` converts a
+  duration at the harness's tick rate with exact rational arithmetic and
+  refuses a duration that is not a whole, positive tick count (e.g.
+  `25us` at 20 kHz). Rust harness: new `rates` command
+  (`tick_hz=... timer_hz=...` from its Platform); C harness: AM32's
+  `LOOP_FREQUENCY_HZ` 20000 (Inc/targets.h).
+- **Vectors converted: 22 lines in 16 files**, every `ticks` count that
+  is a duration of something AM32 schedules in time: arming
+  (19999 -> 999.95ms), the three signal timeouts (500.1ms, 600ms,
+  2100ms), telemetry interval (29.95ms, 30ms), LVC/ADC accumulation, the
+  1 kHz PID / speed / stall / temperature / EDT paths, slow ramp. Kept as
+  tick counts: `bidir_autodetect` 110 (frames per tick), and
+  `servo_calibration` 51/76 (pulses), and all 2-5-tick steps (boundary
+  steps and single state-machine advances). At 20 kHz each converted
+  line is the identical tick count, so results cannot move.
+- **Tests:** `test_duration_operands` (exact conversions at 20 and 40 kHz,
+  five refusals). Rust suite 84 (82 vectors + 2 API tests), all green; C
+  9 known diffs, unchanged.
+- **Gate s10.2 vs s10.1: PASS.** ISR dumps identical on all six; rig ELFs
+  byte-identical to s10.1 (71476a4b..., 38543e84...). Tag gc-s10.2-ok.

@@ -18,4 +18,4 @@ old_routine=1
 # Pre-fill count near threshold and trigger LVC
 config low_voltage_count=9999
 config battery_voltage=50
-ticks 50 | throttle=500 | armed=0
+ticks 2.5ms | throttle=500 | armed=0

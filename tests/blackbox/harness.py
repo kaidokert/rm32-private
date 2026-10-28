@@ -11,8 +11,10 @@ Usage:
 """
 
 import queue
+import re
 import subprocess
 import threading
+from fractions import Fraction
 
 REPLY_TIMEOUT_S = 5
 import os
@@ -111,6 +113,21 @@ class AM32Harness:
     def _kvargs(self, **kwargs):
         return " ".join(f"{k}={v}" for k, v in kwargs.items())
 
+    # AM32's LOOP_FREQUENCY_HZ default (Inc/targets.h); the C harness has
+    # no `rates` command.
+    C_TICK_HZ = 20000
+
+    def tick_hz(self):
+        """Control-tick rate the harness runs at (Hz)."""
+        if self.is_c:
+            return self.C_TICK_HZ
+        self._send("rates")
+        line = self._recv()
+        fields = dict(kv.split("=", 1) for kv in line.split())
+        if "tick_hz" not in fields:
+            raise RuntimeError(f"Expected 'tick_hz=...', got '{line}'")
+        return int(fields["tick_hz"])
+
     def tuning(self, name):
         """Select the tuning (`rig` | `am32`); starts a fresh harness."""
         self._send(f"tuning {name}")
@@ -187,6 +204,28 @@ class AM32Harness:
 
 TUNINGS = ("rig", "am32")
 
+_DURATION = re.compile(r"^(\d+(?:\.\d+)?)(us|ms|s)?$")
+_UNIT_PER_S = {"us": 1_000_000, "ms": 1_000, "s": 1}
+
+
+def ticks_for(count, tick_hz):
+    """`ticks` operand -> control ticks. A bare integer is a tick count
+    (event steps: frames, pulses, one state-machine step); `<n>us|ms|s` is
+    a duration, converted at the harness's tick rate. A duration that does
+    not land on a whole tick, or rounds to zero ticks, is refused."""
+    m = _DURATION.match(count)
+    if not m:
+        raise ValueError(f"Bad ticks operand: {count!r}")
+    value, unit = m.group(1), m.group(2)
+    if unit is None:
+        if "." in value:
+            raise ValueError(f"Tick count must be an integer: {count!r}")
+        return int(value)
+    n = Fraction(value) * tick_hz / _UNIT_PER_S[unit]
+    if n.denominator != 1 or n <= 0:
+        raise ValueError(f"{count} is {float(n)} ticks at {tick_hz} Hz, not a whole tick count")
+    return int(n)
+
 
 def read_tuning(vectors_file):
     """The vector's required `@tuning rig|am32` line."""
@@ -223,9 +262,10 @@ def run_test_vectors(harness, vectors_file, tuning=None):
         # tick_spec | inputs | assertions
         tick 1      | throttle=0          |
         ticks 20000 | throttle=0          | armed=1
+        ticks 1s    | throttle=0          |       # duration: us|ms|s,
+                                                  # converted at tick_hz
         tick 1      | throttle=500        | running=1 duty_cycle>0
     """
-    import re
 
     section = None
     config_lines = []
@@ -255,6 +295,7 @@ def run_test_vectors(harness, vectors_file, tuning=None):
     elif tuning != "am32":
         raise RuntimeError(f"{vectors_file}: `{tuning}` vector sent to the C harness")
     harness.reset()
+    tick_hz = harness.tick_hz()
     for cl in config_lines:
         if "=" not in cl:
             continue
@@ -305,7 +346,7 @@ def run_test_vectors(harness, vectors_file, tuning=None):
         if cmd == "tick":
             state = harness.tick(**inputs)
         elif cmd == "ticks":
-            n = int(tokens[1])
+            n = ticks_for(tokens[1], tick_hz)
             state = harness.ticks(n, **inputs)
         elif cmd == "gcr_encode":
             com_time = int(tokens[1])

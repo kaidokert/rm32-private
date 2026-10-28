@@ -26,4 +26,4 @@ config low_voltage_count=9999
 
 # Verify mode 2 branch is entered (even though ADC overwrites voltage)
 # Just confirm the system doesn't crash with mode 2 config
-ticks 30 | throttle=500 | running=1
+ticks 1.5ms | throttle=500 | running=1
