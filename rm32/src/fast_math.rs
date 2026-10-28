@@ -61,7 +61,7 @@ pub const fn div5_u32(n: u32) -> u32 {
 /// default ARRs are 1999 / 2665 / 3332 / 7082): since 2000 = 16 * 125,
 /// discard the low four bits, then a ceil reciprocal with two bounded
 /// corrections keeps the multiply inside `u32` on M0. Larger products occur
-/// only with a low configured `pwm_frequency` (e.g. L431 at 8-10 kHz gives
+/// only with a low configured `pwm_frequency` (e.g. an 80 MHz timer at 8-10 kHz gives
 /// ARR 8028-10021): they divide the reduced value by 5 three times (floor
 /// division composes exactly), still without a divide helper. It used to
 /// `assert!`, i.e. panic in the control ISR.
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn div2000_pwm_is_exact_and_total_above_the_fast_range() {
-        // Low pwm_frequency on L431 (ARR 10021) and G431 at full duty and
+        // Low pwm_frequency on 80/170 MHz timers (ARR 10021+) at full duty and
         // with a strength-9 drag brake: these used to panic in the ISR.
         for arr in [8028u32, 8885, 10021, 14164] {
             for duty in [1600u32, 1800, 2000] {

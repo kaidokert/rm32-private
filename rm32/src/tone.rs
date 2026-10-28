@@ -13,7 +13,7 @@
 //! duty(volume) + com_step, hold, then `silence` = all_off +
 //! prescaler 0 + ARR restore.
 
-/// One tone note: TIM1 prescaler (pitch), commutation step (which
+/// One tone note: PWM timer prescaler (pitch), commutation step (which
 /// windings hum), duration in milliseconds.
 ///
 /// 4-byte aligned (8 bytes): at its natural 2-byte alignment the 6-byte copy

@@ -187,7 +187,7 @@ pub fn erpm_to_12bit(com_time: u16, running: bool) -> u16 {
 }
 
 /// Encode an eRPM telemetry response into a GCR buffer.
-/// `gcr_shift` is 6 for F051-like MCUs, 7 for G071-like MCUs.
+/// `gcr_shift` is 6 or 7 depending on the port's capture clock (AM32's F051 / G071 values).
 pub fn encode_telemetry_with_shift(
     com_time: u16,
     running: bool,
@@ -203,7 +203,7 @@ pub fn encode_telemetry_with_shift(
 mod tests {
     use super::*;
 
-    /// GCR shifts of the two chip classes (F051-class 6, G071-class 7).
+    /// GCR shifts of AM32's two chip classes (F051-class 6, G071-class 7).
     const GCR_SHIFT_F0: u8 = 6;
     const GCR_SHIFT_G0: u8 = 7;
 
@@ -395,7 +395,7 @@ mod tests {
 
     // --- Golden vector tests: verified against C firmware (MCU_F051, gcr_shift=6, padding=7) ---
 
-    /// Helper: encode with C harness parameters (F051 path, padding=7).
+    /// Helper: encode with the AM32 C harness parameters (F051 path, padding=7).
     fn encode_c_compat(com_time: u16) -> [u32; 37] {
         let mut gcr = [0u32; 37];
         encode_telemetry_with_shift(com_time, true, &mut gcr, 7, GCR_SHIFT_F0);

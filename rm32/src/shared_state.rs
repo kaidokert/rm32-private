@@ -1,8 +1,8 @@
 //! Shared state between ISR and main loop — all atomic, lock-free.
 //!
 //! Uses `portable-atomic` for cross-architecture support:
-//! - On Cortex-M4+ (G431, L431): hardware LDREX/STREX for lock-free CAS
-//! - On Cortex-M0+ (G071, F051): automatic fallback to interrupt-free sections
+//! - On Cortex-M4+: hardware LDREX/STREX for lock-free CAS
+//! - On Cortex-M0+ (and other cores without CAS): the port's portable-atomic backend
 //!
 //! Acquire/Release ordering for cross-context data passing.
 
@@ -146,7 +146,7 @@ impl SharedState {
     }
 
     // --- Bench debug counters (bidir DSHOT investigation) ---
-    /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz).
+    /// Increment 1 kHz dispatch counter (control-tick ISR side, 20 kHz).
     pub fn one_khz_counter_inc(&self) {
         self.one_khz_counter
             .fetch_update(REL, ACQ, |cur| Some(cur.saturating_add(1)))

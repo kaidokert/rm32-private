@@ -383,7 +383,7 @@ mod tests {
     // Every board yaml's (divider, mV/A, offset), the harness default, and
     // the old test constants (offset 498, no sensor).
     board!(Binz, 1194, 80, 1600);
-    board!(L431, 933, 3, 0);
+    board!(Neutron, 933, 3, 0);
     board!(Am32Default, 1100, 20, 0);
     board!(TwelveS, 2100, 25, 0);
     board!(IflightF051, 1100, 30, 0);
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn adc_conversions_equal_s2_3_for_every_count() {
         matches_s2_3::<Binz>();
-        matches_s2_3::<L431>();
+        matches_s2_3::<Neutron>();
         matches_s2_3::<Am32Default>();
         matches_s2_3::<TwelveS>();
         matches_s2_3::<IflightF051>();
@@ -480,9 +480,9 @@ mod tests {
 
     #[test]
     fn adc_to_centivolts_bench_dividers() {
-        // L431 9.33:1 and binz 11.94:1: 1.000 V at the pin.
+        // Neutron 9.33:1 and binz 11.94:1: 1.000 V at the pin.
         let raw = 1241; // 3300/4095*1241 = 1000.1 mV
-        assert_eq!(AdcCount(raw).centivolts::<L431>().0, 933); // 9.33 V
+        assert_eq!(AdcCount(raw).centivolts::<Neutron>().0, 933); // 9.33 V
         assert_eq!(AdcCount(raw).centivolts::<Binz>().0, 1194); // 11.94 V
     }
 
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn temp_f051_range() {
-        // F051: cal1=30C, cal2=110C. Typical cal values ~700, ~900
+        // AM32 F051 port: cal1=30C, cal2=110C. Typical cal values ~700, ~900
         let t = calc_temperature_pure(800, 700, 900, 30, 110, 3300, 3300);
         assert_eq!(t, DegreesCelsius(70)); // 50% of range = (30+110)/2 = 70
     }

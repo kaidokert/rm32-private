@@ -309,7 +309,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 /// step, armed for its BEMF edge. Out of line, with the port's
 /// `select_phase` inlined into this one copy: callers pass two pointers, as
 /// the old `set_step` + `change_input` pair cost them two stores. Computing
-/// the phase at each call site cost the M0 commutation ISR more (binz TIM14
+/// the phase at each call site cost the M0 commutation ISR more (binz commutation-timer
 /// +2 to +20 instructions, S6.1).
 #[inline(never)]
 fn route_bemf<B: BemfSensor>(sensor: &mut B, commutation: &Commutation) {
@@ -420,7 +420,7 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     }
 }
 
-/// Commutation timer expired (TIM14/TIM16 ISR body).
+/// Commutation timer expired (the commutation-timer ISR body).
 #[allow(clippy::too_many_arguments)]
 pub fn commutation_timer_expired<P, S, C, B, T, W>(
     commutation: &mut Commutation,

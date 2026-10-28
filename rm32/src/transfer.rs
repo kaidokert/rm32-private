@@ -57,8 +57,8 @@ pub enum TransferAction {
 /// Capture setup requested for the next input frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureConfig {
-    /// Edges (timestamps) to capture before the next frame callback (the
-    /// STM32 port's DMA transfer count).
+    /// Edges (timestamps) to capture before the next frame callback (a
+    /// DMA port's transfer count; AM32's `buffersize`).
     pub edges_per_burst: u32,
     /// Timer prescaler update, if protocol detection changed the capture rate.
     pub prescaler: Option<u16>,

@@ -80,6 +80,11 @@ run "clippy workspace" $cap cargo clippy -q --workspace -- -D warnings
 run "rust harness build" $cap cargo build -q --release -p rm32-harness --bin rm32_harness
 run "blackbox vectors (Rust harness)" $cap python -m pytest tests/blackbox/test_vectors.py -q -p no:cacheprovider
 run "blackbox vectors (C harness vs known diffs)" c_vectors
+# Portability (design §9): the core builds for a non-ARM target (the port
+# picks portable-atomic's backend, as rm32_stm32 does) and names no STM32
+# peripheral outside AM32-citing comments.
+run "rm32 riscv32imc build" $cap cargo build -q -p rm32 --target riscv32imc-unknown-none-elf --no-default-features --features portable-atomic/unsafe-assume-single-core
+run "rm32 STM32-name gate" $cap python scripts/stm32_name_gate.py --stats
 
 # Public builds (what the pre-commit hook gates), sizes recorded after each:
 # all four share one target dir per triple, so measure before the next build.

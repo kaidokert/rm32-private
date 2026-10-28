@@ -181,7 +181,7 @@ pub trait Throttle {
 
 /// Drive parameters the main loop computes and the ISRs apply.
 pub trait Drive {
-    /// TIM1 auto-reload value (variable PWM). Main publishes, ISR applies.
+    /// PWM timer auto-reload value (variable PWM). Main publishes, ISR applies.
     /// Starts at the port's PWM base period (`Platform::PWM_BASE_PERIOD`).
     fn tim1_arr(&self) -> u16;
     fn set_tim1_arr(&self, v: u16);

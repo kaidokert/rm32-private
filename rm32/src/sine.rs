@@ -28,9 +28,9 @@ pub static PWM_SIN: [i16; 360] = [
 
 /// Compute sinusoidal PWM compare values for three phases.
 ///
-/// Returns (ch1, ch2, ch3) duty values for TIM1 compare registers.
+/// Returns (ch1, ch2, ch3) duty values for the PWM compare registers.
 /// `gate_drive_offset`: minimum duty to overcome FET gate capacitance
-/// `timer1_max_arr`: TIM1 auto-reload value
+/// `timer1_max_arr`: PWM timer auto-reload value
 /// `sine_mode_power`: power scaling 1-10 (10 = full, for non-gimbal sine startup)
 /// `gimbal_mode`: if true, uses full power (no sine_mode_power scaling)
 /// Sine table amplitude scaling factor.

@@ -1808,3 +1808,38 @@ unchanged (Call 49). `sequre_g431` does not build on either side (Call
   nothing requests it). Public L431 (neutron, `rig`) unchanged. Rig ELFs
   byte-identical to s09.2 (l431 ae2941d6..., binz 6d7b3494...). Tag
   gc-s09.3-ok.
+
+## S10.1 -- RISC-V cross-build + STM32-name gate (HOST) -- branch gc/s10
+
+Design §9 item 2.
+
+- **`rm32` builds for `riscv32imc-unknown-none-elf`** with no source
+  change. The core already used portable-atomic; riscv32imc has no CAS,
+  so (like thumbv6m, where rm32_stm32 selects `critical-section`) the
+  port picks the backend. The gate builds it with
+  `--no-default-features --features portable-atomic/unsafe-assume-single-core`
+  (the public surface; the default `bench-diag` feature also builds).
+- **`scripts/stm32_name_gate.py`**: scans `rm32/src/**/*.rs`; an STM32
+  name (numbered timer/COMP/EXTI/DMA/UART/ADC, GPIO bank or pin, NVIC,
+  RCC, chip family, ...) may appear only in a comment whose comment block
+  mentions AM32. Built-in self-test runs first: a fixture with three
+  planted violations (code, string literal, uncited comment) and three
+  allowed citations must flag exactly lines {1,2,3} or the gate exits 2.
+  (The first fixture put the uncited line in the same comment block as a
+  citing one; the self-test failed and I fixed the fixture -- block
+  scoping is the intended rule.) Also falsified live: a planted
+  `let _ = "TIM6";` in tone.rs failed the gate (rc=1).
+- **Violations fixed: 37 -> 0.** 3 in code: the `units.rs` test board
+  `L431` renamed `Neutron` (the board, not the chip). 34 in comments,
+  reworded to roles (`TIM1` -> PWM timer, `TIM6` -> control tick,
+  `TIM14/TIM16` -> commutation timer, `EXTI SWIER` -> software-trigger
+  register, chip names -> clock rates or "AM32's F051/G071 values"), or
+  pointed at the AM32 name they mirror (`buffersize`, `DEAD_TIME`,
+  `WS2812_PIN`). 21 AM32-citing comment mentions remain, allowed.
+- Both checks are now gate lines ("rm32 riscv32imc build", "rm32
+  STM32-name gate").
+- **Gate s10.1 vs s09.3: PASS.** ISR dumps identical on all six. Rig ELF
+  hashes changed (l431 71476a4b..., binz 38543e84...) but the flashed
+  bytes are identical (`objcopy -O binary` + `cmp`: 0 bytes differ on
+  both): comment edits move debug-info line/column records only. Tag
+  gc-s10.1-ok.

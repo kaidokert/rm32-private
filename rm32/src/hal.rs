@@ -95,7 +95,7 @@ pub trait BemfSensor {
     fn pending(&self) -> bool;
     /// Clear the pending edge.
     fn clear_pending(&mut self);
-    /// Re-raise the edge interrupt in software (STM32: EXTI SWIER).
+    /// Re-raise the edge interrupt in software (e.g. a software-trigger register).
     fn repend(&mut self);
 }
 

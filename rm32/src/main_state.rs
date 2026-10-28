@@ -174,7 +174,7 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     pub(crate) led_epoch: u32,
     /// The platform whose clocks the tick-unit constants are taken in.
     _platform: core::marker::PhantomData<P>,
-    /// TIM1 max auto-reload (from PWM frequency config, overwritten by apply_motor_config)
+    /// PWM timer max auto-reload (from PWM frequency config, overwritten by apply_motor_config)
     pub(crate) timer1_max_arr: u16,
     /// Control tick of the last consumed-current sample (1 s period).
     pub(crate) consumed_epoch: u32,
@@ -186,7 +186,7 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
 /// MCU-specific constants — properties of the silicon, not the board PCB.
 #[derive(Clone, Copy, Debug)]
 pub struct ChipParams {
-    /// TIM1 auto-reload at default PWM frequency.
+    /// PWM timer auto-reload at default PWM frequency.
     pub timer1_max_arr: u16,
     /// CPU frequency in MHz.
     pub cpu_mhz: u8,

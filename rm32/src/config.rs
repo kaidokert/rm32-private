@@ -250,7 +250,7 @@ pub struct MotorConfig {
     pub min_startup_duty: u16,
     /// Maximum duty during startup ramp
     pub startup_max_duty: u16,
-    /// TIM1 auto-reload value for requested PWM frequency
+    /// PWM timer auto-reload value for requested PWM frequency
     pub timer1_max_arr: u16,
     /// Dead-time override from driving_brake_strength (0 = no override)
     pub dead_time_override: u16,
@@ -297,7 +297,7 @@ impl EepromConfig {
 
     /// Derive motor configuration from EEPROM settings and board hardware.
     ///
-    /// `default_arr`: TIM1 auto-reload at default 24kHz (MCU-specific: CPU_MHZ*1e6/24000-1)
+    /// `default_arr`: PWM timer auto-reload at default 24kHz (port-specific: timer_hz/24000-1)
     /// `dead_time`: board dead-time from YAML
     /// `kv_divider`: board KV divider (1=normal, 2=3-cell max, 16=1-2 cell max)
     /// `startup_boost`: board flag for heavy-prop startup boost

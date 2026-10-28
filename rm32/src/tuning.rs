@@ -74,7 +74,7 @@ impl TuningPolicy for Am32Tuning {
     const DESYNC: DesyncPolicy = DesyncPolicy::Am32;
 }
 
-/// The constants the L431 and binz rigs were qualified with.
+/// The constants the Neutron (Vimdrones) and binz rigs were qualified with.
 pub struct QualifiedRigTuning;
 
 impl TuningPolicy for QualifiedRigTuning {

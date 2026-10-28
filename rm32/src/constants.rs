@@ -21,9 +21,9 @@ pub const THROTTLE_MIN_SIGNAL: u16 = 47;
 /// `(duty_cycle * tim1_arr) / DUTY_SCALE_MAX`.
 pub const DUTY_SCALE_MAX: u16 = 2000;
 
-/// Default TIM1 auto-reload value.
-/// At 64MHz (G071): 64MHz / (1999+1) = 32kHz PWM frequency.
-/// At 48MHz (F051): 48MHz / (1999+1) = 24kHz.
+/// Default PWM timer auto-reload value.
+/// At 64MHz: 64MHz / (1999+1) = 32kHz PWM frequency.
+/// At 48MHz: 48MHz / (1999+1) = 24kHz.
 pub const TIM1_DEFAULT_ARR: u16 = 1999;
 
 /// Interval-telemetry base period in ms (AM32 `telemetry_interval_ms`,

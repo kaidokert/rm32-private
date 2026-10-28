@@ -9,7 +9,7 @@
 pub struct BoardConfig {
     /// Firmware name (max 12 chars)
     pub name: &'static str,
-    /// PWM dead-time in TIM1 DTG units
+    /// PWM dead-time in AM32's DEAD_TIME units (the port's dead-time register)
     pub dead_time: u8,
     /// Voltage divider ratio (e.g. 110 = 11:1 divider × 10)
     pub voltage_divider_x100: u16,
@@ -17,7 +17,7 @@ pub struct BoardConfig {
     pub millivolt_per_amp: u16,
     /// Current sensor offset (ADC counts)
     pub current_offset: i16,
-    /// ADC channel for current sense (STM32 channel number)
+    /// ADC channel for current sense (the port's channel number)
     pub current_adc_channel: u8,
     /// ADC channel for voltage sense
     pub voltage_adc_channel: u8,
@@ -27,7 +27,7 @@ pub struct BoardConfig {
     pub min_bemf_counts: u8,
     /// Whether this board has a WS2812 LED
     pub has_led: bool,
-    /// WS2812 LED pin number on GPIOB (e.g. 8 for PB8)
+    /// WS2812 LED pin number (port-defined bank; AM32 WS2812_PIN)
     pub led_pin: Option<u8>,
     /// Use external NTC thermistor instead of internal temp sensor
     pub use_ntc: bool,
@@ -45,7 +45,7 @@ pub struct BoardConfig {
     pub dual_adc: bool,
     /// PWM/enable bridge mode (low-side pins are enable, not complementary PWM)
     pub bridge_enable: bool,
-    /// Custom LED on PB3: blinks with throttle position, solid when armed
+    /// Custom LED (port-defined pin): blinks with throttle position, solid when armed
     pub custom_led: bool,
 }
 
@@ -57,8 +57,8 @@ impl BoardConfig {
         voltage_divider_x100: 1100,
         millivolt_per_amp: 20,
         current_offset: 0,
-        current_adc_channel: 4, // PA4
-        voltage_adc_channel: 6, // PA6
+        current_adc_channel: 4, // AM32 default
+        voltage_adc_channel: 6, // AM32 default
         stall_protect_interval: 6500,
         has_led: false,
         led_pin: None,
