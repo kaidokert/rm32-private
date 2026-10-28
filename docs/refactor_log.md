@@ -1951,3 +1951,4 @@ Design §9 item 1, second half.
     -- keep u16 and forbid ports above 32 kHz -- would leave the sim
     unbuildable at design §9's 40 kHz. Proposed: fly bf_ladder +
     bf_slam on both rigs from gc-s10.3-ok at the next bench session.
+    **Operator: accepted (2026-10-27).**
