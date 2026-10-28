@@ -63,24 +63,15 @@ impl TimerTicks {
 
 use crate::platform::Platform;
 
-/// Raw ADC count (12-bit, 0-4095).
+/// Raw ADC count (the port's resolution, `Platform::ADC_FULL_SCALE`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[repr(transparent)]
 pub struct AdcCount(pub u16);
 
-/// Pin millivolts per ADC count, 3300 / 4095, as Q16 (truncated): the
-/// pin-mV step is `(raw * MV_PER_COUNT_Q16) >> 16`.
-const MV_PER_COUNT_Q16: u32 = (3300u64 * 65536 / 4095) as u32;
 /// Largest reading the `Adc` trait can return. The conversions are exact
-/// over all of `u16`, not only 12-bit counts: a port may encode its reading
-/// (binz returns metered mA + 2000, above 4095 past ~2.1 A).
+/// over all of `u16`, not only the ADC's own range: a port may encode its
+/// reading (binz returns metered mA + 2000, above 4095 past ~2.1 A).
 const ADC_MAX: u32 = u16::MAX as u32;
-/// Largest pin-mV a reading gives (`ADC_MAX * MV_PER_COUNT_Q16` fits u32).
-const MV_PIN_MAX: u32 = (ADC_MAX * MV_PER_COUNT_Q16) >> 16;
-
-/// Current sense scaling: 3300 / 41 ≈ 80.49 (C uses integer truncation to 80).
-/// We match C's integer behavior: 3300/41 = 80 (truncated).
-const CURRENT_MV_SCALE: i32 = 3300 / 41; // = 80, matches C
 
 /// `floor((a * x + b) / d)` for every `x` in `0..=x_max` with a multiply,
 /// add and shift and no divide (cores without hardware divide would
@@ -249,9 +240,20 @@ impl AffineDiv {
 /// Blanket-implemented; read through [`AdcCount::centivolts`] and
 /// [`AdcCount::milliamps`].
 pub(crate) trait AdcScale: Platform + Sized {
+    /// Pin millivolts per ADC count, `ADC_VREF_MV / ADC_FULL_SCALE`, as Q16
+    /// (truncated): the pin-mV step is `(raw * MV_PER_COUNT_Q16) >> 16`
+    /// (AM32: 3300 / 4095).
+    const MV_PER_COUNT_Q16: u32 =
+        ((Self::ADC_VREF_MV as u64) * 65536 / Self::ADC_FULL_SCALE as u64) as u32;
+    /// Largest pin-mV a reading gives (must fit u32).
+    const MV_PIN_MAX: u32 = ((ADC_MAX as u64 * Self::MV_PER_COUNT_Q16 as u64) >> 16) as u32;
+    /// Current sense scaling, pin mV x100 per count, truncated: AM32's
+    /// `3300 / 41` (= 80; 41 stands in for 4095 / 100) is
+    /// `ADC_VREF_MV * 100 / ADC_FULL_SCALE` truncated, which is also 80.
+    const CURRENT_MV_SCALE: i32 = (Self::ADC_VREF_MV as i32 * 100) / Self::ADC_FULL_SCALE as i32;
     /// Pin mV -> centivolts: `mv * VOLTAGE_DIVIDER_X100 / 1000`.
     const PIN_MV_TO_CV: AffineDiv =
-        AffineDiv::new(Self::VOLTAGE_DIVIDER_X100 as i32, 0, 1000, MV_PIN_MAX);
+        AffineDiv::new(Self::VOLTAGE_DIVIDER_X100 as i32, 0, 1000, Self::MV_PIN_MAX);
     /// Current numerator `n = raw * 80 - CURRENT_OFFSET * 100`, quotient
     /// truncated toward zero like AM32's C: `floor(n / mVpA)` where `n >= 0`
     /// (raw at or above [`Self::CURRENT_NEG_BELOW`]) ...
@@ -259,7 +261,7 @@ pub(crate) trait AdcScale: Platform + Sized {
         AffineDiv::ZERO
     } else {
         AffineDiv::new(
-            CURRENT_MV_SCALE,
+            Self::CURRENT_MV_SCALE,
             -(Self::CURRENT_OFFSET as i32 * 100),
             Self::MILLIVOLT_PER_AMP as i32,
             ADC_MAX,
@@ -270,7 +272,7 @@ pub(crate) trait AdcScale: Platform + Sized {
         AffineDiv::ZERO
     } else {
         AffineDiv::new(
-            CURRENT_MV_SCALE,
+            Self::CURRENT_MV_SCALE,
             -(Self::CURRENT_OFFSET as i32 * 100) + Self::MILLIVOLT_PER_AMP as i32 - 1,
             Self::MILLIVOLT_PER_AMP as i32,
             ADC_MAX,
@@ -280,7 +282,7 @@ pub(crate) trait AdcScale: Platform + Sized {
     const CURRENT_NEG_BELOW: u32 = if Self::CURRENT_OFFSET <= 0 {
         0
     } else {
-        (Self::CURRENT_OFFSET as u32 * 100).div_ceil(CURRENT_MV_SCALE as u32)
+        (Self::CURRENT_OFFSET as u32 * 100).div_ceil(Self::CURRENT_MV_SCALE as u32)
     };
 }
 
@@ -293,7 +295,7 @@ impl AdcCount {
     /// 11:1; 4095 -> 3628 vs 3630).
     #[inline]
     pub fn centivolts<P: Platform>(self) -> CentiVolts {
-        let mv_pin = (self.0 as u32 * MV_PER_COUNT_Q16) >> 16;
+        let mv_pin = (self.0 as u32 * <P as AdcScale>::MV_PER_COUNT_Q16) >> 16;
         CentiVolts(<P as AdcScale>::PIN_MV_TO_CV.apply(mv_pin) as u16)
     }
 
@@ -355,7 +357,7 @@ mod tests {
     }
 
     fn s2_3_milliamps(raw: u16, current_offset: i16, mv_per_amp: u16) -> MilliAmps {
-        let mv = (raw as i32) * CURRENT_MV_SCALE - (current_offset as i32) * 100;
+        let mv = (raw as i32) * (3300 / 41) - (current_offset as i32) * 100;
         if mv_per_amp > 0 {
             MilliAmps((mv / mv_per_amp as i32) as i16)
         } else {
@@ -365,6 +367,9 @@ mod tests {
 
     macro_rules! board {
         ($name:ident, $div:expr, $mvpa:expr, $off:expr) => {
+            board!($name, $div, $mvpa, $off, 4095, 3300);
+        };
+        ($name:ident, $div:expr, $mvpa:expr, $off:expr, $full:expr, $vref:expr) => {
             struct $name;
             impl Platform for $name {
                 const TICK_HZ: u32 = 20_000;
@@ -375,6 +380,8 @@ mod tests {
                 const MILLIVOLT_PER_AMP: u16 = $mvpa;
                 const CURRENT_OFFSET: i16 = $off;
                 const USE_NTC: bool = false;
+                const ADC_FULL_SCALE: u16 = $full;
+                const ADC_VREF_MV: u16 = $vref;
                 const PWM_BASE_PERIOD: u16 = 1999;
                 type Tuning = crate::tuning::QualifiedRigTuning;
             }
@@ -476,6 +483,25 @@ mod tests {
                 "raw {raw}: {ours} vs {am32}"
             );
         }
+    }
+
+    // A 10-bit 3.0 V port (rm32-sim) gets its own steps from the same
+    // formulas: 3000/1023 mV per count, 293 (pin mV x100) per count.
+    board!(Adc10Bit3V0, 1100, 20, 0, 1023, 3000);
+
+    #[test]
+    fn adc_scale_follows_the_platform() {
+        use super::AdcScale;
+        assert_eq!(<Neutron as AdcScale>::CURRENT_MV_SCALE, 3300 / 41);
+        assert_eq!(
+            <Neutron as AdcScale>::MV_PER_COUNT_Q16,
+            (3300u64 * 65536 / 4095) as u32
+        );
+        assert_eq!(<Adc10Bit3V0 as AdcScale>::CURRENT_MV_SCALE, 293);
+        // Full scale reads the reference: 1023 counts -> 3.000 V at the pin
+        // (Q16 truncation: 2999 mV) -> 32.98 V at 11:1.
+        assert_eq!(AdcCount(1023).centivolts::<Adc10Bit3V0>(), CentiVolts(3298));
+        assert_eq!(AdcCount(4095).centivolts::<Am32Default>(), CentiVolts(3628));
     }
 
     #[test]

@@ -23,6 +23,9 @@ impl rm32::platform::Platform for StmPlatform {
     const MILLIVOLT_PER_AMP: u16 = board::MILLIVOLT_PER_AMP;
     const CURRENT_OFFSET: i16 = board::CURRENT_OFFSET;
     const USE_NTC: bool = board::USE_NTC;
+    /// 12-bit ADC on VDDA = 3.3 V (AM32's `* 3300 / 4095`).
+    const ADC_FULL_SCALE: u16 = 4095;
+    const ADC_VREF_MV: u16 = 3300;
     /// TIM1 auto-reload for 24 kHz at the chip clock (AM32 `TIMER1_MAX_ARR`).
     const PWM_BASE_PERIOD: u16 = Chip::TIM1_AUTORELOAD;
     /// From the board yaml's `tuning` key.

@@ -55,6 +55,10 @@ where
     const CURRENT_OFFSET: i16 =
         <crate::platform::StmPlatform as rm32::platform::Platform>::CURRENT_OFFSET;
     const USE_NTC: bool = <crate::platform::StmPlatform as rm32::platform::Platform>::USE_NTC;
+    const ADC_FULL_SCALE: u16 =
+        <crate::platform::StmPlatform as rm32::platform::Platform>::ADC_FULL_SCALE;
+    const ADC_VREF_MV: u16 =
+        <crate::platform::StmPlatform as rm32::platform::Platform>::ADC_VREF_MV;
     const PWM_BASE_PERIOD: u16 =
         <crate::platform::StmPlatform as rm32::platform::Platform>::PWM_BASE_PERIOD;
     type Tuning = <crate::platform::StmPlatform as rm32::platform::Platform>::Tuning;

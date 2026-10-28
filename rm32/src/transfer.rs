@@ -349,6 +349,194 @@ impl TransferState {
             high_pin_count: self.high_pin_count,
         }
     }
+
+    /// Process one DShot packet from a port that slices bits in hardware
+    /// (PIO, RMT, SPI; no edge capture): [`process`](Self::process)'s DShot
+    /// path at layer 1 ([`dshot::unpack`]). The port is DShot-only, so
+    /// detection is two consecutive packets with a valid CRC (normal or
+    /// bidirectional), like `process`'s two matching frames. There is no
+    /// frame time to average; everything else matches `process`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn process_packet(
+        &mut self,
+        packet: u16,
+        input_set: bool,
+        dshot_telemetry: bool,
+        armed: bool,
+        input_pin_high: bool,
+        adjusted_input: u16,
+        disable_stick_cal: bool,
+        zero_input_count: &mut u16,
+    ) -> TransferActions {
+        if !input_set {
+            let valid = |f| {
+                matches!(
+                    f,
+                    dshot::DshotFrame::Throttle { .. } | dshot::DshotFrame::Command { .. }
+                )
+            };
+            let protocol = (valid(dshot::unpack(packet, false))
+                || valid(dshot::unpack(packet, true)))
+            .then_some(DetectedProtocol::Dshot);
+            let action = match self.confirm_protocol(protocol) {
+                Some(p) => TransferAction::InputDetected(p),
+                None => TransferAction::None,
+            };
+            return TransferActions {
+                action,
+                next_capture: CaptureConfig::DSHOT,
+                frametime: None,
+                bidir_detected: false,
+                #[cfg(feature = "bench-diag")]
+                high_pin_count: self.high_pin_count,
+            };
+        }
+        let frame = dshot::unpack(packet, dshot_telemetry);
+        let bidir_detected =
+            self.bidir_probe(frame, armed, dshot_telemetry, input_pin_high, || {
+                dshot::unpack(packet, true)
+            });
+        let action = frame_action(frame);
+        self.idle_high_count(armed, true, dshot_telemetry, input_pin_high);
+        if !armed {
+            self.calibration_entry(adjusted_input, disable_stick_cal, zero_input_count);
+        }
+        TransferActions {
+            action,
+            next_capture: CaptureConfig::DSHOT,
+            frametime: None,
+            bidir_detected,
+            #[cfg(feature = "bench-diag")]
+            high_pin_count: self.high_pin_count,
+        }
+    }
+
+    /// Protocol re-confirmation: commit only on the second consecutive
+    /// matching detection.
+    #[inline(always)]
+    fn confirm_protocol(&mut self, protocol: Option<DetectedProtocol>) -> Option<DetectedProtocol> {
+        match (protocol, self.pending_protocol) {
+            (Some(protocol), Some(pending)) if protocol == pending => {
+                self.pending_protocol = None;
+                Some(protocol)
+            }
+            (Some(protocol), _) => {
+                self.pending_protocol = Some(protocol);
+                None
+            }
+            (None, _) => {
+                self.pending_protocol = None;
+                None
+            }
+        }
+    }
+
+    /// Bidirectional DShot auto-detect: while unarmed with the line idling
+    /// high, count consecutive frames that decode under the inverted CRC
+    /// (`inverted` decodes this frame that way); true once confirmed.
+    #[inline(always)]
+    fn bidir_probe(
+        &mut self,
+        frame: dshot::DshotFrame,
+        armed: bool,
+        dshot_telemetry: bool,
+        input_pin_high: bool,
+        inverted: impl FnOnce() -> dshot::DshotFrame,
+    ) -> bool {
+        let mut bidir_detected = false;
+        if !armed
+            && !dshot_telemetry
+            && input_pin_high
+            && self.high_pin_count >= crate::constants::BIDIR_IDLE_HIGH_FRAMES
+        {
+            let inverted_ok = matches!(
+                inverted(),
+                dshot::DshotFrame::Throttle { .. } | dshot::DshotFrame::Command { .. }
+            );
+            if inverted_ok {
+                self.bidir_confirms = self.bidir_confirms.saturating_add(1);
+                if self.bidir_confirms >= crate::constants::BIDIR_CONFIRM_FRAMES {
+                    bidir_detected = true;
+                }
+            } else {
+                self.bidir_confirms = 0;
+                if matches!(
+                    frame,
+                    dshot::DshotFrame::Throttle { .. } | dshot::DshotFrame::Command { .. }
+                ) {
+                    self.high_pin_count = 0;
+                }
+            }
+        }
+        bidir_detected
+    }
+
+    /// Idle-high frame count for the bidir auto-detect (unarmed only).
+    #[inline(always)]
+    fn idle_high_count(
+        &mut self,
+        armed: bool,
+        dshot_mode: bool,
+        dshot_telemetry: bool,
+        input_pin_high: bool,
+    ) {
+        if !armed {
+            if dshot_mode && !dshot_telemetry && input_pin_high {
+                self.high_pin_count = self.high_pin_count.saturating_add(1);
+            } else {
+                self.high_pin_count = 0;
+                self.bidir_confirms = 0;
+            }
+        } else {
+            self.high_pin_count = 0;
+            self.bidir_confirms = 0;
+        }
+    }
+
+    /// Stick-calibration entry detection (unarmed only).
+    #[inline(always)]
+    fn calibration_entry(
+        &mut self,
+        adjusted_input: u16,
+        disable_stick_cal: bool,
+        zero_input_count: &mut u16,
+    ) {
+        if adjusted_input == 0 && !self.servo.calibration_required() {
+            *zero_input_count += 1;
+        } else if !disable_stick_cal {
+            *zero_input_count = 0;
+            if adjusted_input > crate::constants::CALIBRATION_MIN_THROTTLE {
+                if get_abs_dif(adjusted_input as i32, self.last_input as i32)
+                    > crate::constants::CALIBRATION_MAX_JITTER
+                {
+                    self.enter_calibration_count = 0;
+                } else {
+                    self.enter_calibration_count += 1;
+                }
+                if self.enter_calibration_count > crate::constants::CALIBRATION_ENTRY_COUNT
+                    && !self.servo.high_calibration_set()
+                {
+                    self.servo.set_calibration_required(true);
+                    self.enter_calibration_count = 0;
+                }
+                self.last_input = adjusted_input;
+            }
+        }
+    }
+}
+
+/// A decoded frame's dispatch action.
+#[inline(always)]
+fn frame_action(frame: dshot::DshotFrame) -> TransferAction {
+    match frame {
+        dshot::DshotFrame::Throttle { value, telemetry } => {
+            TransferAction::DshotThrottle { value, telemetry }
+        }
+        dshot::DshotFrame::Command { cmd, telemetry } => {
+            TransferAction::DshotCommand { cmd, telemetry }
+        }
+        _ => TransferAction::None,
+    }
 }
 
 /// ISR-side input state the transfer dispatch reads and updates (AM32
@@ -514,6 +702,8 @@ mod tests {
                 const MILLIVOLT_PER_AMP: u16 = 20;
                 const CURRENT_OFFSET: i16 = 0;
                 const USE_NTC: bool = false;
+                const ADC_FULL_SCALE: u16 = 4095;
+                const ADC_VREF_MV: u16 = 3300;
                 const PWM_BASE_PERIOD: u16 = 1999;
                 type Tuning = crate::tuning::QualifiedRigTuning;
             }
@@ -664,6 +854,223 @@ mod tests {
             CaptureConfig::dshot_detection::<Mhz60>().prescaler,
             Some(10)
         );
+    }
+
+    /// The 16-bit packet `dshot_dma_buffer` captures.
+    fn dshot_packet(value: u16, telem: bool, inverted_crc: bool) -> u16 {
+        let head = value << 1 | u16::from(telem);
+        let mut crc = (head ^ head >> 4 ^ head >> 8) & 0xF;
+        if inverted_crc {
+            crc = !crc & 0xF;
+        }
+        head << 4 | crc
+    }
+
+    /// One frame through both paths, from the same state: identical
+    /// actions and state, or panic. Returns `process_packet`'s result.
+    struct Twin {
+        edges: TransferState,
+        packet: TransferState,
+        zic_e: u16,
+        zic_p: u16,
+        frames: u32,
+    }
+
+    #[derive(Clone, Copy)]
+    struct Frame {
+        value: u16,
+        telem: bool,
+        inverted: bool,
+        corrupt_bit: Option<usize>,
+        armed: bool,
+        dshot_telemetry: bool,
+        pin_high: bool,
+        adjusted: u16,
+        no_cal: bool,
+    }
+
+    impl Twin {
+        fn new() -> Self {
+            Self {
+                edges: TransferState::default(),
+                packet: TransferState::default(),
+                zic_e: 0,
+                zic_p: 0,
+                frames: 0,
+            }
+        }
+
+        fn step(&mut self, f: Frame) -> TransferActions {
+            extern crate std;
+            use std::format;
+            let mut buf = dshot_dma_buffer(f.value, f.telem, f.inverted);
+            let mut packet = dshot_packet(f.value, f.telem, f.inverted);
+            if let Some(bit) = f.corrupt_bit {
+                let one = packet >> (15 - bit) & 1 != 0;
+                buf[bit * 2 + 1] = buf[bit * 2] + if one { 10 } else { 22 };
+                packet ^= 1 << (15 - bit);
+            }
+            assert_eq!(
+                dshot::decode_frame(&buf, 400, 600, false),
+                dshot::unpack(packet, false)
+            );
+            let e = self.edges.process::<Mhz64>(
+                &buf,
+                true,
+                true,
+                false,
+                f.dshot_telemetry,
+                f.armed,
+                f.pin_high,
+                f.adjusted,
+                0,
+                false,
+                f.no_cal,
+                &mut self.zic_e,
+                400,
+                600,
+            );
+            let p = self.packet.process_packet(
+                packet,
+                true,
+                f.dshot_telemetry,
+                f.armed,
+                f.pin_high,
+                f.adjusted,
+                f.no_cal,
+                &mut self.zic_p,
+            );
+            let ctx = format!(
+                "frame {}: value {} packet {packet:#06x}",
+                self.frames, f.value
+            );
+            self.frames += 1;
+            assert_eq!(
+                format!("{:?}", e.action),
+                format!("{:?}", p.action),
+                "{ctx}"
+            );
+            assert_eq!(e.bidir_detected, p.bidir_detected, "{ctx}");
+            assert_eq!(e.next_capture, p.next_capture, "{ctx}");
+            assert_eq!(self.zic_e, self.zic_p, "{ctx}");
+            let (a, b) = (&self.edges, &self.packet);
+            assert_eq!(a.high_pin_count, b.high_pin_count, "{ctx}");
+            assert_eq!(a.bidir_confirms, b.bidir_confirms, "{ctx}");
+            assert_eq!(
+                a.enter_calibration_count, b.enter_calibration_count,
+                "{ctx}"
+            );
+            assert_eq!(a.last_input, b.last_input, "{ctx}");
+            assert_eq!(
+                a.servo.calibration_required(),
+                b.servo.calibration_required(),
+                "{ctx}"
+            );
+            p
+        }
+    }
+
+    /// `process_packet` is `process`'s DShot path at layer 1. The bidir
+    /// probe, idle-high count and calibration entry exist twice (`process`
+    /// keeps its own copy so the firmware's DShot ISR stays as compiled),
+    /// so drive both with the same frames and states and require identical
+    /// actions and state: 20k pseudo-random frames, then the two stateful
+    /// paths random frames rarely complete (calibration entry, bidir
+    /// commit), each asserted to have fired. Frame-time averaging is
+    /// `process`-only (a packet port has no frame time) and not compared.
+    #[test]
+    fn packet_path_matches_capture_path() {
+        let mut t = Twin::new();
+        let mut seed = 0x1234_5678u32;
+        let mut next = |n: u32| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) % n
+        };
+        // The bidir probe needs 100 consecutive idle-high frames first,
+        // which random states never give: the last phase covers it.
+        let (mut throttles, mut commands, mut bad) = (0, 0, 0);
+        for _ in 0..20_000 {
+            let corrupt = next(8) == 0;
+            let f = Frame {
+                value: next(2048) as u16,
+                telem: next(2) == 1,
+                inverted: next(3) == 0,
+                corrupt_bit: corrupt.then(|| next(16) as usize),
+                armed: next(4) == 0,
+                dshot_telemetry: next(4) == 0,
+                pin_high: next(5) != 0,
+                adjusted: [0, 0, 100, 1800, 1830, next(2048) as u16][next(6) as usize],
+                no_cal: next(10) == 0,
+            };
+            match t.step(f).action {
+                TransferAction::DshotThrottle { .. } => throttles += 1,
+                TransferAction::DshotCommand { .. } => commands += 1,
+                _ => bad += 1,
+            }
+        }
+        let counts = (throttles, commands, bad);
+        assert!(
+            throttles > 1000 && commands > 10 && bad > 1000,
+            "(throttles, commands, bad) = {counts:?}"
+        );
+
+        // Stick-calibration entry: unarmed, steady high stick (> 1500).
+        let steady = Frame {
+            value: 1000,
+            telem: false,
+            inverted: false,
+            corrupt_bit: None,
+            armed: false,
+            dshot_telemetry: false,
+            pin_high: false,
+            adjusted: 1800,
+            no_cal: false,
+        };
+        let mut t = Twin::new();
+        for _ in 0..200 {
+            t.step(steady);
+        }
+        assert!(
+            t.packet.servo.calibration_required(),
+            "calibration entry never fired"
+        );
+
+        // Bidir commit: unarmed, line idling high, inverted-CRC frames.
+        let mut t = Twin::new();
+        let mut committed = false;
+        for _ in 0..300 {
+            committed |= t
+                .step(Frame {
+                    inverted: true,
+                    pin_high: true,
+                    adjusted: 0,
+                    ..steady
+                })
+                .bidir_detected;
+        }
+        assert!(committed, "bidir auto-detect never committed");
+    }
+
+    #[test]
+    fn packet_detection_needs_two_valid_packets() {
+        let mut s = TransferState::default();
+        let mut zic = 0;
+        let good = dshot_packet(1000, false, false);
+        let r = s.process_packet(good, false, false, false, false, 0, false, &mut zic);
+        assert!(matches!(r.action, TransferAction::None));
+        let r = s.process_packet(good ^ 1, false, false, false, false, 0, false, &mut zic);
+        assert!(
+            matches!(r.action, TransferAction::None),
+            "bad CRC clears the pending detection"
+        );
+        let r = s.process_packet(good, false, false, false, false, 0, false, &mut zic);
+        assert!(matches!(r.action, TransferAction::None));
+        let bidir = dshot_packet(1000, false, true);
+        let r = s.process_packet(bidir, false, false, false, false, 0, false, &mut zic);
+        assert!(matches!(
+            r.action,
+            TransferAction::InputDetected(DetectedProtocol::Dshot)
+        ));
     }
 
     #[test]

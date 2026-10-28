@@ -170,9 +170,12 @@ pub trait Timing: Platform + Sized {
     const CONTROL_TICKS_PER_MS: u16 = ms_to_control_ticks::<Self>(1) as u16;
 
     /// Signal timeout while armed: 0.5 s with no valid input (10000 ticks).
-    const SIGNAL_TIMEOUT_DISARM: u16 = ms_to_control_ticks::<Self>(500) as u16;
-    /// Signal timeout while unarmed: 4x the armed timeout (2 s).
-    const SIGNAL_TIMEOUT_UNARMED: u16 = Self::SIGNAL_TIMEOUT_DISARM * 4;
+    const SIGNAL_TIMEOUT_DISARM: u32 = ms_to_control_ticks::<Self>(500);
+    /// Signal timeout while unarmed: 4x the armed timeout (2 s). AM32's
+    /// `uint16_t signaltimeout` against `LOOP_FREQUENCY_HZ << 1`
+    /// (Src/main.c:587, :2390) caps its loop at ~32 kHz; the u32 counter
+    /// does not (rm32-sim runs 40 kHz: 80000 ticks).
+    const SIGNAL_TIMEOUT_UNARMED: u32 = Self::SIGNAL_TIMEOUT_DISARM * 4;
 
     /// Commutation interval at boot (6.25 ms; AM32 `commutation_interval =
     /// 12500`, `Src/main.c:585`).

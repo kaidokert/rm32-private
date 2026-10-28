@@ -39,6 +39,11 @@ class AM32Harness:
         # The AM32 C harness has AM32's behaviour only; the Rust harness
         # takes a `tuning` command (rm32::tuning, design §5.8).
         self.is_c = Path(self.exe_path).stem == "am32_harness"
+        # Port the Rust harness runs the core on: `stm32` (the AM32-parity
+        # model) or `sim` (rm32-sim, design §9). RM32_PORT selects it.
+        self.port = os.environ.get("RM32_PORT", "stm32")
+        if self.is_c and self.port != "stm32":
+            raise RuntimeError(f"RM32_PORT={self.port}: the C harness is the STM32 model only")
         self.proc = None
 
     def __enter__(self):
@@ -113,27 +118,34 @@ class AM32Harness:
     def _kvargs(self, **kwargs):
         return " ".join(f"{k}={v}" for k, v in kwargs.items())
 
-    # AM32's LOOP_FREQUENCY_HZ default (Inc/targets.h); the C harness has
-    # no `rates` command.
-    C_TICK_HZ = 20000
+    # The C harness has no `rates` command: AM32's LOOP_FREQUENCY_HZ
+    # default (Inc/targets.h) and the 2 MHz interval timer its vectors'
+    # counts were written in.
+    C_RATES = {"tick_hz": 20000, "timer_hz": 2_000_000}
 
-    def tick_hz(self):
-        """Control-tick rate the harness runs at (Hz)."""
+    def rates(self):
+        """{'tick_hz': control-tick Hz, 'timer_hz': interval-timer Hz}."""
         if self.is_c:
-            return self.C_TICK_HZ
+            return dict(self.C_RATES)
         self._send("rates")
         line = self._recv()
         fields = dict(kv.split("=", 1) for kv in line.split())
-        if "tick_hz" not in fields:
-            raise RuntimeError(f"Expected 'tick_hz=...', got '{line}'")
-        return int(fields["tick_hz"])
+        if "tick_hz" not in fields or "timer_hz" not in fields:
+            raise RuntimeError(f"Expected 'tick_hz=... timer_hz=...', got '{line}'")
+        return {"tick_hz": int(fields["tick_hz"]), "timer_hz": int(fields["timer_hz"])}
+
+    def tick_hz(self):
+        """Control-tick rate the harness runs at (Hz)."""
+        return self.rates()["tick_hz"]
 
     def tuning(self, name):
-        """Select the tuning (`rig` | `am32`); starts a fresh harness."""
-        self._send(f"tuning {name}")
-        line = self._recv()
-        if line != "ok":
-            raise RuntimeError(f"Expected 'ok', got '{line}'")
+        """Select the port (RM32_PORT) and tuning (`rig` | `am32`); starts
+        a fresh harness."""
+        for cmd in (f"port {self.port}", f"tuning {name}"):
+            self._send(cmd)
+            line = self._recv()
+            if line != "ok":
+                raise RuntimeError(f"{cmd}: expected 'ok', got '{line}'")
 
     def reset(self):
         """Reset all firmware state to init values."""
@@ -227,6 +239,30 @@ def ticks_for(count, tick_hz):
     return int(n)
 
 
+# Keys whose value is an interval-timer count. Only these may be written as
+# a duration (`5ms`, `48us`), converted at the harness's timer rate.
+TIMER_KEYS = {
+    "commutation_interval",
+    "average_interval",
+    "last_average_interval",
+    "interval_timer_count",
+}
+
+
+def timer_value(key, value, timer_hz):
+    """A config/assertion value: a duration on a timer key -> timer counts
+    (exact, or refused); anything else is returned unchanged."""
+    m = _DURATION.match(value)
+    if not m or m.group(2) is None:
+        return value
+    if key not in TIMER_KEYS:
+        raise ValueError(f"{key}={value}: only {sorted(TIMER_KEYS)} take a duration")
+    n = Fraction(m.group(1)) * timer_hz / _UNIT_PER_S[m.group(2)]
+    if n.denominator != 1:
+        raise ValueError(f"{key}={value} is {float(n)} counts at {timer_hz} Hz")
+    return str(int(n))
+
+
 def read_tuning(vectors_file):
     """The vector's required `@tuning rig|am32` line."""
     found = None
@@ -264,6 +300,9 @@ def run_test_vectors(harness, vectors_file, tuning=None):
         ticks 20000 | throttle=0          | armed=1
         ticks 1s    | throttle=0          |       # duration: us|ms|s,
                                                   # converted at tick_hz
+        config commutation_interval=5ms           # timer keys (TIMER_KEYS)
+                                                  # take durations too,
+                                                  # converted at timer_hz
         tick 1      | throttle=500        | running=1 duty_cycle>0
     """
 
@@ -295,12 +334,14 @@ def run_test_vectors(harness, vectors_file, tuning=None):
     elif tuning != "am32":
         raise RuntimeError(f"{vectors_file}: `{tuning}` vector sent to the C harness")
     harness.reset()
-    tick_hz = harness.tick_hz()
+    rates = harness.rates()
+    tick_hz, timer_hz = rates["tick_hz"], rates["timer_hz"]
     for cl in config_lines:
         if "=" not in cl:
             continue
         k, v = cl.split("=", 1)
-        harness.config(**{k.strip(): v.strip()})
+        k = k.strip()
+        harness.config(**{k: timer_value(k, v.strip(), timer_hz)})
 
     # Operator dispatch table
     ops = {
@@ -320,7 +361,7 @@ def run_test_vectors(harness, vectors_file, tuning=None):
             for token in kvs.split():
                 if "=" in token:
                     k, v = token.split("=", 1)
-                    harness.config(**{k: v})
+                    harness.config(**{k: timer_value(k, v, timer_hz)})
             continue
 
         # Inline commands
@@ -365,6 +406,7 @@ def run_test_vectors(harness, vectors_file, tuning=None):
                 if not m:
                     raise ValueError(f"Bad assertion: {assertion}")
                 key, op, expected_str = m.group(1), m.group(2), m.group(3)
+                expected_str = timer_value(key, expected_str, timer_hz)
                 actual = state.get(key)
                 if actual is None:
                     raise KeyError(f"Key '{key}' not in state")

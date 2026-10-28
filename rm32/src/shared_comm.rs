@@ -171,7 +171,7 @@ pub trait Throttle {
     fn duty_cycle_setpoint(&self) -> u16;
     fn set_duty_cycle_setpoint(&self, v: u16);
 
-    fn signal_timeout(&self) -> u16;
+    fn signal_timeout(&self) -> u32;
     fn increment_signal_timeout(&self);
 
     /// Proportional brake active (main sets, ISR reads for brake-on-stop).

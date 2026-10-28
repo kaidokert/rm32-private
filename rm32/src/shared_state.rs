@@ -48,7 +48,7 @@ pub struct SharedState {
     duty_cycle_setpoint: AtomicU16,
     duty_cycle: AtomicU16, // ISR writes, main reads (bidir speed gate)
     forward: AtomicBool,   // direction: ISR reads, main writes on bidir change
-    signal_timeout: AtomicU16,
+    signal_timeout: AtomicU32,
     zero_input_count: AtomicU16,
 
     // Telemetry (main computes, ISR reads for speed PID)
@@ -119,7 +119,7 @@ impl SharedState {
             duty_cycle_setpoint: AtomicU16::new(0),
             duty_cycle: AtomicU16::new(0),
             forward: AtomicBool::new(true),
-            signal_timeout: AtomicU16::new(0),
+            signal_timeout: AtomicU32::new(0),
             zero_input_count: AtomicU16::new(0),
             e_com_time: AtomicU32::new(0),
             gate_avg: core::sync::atomic::AtomicU32::new(0),
@@ -432,15 +432,15 @@ impl SharedState {
         self.forward.store(v, REL);
     }
 
-    pub fn signal_timeout(&self) -> u16 {
+    pub fn signal_timeout(&self) -> u32 {
         self.signal_timeout.load(ACQ)
     }
-    pub fn set_signal_timeout(&self, v: u16) {
+    pub fn set_signal_timeout(&self, v: u32) {
         self.signal_timeout.store(v, REL);
     }
     pub fn increment_signal_timeout(&self) {
         self.signal_timeout
-            .fetch_update(REL, ACQ, |v| if v < u16::MAX { Some(v + 1) } else { None })
+            .fetch_update(REL, ACQ, |v| if v < u32::MAX { Some(v + 1) } else { None })
             .ok();
     }
 
@@ -729,7 +729,7 @@ impl crate::shared_comm::Throttle for SharedState {
     fn set_duty_cycle_setpoint(&self, v: u16) {
         SharedState::set_duty_cycle_setpoint(self, v);
     }
-    fn signal_timeout(&self) -> u16 {
+    fn signal_timeout(&self) -> u32 {
         self.signal_timeout()
     }
     fn increment_signal_timeout(&self) {

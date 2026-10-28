@@ -22,7 +22,7 @@ pub struct TestShared {
     pub commutation_interval: Cell<u32>,
     pub e_com_time: Cell<i32>,
     pub gate_avg: Cell<u32>,
-    pub signal_timeout: Cell<u16>,
+    pub signal_timeout: Cell<u32>,
     pub send_telemetry: Cell<bool>,
     // Main→ISR published state
     pub tim1_arr: Cell<u16>,
@@ -240,12 +240,12 @@ impl Throttle for TestShared {
     fn set_duty_cycle_setpoint(&self, v: u16) {
         self.duty_cycle_setpoint.set(v);
     }
-    fn signal_timeout(&self) -> u16 {
+    fn signal_timeout(&self) -> u32 {
         self.signal_timeout.get()
     }
     fn increment_signal_timeout(&self) {
         let v = self.signal_timeout.get();
-        if v < u16::MAX {
+        if v < u32::MAX {
             self.signal_timeout.set(v + 1);
         }
     }

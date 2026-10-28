@@ -1870,3 +1870,82 @@ Design §9 item 1, first half.
   9 known diffs, unchanged.
 - **Gate s10.2 vs s10.1: PASS.** ISR dumps identical on all six; rig ELFs
   byte-identical to s10.1 (71476a4b..., 38543e84...). Tag gc-s10.2-ok.
+
+## S10.3 -- rm32-sim port; all vectors run on it (HOST + one core fix) -- branch gc/s10
+
+Design §9 item 1, second half.
+
+- **`rm32-sim`** (new crate, no_std lib): `SimPlatform<T>` with a 40 kHz
+  control tick, 1 MHz interval timer, 10-bit 3.0 V ADC and packet-level
+  DShot; AM32-default board constants like the harness, so only those
+  four axes differ. ADC model: `raw_for_centivolts` / `raw_for_milliamps`
+  return the count nearest a value through the core's own conversion
+  (unit tests: 12.00 V -> 372 counts reads 11.99 V; one count ~3.2 cV;
+  full-scale current 14.99 A).
+- **Harness generic over a `Port`** (`Platform` + CPU_MHZ, ADC injection,
+  DSHOT_PACKETS). The STM32 model keeps its exact old values (literal
+  1999 / 64 MHz / 4095-3630 now come from the port). New protocol
+  command `port stm32|sim`; `rates` reports `port= tick_hz= timer_hz=`;
+  the runner selects with `RM32_PORT=sim`; gate line "blackbox vectors
+  (rm32-sim)".
+- **Hidden assumptions found, and fixed:**
+  1. *ADC fixed at 12 bit / 3.3 V* (`units.rs` consts). New `Platform`
+     consts `ADC_FULL_SCALE`, `ADC_VREF_MV`; the Q16 step and AM32's
+     `3300/41` derive from them (`VREF*100/FULL` truncated = 80, the same
+     constant, so the rigs fold identically). Exhaustive every-count
+     equivalence tests still pass for every board.
+  2. *DShot only through timestamp capture.* `transfer::process` was the
+     only entry; `dshot::unpack` existed but nothing dispatched it. New
+     `TransferState::process_packet` (layer-1 packets, detection = two
+     consecutive valid-CRC packets). First version extracted `process`'s
+     shared steps into `#[inline(always)]` helpers: EXTI15_10 grew +27
+     instructions (LLVM rescheduled), so `process` keeps its exact
+     source and only `process_packet` uses the helpers. The duplicate
+     logic is pinned by `packet_path_matches_capture_path`: 20k
+     pseudo-random frames/states through both paths (identical actions
+     and state), plus deterministic phases asserted to reach stick-cal
+     entry and the bidir commit (the first coverage bar failed: random
+     states never reached either -- fixed the scenario, not the bar).
+  3. *Signal-timeout counter u16* (compile error on the sim: 2 s at
+     40 kHz = 80000 ticks). AM32 has the same `uint16_t signaltimeout`
+     vs `LOOP_FREQUENCY_HZ << 1` (Src/main.c:587, :2390), capping its
+     loop at ~32 kHz. Widened to u32 (`SharedState`, `TestShared`,
+     `MotorStatus::signal_timeout`, `Timing::SIGNAL_TIMEOUT_*`). Call 50.
+- **Vector-side assumptions (timer counts):** 3 vectors failed on the sim
+  because they wrote interval-timer quantities as raw 2 MHz counts:
+  `motor_restart` (commutation_interval 10000, interval_timer_count
+  5000), `sine_changeover` (9000), `variable_pwm_modes` (96/100/200).
+  The runner now accepts durations on timer keys (`TIMER_KEYS`:
+  commutation_interval, average_interval, last_average_interval,
+  interval_timer_count), converted at the harness's `timer_hz`, refused
+  on any other key or off-grid; those values are now 5ms/2.5ms, 4.5ms,
+  48/50/100us. The other 121 raw timer values pass on both ports (their
+  checks do not depend on the timer's scale) and stay raw.
+- **Result: all vectors green on rm32-sim** (84 incl. the 2 API tests),
+  STM32 model 84/84, C 9 known. Falsifier: corrupting every sim packet
+  (`^ 1`) fails 8 of the 9 DShot vectors; restored, 84/84.
+- **Not varied (design §9 lists four axes):** capture clock (64 MHz,
+  servo edges), CPU_MHZ (64; AM32's CPU couplings: BEMF bad-count
+  threshold, variable PWM mode 2, tones), PWM base period (1999), and
+  the mock interval timer still advances one count per control tick on
+  both ports (vectors drive it).
+- **Gate s10.3 vs s10.2: PASS**, removals sub-check FAIL on l431,
+  pub_l431, pub_g431 -- explained here, Call 50. ISR diffs, all from
+  item 3: every other root is offset shifts only (SharedState fields
+  after `signal_timeout` move +4 bytes: e.g. L431 COMP `ldr [r3,#60]`
+  -> `#64`), same instruction count. Control tick (TIM6): the counter's
+  `ldrexh/strexh` became `ldrex/strex` and the 0xFFFF saturation compare
+  dropped (L431 3234 -> 3233, binz 3681 -> 3679, G431 likewise); the
+  removals tool counts mnemonics, so the swap reads as "ldrex 5 -> 6".
+  No new atomic operation. binz WCET TIM6 2562 -> 2561 insns, 4950 ->
+  4942 cyc@2ws. Sizes: rig text l431 -64, binz +8 B; public -8..-24 B.
+  Rig ELFs: l431 1f145f60..., binz 57b9d2cb... Tag gc-s10.3-ok.
+
+50. **S10.3: widened signal-timeout counter changes rig firmware code,
+    not benched (2026-10-27).** Increment 10 is host only and the goal
+    asks byte-identical rig ELFs or an explanation; this one is
+    explained above (offset shifts, halfword -> word exclusive on the
+    counter, -1/-2 instructions in the control tick). The alternative
+    -- keep u16 and forbid ports above 32 kHz -- would leave the sim
+    unbuildable at design §9's 40 kHz. Proposed: fly bf_ladder +
+    bf_slam on both rigs from gc-s10.3-ok at the next bench session.

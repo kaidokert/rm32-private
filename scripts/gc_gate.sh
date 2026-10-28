@@ -80,6 +80,9 @@ run "clippy workspace" $cap cargo clippy -q --workspace -- -D warnings
 run "rust harness build" $cap cargo build -q --release -p rm32-harness --bin rm32_harness
 run "blackbox vectors (Rust harness)" $cap python -m pytest tests/blackbox/test_vectors.py -q -p no:cacheprovider
 run "blackbox vectors (C harness vs known diffs)" c_vectors
+# Portability (design §9): every vector also runs on rm32-sim (40 kHz tick,
+# 1 MHz timer, 10-bit 3.0 V ADC, packet DShot).
+RM32_PORT=sim run "blackbox vectors (rm32-sim)" $cap python -m pytest tests/blackbox/test_vectors.py -q -p no:cacheprovider
 # Portability (design §9): the core builds for a non-ARM target (the port
 # picks portable-atomic's backend, as rm32_stm32 does) and names no STM32
 # peripheral outside AM32-citing comments.

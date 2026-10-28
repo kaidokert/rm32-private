@@ -122,12 +122,12 @@ impl hal::ComTimer for MockComTimer {
     fn enable_interrupt(&mut self) {}
 }
 
-struct MockMotorHal<T> {
+struct MockMotorHal<P> {
     bridge: MockBridge,
     comp: MockComp,
     interval: MockInterval,
     com_timer: MockComTimer,
-    _tuning: PhantomData<T>,
+    _port: PhantomData<P>,
 }
 
 /// The harness is the AM32-parity oracle: AM32's control tick and timer,
@@ -147,27 +147,73 @@ impl<T: TuningPolicy> rm32::platform::Platform for HarnessPlatform<T> {
     const MILLIVOLT_PER_AMP: u16 = rm32::board::BoardConfig::DEFAULT.millivolt_per_amp;
     const CURRENT_OFFSET: i16 = rm32::board::BoardConfig::DEFAULT.current_offset;
     const USE_NTC: bool = rm32::board::BoardConfig::DEFAULT.use_ntc;
+    const ADC_FULL_SCALE: u16 = 4095;
+    const ADC_VREF_MV: u16 = 3300;
     /// The F051-class 48 MHz period the vectors were recorded with.
     const PWM_BASE_PERIOD: u16 = 1999;
     type Tuning = T;
 }
 
-impl<T: TuningPolicy> rm32::platform::Platform for MockMotorHal<T> {
-    const TICK_HZ: u32 = <HarnessPlatform<T> as rm32::platform::Platform>::TICK_HZ;
-    const TIMER_HZ: u32 = <HarnessPlatform<T> as rm32::platform::Platform>::TIMER_HZ;
-    const CAPTURE_HZ: u32 = <HarnessPlatform<T> as rm32::platform::Platform>::CAPTURE_HZ;
-    const GCR_SHIFT: u8 = <HarnessPlatform<T> as rm32::platform::Platform>::GCR_SHIFT;
-    const VOLTAGE_DIVIDER_X100: u16 =
-        <HarnessPlatform<T> as rm32::platform::Platform>::VOLTAGE_DIVIDER_X100;
-    const MILLIVOLT_PER_AMP: u16 =
-        <HarnessPlatform<T> as rm32::platform::Platform>::MILLIVOLT_PER_AMP;
-    const CURRENT_OFFSET: i16 = <HarnessPlatform<T> as rm32::platform::Platform>::CURRENT_OFFSET;
-    const USE_NTC: bool = <HarnessPlatform<T> as rm32::platform::Platform>::USE_NTC;
-    const PWM_BASE_PERIOD: u16 = <HarnessPlatform<T> as rm32::platform::Platform>::PWM_BASE_PERIOD;
-    type Tuning = <HarnessPlatform<T> as rm32::platform::Platform>::Tuning;
+/// What the harness needs from a port beyond the core's `Platform` facts:
+/// its runtime chip parameters, how its ADC reports a bus voltage or
+/// current, and how DShot reaches the core. Two ports: the STM32 model
+/// (the AM32-parity oracle) and `rm32_sim::SimPlatform` (design §9).
+trait Port: rm32::platform::Platform + 'static {
+    const NAME: &'static str;
+    /// Runtime clock the port passes to the core (AM32's CPU_MHZ couplings:
+    /// BEMF bad-count threshold, variable PWM mode 2, tones).
+    const CPU_MHZ: u8;
+    /// DShot arrives as 16-bit packets (`process_packet`) instead of
+    /// captured edges (`process`).
+    const DSHOT_PACKETS: bool;
+    /// The ADC count the port's ADC gives for this bus voltage / current.
+    fn raw_voltage(cv: u16) -> u16;
+    fn raw_current(ma: i16) -> u16;
 }
 
-impl<T: TuningPolicy> hal::MotorHal for MockMotorHal<T> {
+impl<T: TuningPolicy + 'static> Port for HarnessPlatform<T> {
+    const NAME: &'static str = "stm32";
+    const CPU_MHZ: u8 = 64;
+    const DSHOT_PACKETS: bool = false;
+    /// The vectors' original approximation: raw = cV * 4095 / 3630 (the
+    /// default 11:1 divider at 3.3 V / 12 bit).
+    fn raw_voltage(cv: u16) -> u16 {
+        ((cv as u32) * 4095 / 3630).min(4095) as u16
+    }
+    /// The vectors' original encoding (20 mV/A, offset 498).
+    fn raw_current(ma: i16) -> u16 {
+        ((ma as i32 * 20 + 498 * 100) * 41 / 3300).max(0) as u16
+    }
+}
+
+impl<T: TuningPolicy + 'static> Port for rm32_sim::SimPlatform<T> {
+    const NAME: &'static str = "sim";
+    const CPU_MHZ: u8 = 64;
+    const DSHOT_PACKETS: bool = true;
+    fn raw_voltage(cv: u16) -> u16 {
+        rm32_sim::raw_for_centivolts::<Self>(cv)
+    }
+    fn raw_current(ma: i16) -> u16 {
+        rm32_sim::raw_for_milliamps::<Self>(ma)
+    }
+}
+
+impl<P: Port> rm32::platform::Platform for MockMotorHal<P> {
+    const TICK_HZ: u32 = <P as rm32::platform::Platform>::TICK_HZ;
+    const TIMER_HZ: u32 = <P as rm32::platform::Platform>::TIMER_HZ;
+    const CAPTURE_HZ: u32 = <P as rm32::platform::Platform>::CAPTURE_HZ;
+    const GCR_SHIFT: u8 = <P as rm32::platform::Platform>::GCR_SHIFT;
+    const VOLTAGE_DIVIDER_X100: u16 = <P as rm32::platform::Platform>::VOLTAGE_DIVIDER_X100;
+    const MILLIVOLT_PER_AMP: u16 = <P as rm32::platform::Platform>::MILLIVOLT_PER_AMP;
+    const CURRENT_OFFSET: i16 = <P as rm32::platform::Platform>::CURRENT_OFFSET;
+    const USE_NTC: bool = <P as rm32::platform::Platform>::USE_NTC;
+    const ADC_FULL_SCALE: u16 = <P as rm32::platform::Platform>::ADC_FULL_SCALE;
+    const ADC_VREF_MV: u16 = <P as rm32::platform::Platform>::ADC_VREF_MV;
+    const PWM_BASE_PERIOD: u16 = <P as rm32::platform::Platform>::PWM_BASE_PERIOD;
+    type Tuning = <P as rm32::platform::Platform>::Tuning;
+}
+
+impl<P: Port> hal::MotorHal for MockMotorHal<P> {
     type Bridge<'a>
         = &'a mut MockBridge
     where
@@ -220,7 +266,7 @@ impl hal::TelemetryUart for MockTelem {
 
 // --- Harness state ---
 
-struct Harness<T: TuningPolicy> {
+struct Harness<P: Port> {
     shared: SharedState,
     commutation: Commutation,
     bemf: BemfState,
@@ -228,12 +274,12 @@ struct Harness<T: TuningPolicy> {
     config: EepromConfig,
     armed_timeout_count: u32,
     hal_counts: HalCounts,
-    hal: MockMotorHal<T>,
+    hal: MockMotorHal<P>,
     adc: MockAdc,
     telem: MockTelem,
 
     // Main-loop state (uses real MainState)
-    main: rm32::main_state::MainState<HarnessPlatform<T>>,
+    main: rm32::main_state::MainState<P>,
 
     // Harness-level state
     tick_count: u32,
@@ -241,10 +287,12 @@ struct Harness<T: TuningPolicy> {
     throttle_value: u16,
     do_transfer: bool,
     dma_buffer: [u32; 64],
+    /// A packet port's next DShot packet (`dshot_frame` on `rm32-sim`).
+    packet: Option<u16>,
     input_pin_high: bool,
 
     // Unified system tick (shared with firmware)
-    system: SystemTick<HarnessPlatform<T>>,
+    system: SystemTick<P>,
     transfer: rm32::transfer::TransferState,
     cmd_proc: rm32::dshot_commands::CommandProcessor,
     edt: rm32::edt::EdtScheduler,
@@ -259,13 +307,13 @@ struct Harness<T: TuningPolicy> {
     dshot_output_prescaler: u16,
 }
 
-impl<T: TuningPolicy> Harness<T> {
+impl<P: Port> Harness<P> {
     fn new() -> Self {
         let counts = HalCounts::new();
         Self {
-            shared: SharedState::new::<HarnessPlatform<T>>(),
+            shared: SharedState::new::<P>(),
             commutation: Commutation::new(),
-            bemf: BemfState::with_cpu_mhz(64),
+            bemf: BemfState::with_cpu_mhz(P::CPU_MHZ),
             duty: DutyState::default(),
             config: EepromConfig::default(),
             armed_timeout_count: 0,
@@ -283,7 +331,7 @@ impl<T: TuningPolicy> Harness<T> {
                 },
                 interval: MockInterval { count: 0 },
                 com_timer: MockComTimer,
-                _tuning: PhantomData,
+                _port: PhantomData,
             },
             hal_counts: counts,
             tick_count: 0,
@@ -291,6 +339,7 @@ impl<T: TuningPolicy> Harness<T> {
             throttle_value: 0,
             do_transfer: false,
             dma_buffer: [0; 64],
+            packet: None,
             input_pin_high: false,
             system: SystemTick::new(),
             transfer: rm32::transfer::TransferState::default(),
@@ -314,8 +363,8 @@ impl<T: TuningPolicy> Harness<T> {
             main: rm32::main_state::MainState::new(
                 &rm32::board::BoardConfig::DEFAULT,
                 rm32::main_state::ChipParams {
-                    timer1_max_arr: 1999,
-                    cpu_mhz: 64,
+                    timer1_max_arr: P::PWM_BASE_PERIOD,
+                    cpu_mhz: P::CPU_MHZ,
                 },
             ),
         }
@@ -330,6 +379,15 @@ impl<T: TuningPolicy> Harness<T> {
     }
 
     fn build_dshot_frame_with_crc(&mut self, value: u16, inverted_crc: bool) {
+        if P::DSHOT_PACKETS {
+            let head = value << 1; // telemetry bit 0
+            let mut crc = (head ^ head >> 4 ^ head >> 8) & 0xF;
+            if inverted_crc {
+                crc = !crc & 0xF;
+            }
+            self.packet = Some(head << 4 | crc);
+            return;
+        }
         let mut bits = [0u8; 16];
         for (i, bit) in bits[..11].iter_mut().enumerate() {
             *bit = ((value >> (10 - i)) & 1) as u8;
@@ -361,7 +419,25 @@ impl<T: TuningPolicy> Harness<T> {
 
     fn handle_transfer(&mut self) {
         // Use library TransferState for all input processing
-        let actions = self.transfer.process::<HarnessPlatform<T>>(
+        let actions = if let Some(packet) = self.packet.take() {
+            self.transfer.process_packet(
+                packet,
+                self.shared.input_set(),
+                self.shared.dshot_telemetry(),
+                self.shared.armed(),
+                self.input_pin_high,
+                self.shared.adjusted_input(),
+                self.config.disable_stick_calibration != 0,
+                &mut self.zero_input_count,
+            )
+        } else {
+            self.process_edges()
+        };
+        self.dispatch_transfer(actions);
+    }
+
+    fn process_edges(&mut self) -> rm32::transfer::TransferActions {
+        self.transfer.process::<P>(
             &self.dma_buffer,
             self.shared.input_set(),
             self.dshot,
@@ -376,8 +452,10 @@ impl<T: TuningPolicy> Harness<T> {
             &mut self.zero_input_count,
             self.frametime_low,
             self.frametime_high,
-        );
+        )
+    }
 
+    fn dispatch_transfer(&mut self, actions: rm32::transfer::TransferActions) {
         // The core dispatch the firmware runs (S7.3).
         let mut fwd = self.commutation.forward();
         let mut output_prescaler = None;
@@ -471,7 +549,8 @@ impl<T: TuningPolicy> Harness<T> {
 
         // Sine mode stepping (same logic as firmware main loop)
         if let Some((result, (ch1, ch2, ch3))) =
-            self.system.tick_sine(&self.shared, &self.config, 60, 1999)
+            self.system
+                .tick_sine(&self.shared, &self.config, 60, P::PWM_BASE_PERIOD)
         {
             self.hal.bridge.set_phase_duties(ch1, ch2, ch3);
             match result {
@@ -488,8 +567,7 @@ impl<T: TuningPolicy> Harness<T> {
                     );
                 }
                 rm32::sine::SineStepResult::Idle => {
-                    let brake =
-                        SystemTick::<HarnessPlatform<T>>::handle_sine_idle(&self.config, 1999);
+                    let brake = SystemTick::<P>::handle_sine_idle(&self.config, P::PWM_BASE_PERIOD);
                     self.system.input_state.set_prop_brake_active(brake);
                     self.shared.set_prop_brake_active(brake);
                 }
@@ -651,7 +729,7 @@ impl<T: TuningPolicy> Harness<T> {
                     // SAFETY: the harness is single-threaded; nothing runs
                     // between the plain stores' reads and writes.
                     let writer = unsafe { rm32::shared_comm::SingleWriter::new() };
-                    isr_logic::commutation_timer_expired::<HarnessPlatform<T>, _, _, _, _, _>(
+                    isr_logic::commutation_timer_expired::<P, _, _, _, _, _>(
                         &mut self.commutation,
                         &mut self.bemf,
                         &self.shared,
@@ -716,15 +794,13 @@ impl<T: TuningPolicy> Harness<T> {
             "EDT_ARM_ENABLE" => self.edt_arm_enable = v != 0,
             "dshot_telemetry" => self.shared.set_dshot_telemetry(v != 0),
             "input_pin_state" => self.input_pin_high = v != 0,
-            "signaltimeout" => self.shared.set_signal_timeout(v as u16),
+            "signaltimeout" => self.shared.set_signal_timeout(v as u32),
             "cell_count" => self.main.cell_count = v as u8, // pub field
             "battery_voltage" => {
                 self.main
                     .set_battery_voltage(rm32::units::CentiVolts(v as u16));
                 // Also set ADC raw so main.tick() doesn't overwrite on next cycle
-                // Approximate: raw = cV * 1000 / (3300 / 4095 * divider_x100)
-                // For the default 11:1 (1100): raw ≈ cV * 4095 / 3630
-                self.adc.voltage = ((v as u32) * 4095 / 3630).min(4095) as u16;
+                self.adc.voltage = P::raw_voltage(v as u16);
             }
             "degrees_celsius" => {
                 self.adc.temperature = v as i16;
@@ -733,7 +809,7 @@ impl<T: TuningPolicy> Harness<T> {
                 self.main
                     .set_actual_current(rm32::units::MilliAmps(v as i16));
                 // Route through ADC mock for persistence
-                self.adc.current = ((v as i32 * 20 + 498 * 100) * 41 / 3300).max(0) as u16;
+                self.adc.current = P::raw_current(v as i16);
             }
             "bemf_timeout_happened" => self.main.protection.set_bemf_timeout_happened(v as u8),
             "bemf_timeout" => self.main.protection.set_bemf_timeout(v as u8),
@@ -830,8 +906,8 @@ mod tests {
 
     use super::*;
 
-    fn dshot_harness() -> Harness<QualifiedRigTuning> {
-        let mut harness = Harness::<QualifiedRigTuning>::new();
+    fn dshot_harness() -> Harness<HarnessPlatform<QualifiedRigTuning>> {
+        let mut harness = Harness::<HarnessPlatform<QualifiedRigTuning>>::new();
         harness.shared.set_input_set(true);
         harness.shared.set_dshot(true);
         harness.dshot = true;
@@ -884,7 +960,7 @@ mod tests {
 
     #[test]
     fn load_config_derives_edt_arm_enable() {
-        let mut harness = Harness::<QualifiedRigTuning>::new();
+        let mut harness = Harness::<HarnessPlatform<QualifiedRigTuning>>::new();
 
         harness.config.input_type = InputType::Dshot as u8;
         harness.sync_edt_arm_enable_from_config();
@@ -897,7 +973,7 @@ mod tests {
 
     #[test]
     fn hal_call_counters_track_and_reset() {
-        let mut harness = Harness::<QualifiedRigTuning>::new();
+        let mut harness = Harness::<HarnessPlatform<QualifiedRigTuning>>::new();
 
         harness.hal.bridge.all_off();
         harness.hal.bridge.full_brake();
@@ -916,7 +992,7 @@ mod tests {
 
     #[test]
     fn do_tick_runs_shared_pipeline() {
-        let mut harness = Harness::<QualifiedRigTuning>::new();
+        let mut harness = Harness::<HarnessPlatform<QualifiedRigTuning>>::new();
 
         harness.do_tick();
 
@@ -928,7 +1004,7 @@ mod tests {
 
     #[test]
     fn edt_next_command_drives_scheduler() {
-        let mut harness = Harness::<QualifiedRigTuning>::new();
+        let mut harness = Harness::<HarnessPlatform<QualifiedRigTuning>>::new();
 
         assert_eq!(harness.run_edt_next_command("init=1"), 0xE00);
         assert_eq!(
@@ -955,21 +1031,35 @@ mod tests {
 /// The harness under one tuning; `tuning <rig|am32>` swaps it for a fresh
 /// one (design §5.8: both monomorphized instantiations in one binary).
 enum AnyHarness {
-    Rig(Box<Harness<QualifiedRigTuning>>),
-    Am32(Box<Harness<Am32Tuning>>),
+    Rig(Box<Harness<HarnessPlatform<QualifiedRigTuning>>>),
+    Am32(Box<Harness<HarnessPlatform<Am32Tuning>>>),
+    SimRig(Box<Harness<rm32_sim::SimPlatform<QualifiedRigTuning>>>),
+    SimAm32(Box<Harness<rm32_sim::SimPlatform<Am32Tuning>>>),
+}
+
+impl AnyHarness {
+    fn new(port: &str, tuning: &str) -> Option<Self> {
+        Some(match (port, tuning) {
+            ("stm32", "rig") => Self::Rig(Box::new(Harness::new())),
+            ("stm32", "am32") => Self::Am32(Box::new(Harness::new())),
+            ("sim", "rig") => Self::SimRig(Box::new(Harness::new())),
+            ("sim", "am32") => Self::SimAm32(Box::new(Harness::new())),
+            _ => return None,
+        })
+    }
 }
 
 /// One protocol line against a harness; false on `quit`.
-fn command<T: TuningPolicy>(harness: &mut Harness<T>, line: &str) -> bool {
+fn command<P: Port>(harness: &mut Harness<P>, line: &str) -> bool {
     if line.starts_with("quit") {
         return false;
     } else if line.starts_with("rates") {
         // The runner converts time-based vector lines with these.
-        type P<T> = HarnessPlatform<T>;
         println!(
-            "tick_hz={} timer_hz={}",
-            <P<T> as rm32::platform::Platform>::TICK_HZ,
-            <P<T> as rm32::platform::Platform>::TIMER_HZ
+            "port={} tick_hz={} timer_hz={}",
+            P::NAME,
+            <P as rm32::platform::Platform>::TICK_HZ,
+            <P as rm32::platform::Platform>::TIMER_HZ
         );
         io::stdout().flush().unwrap();
     } else if line.starts_with("reset") {
@@ -982,7 +1072,7 @@ fn command<T: TuningPolicy>(harness: &mut Harness<T>, line: &str) -> bool {
         harness.config.normalize_after_load();
         // Apply EEPROM settings: derive motor config and update state
         let mc = harness.config.derive_motor_config(
-            1999,  // base TIM1 ARR (matches firmware Chip::TIM1_AUTORELOAD)
+            P::PWM_BASE_PERIOD,
             60,    // default dead_time
             1,     // default kv_divider
             false, // startup_boost
@@ -1039,7 +1129,7 @@ fn command<T: TuningPolicy>(harness: &mut Harness<T>, line: &str) -> bool {
             value,
             &mut gcr,
             padding,
-            <HarnessPlatform<T> as rm32::platform::Platform>::GCR_SHIFT,
+            <P as rm32::platform::Platform>::GCR_SHIFT,
         );
         let mut csum = 0u16;
         let mut cd = value;
@@ -1084,9 +1174,12 @@ fn command<T: TuningPolicy>(harness: &mut Harness<T>, line: &str) -> bool {
 }
 
 fn main() {
-    // Starts under the rig tuning (the API sanity tests send no `tuning`);
-    // every vector declares its own.
-    let mut harness = AnyHarness::Rig(Box::new(Harness::new()));
+    // Starts on the STM32 model under the rig tuning (the API sanity tests
+    // send neither command); every vector declares its tuning, and the
+    // runner selects the port (`port stm32|sim`). Either command starts a
+    // fresh harness.
+    let (mut port, mut tuning) = (String::from("stm32"), String::from("rig"));
+    let mut harness = AnyHarness::new(&port, &tuning).unwrap();
     let stdin = io::stdin();
 
     println!("ready");
@@ -1096,22 +1189,29 @@ fn main() {
         let line = line.unwrap();
         let line = line.trim();
 
-        if let Some(name) = line.strip_prefix("tuning ") {
-            harness = match name.trim() {
-                "rig" => AnyHarness::Rig(Box::new(Harness::new())),
-                "am32" => AnyHarness::Am32(Box::new(Harness::new())),
-                other => {
-                    eprintln!("harness2: unknown tuning '{}'", other);
-                    continue;
+        let select = if let Some(name) = line.strip_prefix("tuning ") {
+            Some((port.clone(), name.trim().to_string()))
+        } else {
+            line.strip_prefix("port ")
+                .map(|name| (name.trim().to_string(), tuning.clone()))
+        };
+        if let Some((new_port, new_tuning)) = select {
+            match AnyHarness::new(&new_port, &new_tuning) {
+                Some(h) => {
+                    harness = h;
+                    (port, tuning) = (new_port, new_tuning);
+                    println!("ok");
                 }
-            };
-            println!("ok");
+                None => println!("error unknown port/tuning '{new_port}'/'{new_tuning}'"),
+            }
             io::stdout().flush().unwrap();
             continue;
         }
         let go_on = match &mut harness {
             AnyHarness::Rig(h) => command(h, line),
             AnyHarness::Am32(h) => command(h, line),
+            AnyHarness::SimRig(h) => command(h, line),
+            AnyHarness::SimAm32(h) => command(h, line),
         };
         if !go_on {
             break;

@@ -26,6 +26,10 @@ pub trait Platform {
     const CURRENT_OFFSET: i16;
     /// Temperature from an external NTC instead of the MCU's sensor.
     const USE_NTC: bool;
+    /// Largest ADC count (AM32's 12-bit STM32 ADCs: 4095).
+    const ADC_FULL_SCALE: u16;
+    /// ADC reference voltage, mV (AM32: 3300).
+    const ADC_VREF_MV: u16;
 
     /// Motor PWM timer period (auto-reload) at the base carrier, AM32
     /// `TIMER1_MAX_ARR`. Shared state starts with it until the main loop
@@ -94,6 +98,8 @@ impl Platform for TestPlatform {
     const MILLIVOLT_PER_AMP: u16 = 20;
     const CURRENT_OFFSET: i16 = 0;
     const USE_NTC: bool = false;
+    const ADC_FULL_SCALE: u16 = 4095;
+    const ADC_VREF_MV: u16 = 3300;
     const PWM_BASE_PERIOD: u16 = 1999;
     type Tuning = crate::tuning::QualifiedRigTuning;
 }

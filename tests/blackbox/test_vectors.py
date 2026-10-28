@@ -11,7 +11,7 @@ Or from repo root:
 
 import pytest
 from pathlib import Path
-from harness import AM32Harness, read_tuning, run_test_vectors, ticks_for
+from harness import AM32Harness, read_tuning, run_test_vectors, ticks_for, timer_value
 
 VECTORS_DIR = Path(__file__).parent / "vectors"
 
@@ -102,6 +102,15 @@ class TestHarnessAPI:
         for bad in ("25us", "0ms", "1.5", "5 ms", "-1ms"):
             with pytest.raises(ValueError):
                 ticks_for(bad, 20000)
+        # Timer-domain values: durations only on timer keys, exact counts.
+        assert timer_value("commutation_interval", "5ms", 2_000_000) == "10000"
+        assert timer_value("commutation_interval", "5ms", 1_000_000) == "5000"
+        assert timer_value("commutation_interval", "96", 1_000_000) == "96"
+        assert timer_value("throttle", "500", 1_000_000) == "500"
+        with pytest.raises(ValueError):
+            timer_value("throttle", "5ms", 2_000_000)  # not a timer key
+        with pytest.raises(ValueError):
+            timer_value("average_interval", "0.3us", 2_000_000)  # 0.6 counts
 
     def test_tuning_selects_policy(self, harness):
         """`tuning` must really swap the policy: the rig vector's
