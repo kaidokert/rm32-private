@@ -1118,6 +1118,15 @@ check name regex widened twice, bands file untouched).
     stores the compiler keeps: 6 bytes of RAM, no behaviour. Revisit if
     the rig policies go public (#6).
     **Operator: accepted (2026-10-27).**
+50. **S10.3: widened signal-timeout counter changes rig firmware code,
+    not benched (2026-10-27).** Increment 10 is host only and the goal
+    asks byte-identical rig ELFs or an explanation; this one is
+    explained above (offset shifts, halfword -> word exclusive on the
+    counter, -1/-2 instructions in the control tick). The alternative
+    -- keep u16 and forbid ports above 32 kHz -- would leave the sim
+    unbuildable at design §9's 40 kHz. Proposed: fly bf_ladder +
+    bf_slam on both rigs from gc-s10.3-ok at the next bench session.
+    **Operator: accepted (2026-10-27).**
 
 ## S4.1 -- `Platform` trait with clock consts (HOST) -- tag gc-s04.1-psu
 
@@ -1943,12 +1952,12 @@ Design §9 item 1, second half.
   one isr.rs line; the first gate's images differed from it in 3 panic
   line bytes): l431 dd6b3ba8..., binz b60276b0... Tag gc-s10.3-ok.
 
-50. **S10.3: widened signal-timeout counter changes rig firmware code,
-    not benched (2026-10-27).** Increment 10 is host only and the goal
-    asks byte-identical rig ELFs or an explanation; this one is
-    explained above (offset shifts, halfword -> word exclusive on the
-    counter, -1/-2 instructions in the control tick). The alternative
-    -- keep u16 and forbid ports above 32 kHz -- would leave the sim
-    unbuildable at design §9's 40 kHz. Proposed: fly bf_ladder +
-    bf_slam on both rigs from gc-s10.3-ok at the next bench session.
-    **Operator: accepted (2026-10-27).**
+## Increment 9 + 10 review (2026-10-27)
+
+Peer review of S9.1-S9.3 (af0dfc6..333379e) and S10.1-S10.3
+(333379e..2145d64): **approved**. Calls 48, 49, 50 accepted (Call 50's
+bench plan approved: bf_ladder + bf_slam on neutron_l431 and
+binz_drv8304h_g071 from gc-s10.3-ok at the next bench session). With
+S10.3, all ten increments of refactor_execution_plan.md are on devel.
+Housekeeping applied: Call 50 moved into the numbered Calls list after
+Call 49.
