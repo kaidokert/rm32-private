@@ -1939,7 +1939,9 @@ Design §9 item 1, second half.
   removals tool counts mnemonics, so the swap reads as "ldrex 5 -> 6".
   No new atomic operation. binz WCET TIM6 2562 -> 2561 insns, 4950 ->
   4942 cyc@2ws. Sizes: rig text l431 -64, binz +8 B; public -8..-24 B.
-  Rig ELFs: l431 1f145f60..., binz 57b9d2cb... Tag gc-s10.3-ok.
+  Rig ELFs (re-gated on the committed tree after the fmt hook moved
+  one isr.rs line; the first gate's images differed from it in 3 panic
+  line bytes): l431 dd6b3ba8..., binz b60276b0... Tag gc-s10.3-ok.
 
 50. **S10.3: widened signal-timeout counter changes rig firmware code,
     not benched (2026-10-27).** Increment 10 is host only and the goal
