@@ -807,7 +807,7 @@ impl<P: Port> Harness<P> {
             }
             "actual_current" => {
                 self.main
-                    .set_actual_current(rm32::units::MilliAmps(v as i16));
+                    .set_actual_current(rm32::units::CentiAmps(v as i16));
                 // Route through ADC mock for persistence
                 self.adc.current = P::raw_current(v as i16);
             }
@@ -999,7 +999,7 @@ mod tests {
         assert_eq!(harness.tick_count, 1);
         assert_eq!(harness.shared.signal_timeout(), 1);
         // The main loop's 1 s / LED periods run on the shared tick count.
-        assert_eq!(harness.shared.tick_count(), 1);
+        assert_eq!(harness.shared.control_ticks(), 1);
     }
 
     #[test]

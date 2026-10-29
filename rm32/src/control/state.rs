@@ -352,19 +352,47 @@ impl ProtectionState {
 }
 
 /// Sensor measurements.
-#[derive(Clone, Default)]
-pub struct Measurements {
+pub struct Measurements<P: crate::platform::Platform> {
     pub(crate) battery_voltage: crate::units::CentiVolts,
-    pub(crate) actual_current: crate::units::MilliAmps,
+    pub(crate) actual_current: crate::units::CentiAmps,
     pub(crate) degrees_celsius: crate::units::DegreesCelsius,
-    pub(crate) consumed_current: i32,
+    pub(crate) consumed_charge: crate::current::ConsumedCharge<P>,
     /// EWMA filter for ADC voltage readings.
     pub(crate) voltage_filter: crate::filter::EwmaPow2<3>,
     /// Multi-stage filter for ADC current readings.
     pub(crate) current_filter: crate::current::CurrentFilter,
 }
 
-impl Measurements {
+impl<P: crate::platform::Platform> Default for Measurements<P> {
+    fn default() -> Self {
+        Self {
+            battery_voltage: Default::default(),
+            actual_current: Default::default(),
+            degrees_celsius: Default::default(),
+            consumed_charge: Default::default(),
+            voltage_filter: Default::default(),
+            current_filter: Default::default(),
+        }
+    }
+}
+impl<P: crate::platform::Platform> Clone for Measurements<P> {
+    fn clone(&self) -> Self {
+        Self {
+            battery_voltage: self.battery_voltage,
+            actual_current: self.actual_current,
+            degrees_celsius: self.degrees_celsius,
+            consumed_charge: self.consumed_charge.clone(),
+            voltage_filter: self.voltage_filter.clone(),
+            current_filter: self.current_filter.clone(),
+        }
+    }
+}
+
+impl<P: crate::platform::Platform> Measurements<P> {
+    /// Consumed charge in whole mAh, saturated to the KISS telemetry range.
+    pub fn consumed_milliamp_hours(&self) -> u16 {
+        self.consumed_charge.milliamp_hours()
+    }
     /// Read battery voltage.
     pub fn battery_voltage(&self) -> crate::units::CentiVolts {
         self.battery_voltage
@@ -376,12 +404,12 @@ impl Measurements {
     }
 
     /// Read actual current.
-    pub fn actual_current(&self) -> crate::units::MilliAmps {
+    pub fn actual_current(&self) -> crate::units::CentiAmps {
         self.actual_current
     }
 
     /// Set actual current.
-    pub fn set_actual_current(&mut self, v: crate::units::MilliAmps) {
+    pub fn set_actual_current(&mut self, v: crate::units::CentiAmps) {
         self.actual_current = v;
     }
 

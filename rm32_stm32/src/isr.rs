@@ -143,7 +143,7 @@ pub fn shared() -> &'static SharedState {
 /// `bench_clock` derives time from it.
 #[inline(always)]
 pub fn tick_count() -> u32 {
-    SHARED.tick_count()
+    SHARED.control_ticks()
 }
 
 /// Battery voltage in millivolts for the bench/debug consumers (guard,

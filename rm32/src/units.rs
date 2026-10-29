@@ -20,17 +20,17 @@ impl CentiVolts {
     }
 }
 
-/// Motor current in milliamps.
+/// Motor current in centiamps (AM32 `actual_current`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 #[repr(transparent)]
-pub struct MilliAmps(pub i16);
+pub struct CentiAmps(pub i16);
 
-impl MilliAmps {
+impl CentiAmps {
     pub const ZERO: Self = Self(0);
 
-    /// Convert to centiamps for KISS telemetry.
+    /// KISS has an unsigned current field: negative readings encode as zero.
     pub fn to_centiamps(self) -> u16 {
-        (self.0 / 10) as u16
+        self.0.max(0) as u16
     }
 }
 
@@ -299,17 +299,17 @@ impl AdcCount {
         CentiVolts(<P as AdcScale>::PIN_MV_TO_CV.apply(mv_pin) as u16)
     }
 
-    /// Current in milliamps: `(raw * 80 - offset * 100) / mVpA`, truncated
+    /// Current in centiamps: `(raw * 80 - offset * 100) / mVpA`, truncated
     /// toward zero (AM32); 0 without a sensor.
     #[inline]
-    pub fn milliamps<P: Platform>(self) -> MilliAmps {
+    pub fn centiamps<P: Platform>(self) -> CentiAmps {
         let raw = self.0 as u32;
         let q = if raw < <P as AdcScale>::CURRENT_NEG_BELOW {
             <P as AdcScale>::CURRENT_NEG.apply(raw)
         } else {
             <P as AdcScale>::CURRENT_POS.apply(raw)
         };
-        MilliAmps(q as i16)
+        CentiAmps(q as i16)
     }
 }
 
@@ -356,12 +356,12 @@ mod tests {
         CentiVolts(scaled as u16)
     }
 
-    fn s2_3_milliamps(raw: u16, current_offset: i16, mv_per_amp: u16) -> MilliAmps {
+    fn s2_3_milliamps(raw: u16, current_offset: i16, mv_per_amp: u16) -> CentiAmps {
         let mv = (raw as i32) * (3300 / 41) - (current_offset as i32) * 100;
         if mv_per_amp > 0 {
-            MilliAmps((mv / mv_per_amp as i32) as i16)
+            CentiAmps((mv / mv_per_amp as i32) as i16)
         } else {
-            MilliAmps::ZERO
+            CentiAmps::ZERO
         }
     }
 
@@ -406,7 +406,7 @@ mod tests {
                 P::VOLTAGE_DIVIDER_X100
             );
             assert_eq!(
-                AdcCount(raw).milliamps::<P>(),
+                AdcCount(raw).centiamps::<P>(),
                 s2_3_milliamps(raw, P::CURRENT_OFFSET, P::MILLIVOLT_PER_AMP),
                 "mA raw {raw} mVpA {} off {}",
                 P::MILLIVOLT_PER_AMP,
@@ -445,9 +445,9 @@ mod tests {
 
     #[test]
     fn binz_current_above_12_bits_is_exact() {
-        assert_eq!(AdcCount(6800).milliamps::<Binz>(), MilliAmps(4800));
+        assert_eq!(AdcCount(6800).centiamps::<Binz>(), CentiAmps(4800));
         assert_eq!(
-            AdcCount(u16::MAX).milliamps::<Binz>(),
+            AdcCount(u16::MAX).centiamps::<Binz>(),
             s2_3_milliamps(u16::MAX, 1600, 80)
         );
     }
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn adc_to_milliamps() {
         let count = AdcCount(2048);
-        let ma = count.milliamps::<Offset498>();
+        let ma = count.centiamps::<Offset498>();
         assert!(ma.0 > 5000 && ma.0 < 6000); // ~5750mA
     }
 
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     fn adc_zero_offset_current() {
         // Zero offset, 20 mv/A: mid-range ADC = ~4024 mA
-        let ma = AdcCount(2048).milliamps::<Am32Default>();
+        let ma = AdcCount(2048).centiamps::<Am32Default>();
         assert!(
             ma.0 > 8000,
             "expected high mA with zero offset, got {}",
@@ -596,6 +596,6 @@ mod tests {
 
     #[test]
     fn adc_zero_mvperamp_returns_zero() {
-        assert_eq!(AdcCount(2048).milliamps::<NoSensor>(), MilliAmps::ZERO);
+        assert_eq!(AdcCount(2048).centiamps::<NoSensor>(), CentiAmps::ZERO);
     }
 }

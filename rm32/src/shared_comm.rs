@@ -248,7 +248,7 @@ pub trait Commands {
     /// tick). The main loop measures its 1 s and LED periods against it, as
     /// AM32's main loop polls `tenkhzcounter` / `ledcounter`, which
     /// `tenKhzRoutine` increments.
-    fn tick_count_inc(&self);
+    fn increment_control_ticks(&self);
     /// Increment 1 kHz dispatch counter (TIM6 ISR side, 20 kHz). Matches
     /// AM32's `one_khz_loop_counter++`.
     fn one_khz_counter_inc(&self);

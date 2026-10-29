@@ -27,7 +27,7 @@ pub struct SystemTick<P: Timing> {
 impl<P: Timing> SystemTick<P> {
     pub fn new() -> Self {
         Self {
-            input_state: InputState::new(),
+            input_state: InputState::new::<P>(),
             sine_positions: PhasePositions::new(),
             sine_active: false,
             _platform: core::marker::PhantomData,

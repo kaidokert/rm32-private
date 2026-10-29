@@ -45,13 +45,28 @@ pub trait Platform {
 /// folds at compile time: the 64-bit arithmetic must never reach a core
 /// without hardware divide.
 pub const fn us_to_ticks<P: Platform>(us: u32) -> u32 {
+    validate::<P>();
     ((us as u64 * P::TIMER_HZ as u64) / 1_000_000) as u32
 }
 
 /// Milliseconds to control ticks (truncating); const-context only, as
 /// [`us_to_ticks`].
 pub const fn ms_to_control_ticks<P: Platform>(ms: u32) -> u32 {
+    validate::<P>();
     ((ms as u64 * P::TICK_HZ as u64) / 1000) as u32
+}
+
+/// Check the ranges the core's counters and capture protocols require.
+/// Const-context only, like the converters that call it: an unsupported
+/// port fails to compile instead of truncating a counter.
+pub const fn validate<P: Platform>() {
+    assert!(P::TICK_HZ >= 1000 && P::TICK_HZ <= 230_000);
+    assert!(P::TICK_HZ % 1000 == 0);
+    assert!(P::TIMER_HZ >= 1_000_000 && P::TIMER_HZ <= 2_000_000);
+    assert!(P::CAPTURE_HZ >= 1_000_000 && P::CAPTURE_HZ <= 255_000_000);
+    assert!(P::CAPTURE_HZ % 1_000_000 == 0);
+    assert!(P::GCR_SHIFT < 16);
+    assert!(P::PWM_BASE_PERIOD > 0);
 }
 
 /// Sum of the last six commutation intervals (timer ticks) to `e_com_time`,

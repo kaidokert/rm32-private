@@ -82,7 +82,7 @@ pub struct SharedState {
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // Control-tick count (one per tick ISR). A clock, not a diagnostic:
     // ports without a cycle counter derive bench time from it.
-    tick_count: AtomicU32,
+    control_ticks: AtomicU32,
     // Tone channel: pending tone id (rm32::tone), 0 = none. Set by the
     // DSHOT-command ISR (beacons) or main (arming tune); consumed by
     // the tick's tone stepper.
@@ -138,7 +138,7 @@ impl SharedState {
             isr_action: AtomicU8::new(0), // IsrAction::None
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
-            tick_count: AtomicU32::new(0),
+            control_ticks: AtomicU32::new(0),
             tone_request: AtomicU8::new(0),
             one_khz_counter: AtomicU8::new(0),
             telem_counter: AtomicU16::new(0),
@@ -579,11 +579,11 @@ impl SharedState {
     pub fn take_desync_check_pending(&self) -> bool {
         self.desync_check_pending.swap(false, Ordering::AcqRel)
     }
-    pub fn tick_count(&self) -> u32 {
-        self.tick_count.load(ACQ)
+    pub fn control_ticks(&self) -> u32 {
+        self.control_ticks.load(ACQ)
     }
-    pub fn tick_count_inc(&self) {
-        self.tick_count.fetch_add(1, REL);
+    pub fn increment_control_ticks(&self) {
+        self.control_ticks.fetch_add(1, REL);
     }
 }
 
@@ -837,8 +837,8 @@ impl crate::shared_comm::Commands for SharedState {
     fn set_save_settings_flag(&self, v: bool) {
         SharedState::set_save_settings_flag(self, v);
     }
-    fn tick_count_inc(&self) {
-        SharedState::tick_count_inc(self);
+    fn increment_control_ticks(&self) {
+        SharedState::increment_control_ticks(self);
     }
     fn one_khz_counter_inc(&self) {
         SharedState::one_khz_counter_inc(self);

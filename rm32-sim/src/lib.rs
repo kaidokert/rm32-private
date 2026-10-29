@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 use rm32::board::BoardConfig;
 use rm32::platform::Platform;
 use rm32::tuning::TuningPolicy;
-use rm32::units::{AdcCount, CentiVolts, MilliAmps};
+use rm32::units::{AdcCount, CentiAmps, CentiVolts};
 
 /// The simulated port, generic over the tuning like the harness's platform.
 pub struct SimPlatform<T>(PhantomData<T>);
@@ -58,7 +58,7 @@ pub fn raw_for_centivolts<P: Platform>(cv: u16) -> u16 {
 /// count); 0 without a current sensor.
 pub fn raw_for_milliamps<P: Platform>(ma: i16) -> u16 {
     nearest(P::ADC_FULL_SCALE, ma as i32, |raw| {
-        let MilliAmps(v) = AdcCount(raw).milliamps::<P>();
+        let CentiAmps(v) = AdcCount(raw).centiamps::<P>();
         v as i32
     })
 }
@@ -99,10 +99,10 @@ mod tests {
     #[test]
     fn current_model_round_trips_within_one_count() {
         // Full scale is 1023 * 293 / 20 = 14.99 A at 20 mV/A.
-        assert_eq!(AdcCount(1023).milliamps::<Sim>(), MilliAmps(14986));
+        assert_eq!(AdcCount(1023).centiamps::<Sim>(), CentiAmps(14986));
         for ma in [0i16, 500, 1000, 5000, 14000] {
             let raw = raw_for_milliamps::<Sim>(ma);
-            let MilliAmps(back) = AdcCount(raw).milliamps::<Sim>();
+            let CentiAmps(back) = AdcCount(raw).centiamps::<Sim>();
             // One count is 293 / 20 = 14.6 mA at 20 mV/A.
             assert!((back - ma).abs() <= 8, "{ma} mA -> raw {raw} -> {back}");
         }

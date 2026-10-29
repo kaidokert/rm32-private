@@ -44,9 +44,10 @@ impl InputState {
         self.input
     }
 
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new<P: crate::platform::Platform>() -> Self {
         Self {
-            reverse_speed_threshold: 1500,
+            // AM32 `commutation_interval > 1500` at 2 MHz: 750 us.
+            reverse_speed_threshold: crate::platform::us_to_ticks::<P>(750) as u16,
             ..Default::default()
         }
     }
@@ -245,7 +246,7 @@ mod tests {
             shared,
             EepromConfig::default(),
             ProtectionState::default(),
-            InputState::new(),
+            InputState::new::<crate::platform::TestPlatform>(),
         )
     }
 

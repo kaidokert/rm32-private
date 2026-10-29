@@ -159,6 +159,8 @@ pub const BRAKE_STRENGTH_SCALE: u32 = 200;
 /// them must compile to the same instructions. Blanket-implemented, so a
 /// port cannot override one.
 pub trait Timing: Platform + Sized {
+    /// Evaluating this rejects a port whose clocks the core cannot represent.
+    const VALID: () = crate::platform::validate::<Self>();
     /// Arming: zero throttle held this long (1 s; AM32 20000 ticks).
     const ARMING_TIMEOUT_TICKS: u32 = ms_to_control_ticks::<Self>(1000);
 
