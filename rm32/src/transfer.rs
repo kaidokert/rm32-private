@@ -566,11 +566,18 @@ pub struct InputContext<'a> {
 pub fn dispatch<C: FnOnce(u16), P: FnOnce(crate::hal::DshotOutputPrescaler)>(
     actions: &TransferActions,
     shared: &crate::shared_state::SharedState,
-    ctx: InputContext<'_>,
+    mut ctx: InputContext<'_>,
     on_command: C,
     set_prescaler: P,
 ) {
-    use crate::dshot_commands::CommandResult;
+    // A sequence started while stopped must not survive loss of its gate.
+    // Drop a decoded DShot frame in this call as well: its programming bytes
+    // are not throttle. An invalid frame still cancels an ineligible sequence,
+    // but otherwise retains the normal invalid-frame/no-side-effect behavior.
+    let cancelled = ctx.cmd.in_programming_mode() && (!shared.armed() || shared.running());
+    if cancelled {
+        ctx.cmd.cancel_programming();
+    }
     match actions.action {
         TransferAction::InputDetected(proto) => {
             shared.set_input_set(true);
@@ -588,16 +595,24 @@ pub fn dispatch<C: FnOnce(u16), P: FnOnce(crate::hal::DshotOutputPrescaler)>(
             }
         }
         TransferAction::DshotThrottle { value, telemetry } => {
-            // EDT arm gate: throttle passes once armed (or EDT not required);
-            // zero always passes and disarms. The gate reads `edt_armed`
-            // before the disarm; the store comes last so LLVM keeps one
-            // `newinput` store (store-then-disarm got tail-duplicated).
-            let pass = !ctx.edt_arm_enable || *ctx.edt_armed || value == 0;
-            if value == 0 && ctx.edt_arm_enable {
-                *ctx.edt_armed = false;
-            }
-            if pass {
-                shared.set_newinput(value);
+            if cancelled {
+                shared.set_newinput(0);
+            } else if ctx.cmd.in_programming_mode() {
+                shared.set_newinput(0);
+                apply_command(value, shared, &mut ctx);
+            } else {
+                // EDT arm gate: throttle passes once armed (or EDT not
+                // required); zero always passes and disarms. The gate reads
+                // `edt_armed` before the disarm; the store comes last so LLVM
+                // keeps one `newinput` store (store-then-disarm got
+                // tail-duplicated).
+                let pass = !ctx.edt_arm_enable || *ctx.edt_armed || value == 0;
+                if value == 0 && ctx.edt_arm_enable {
+                    *ctx.edt_armed = false;
+                }
+                if pass {
+                    shared.set_newinput(value);
+                }
             }
             if telemetry {
                 shared.set_send_telemetry(true);
@@ -611,41 +626,8 @@ pub fn dispatch<C: FnOnce(u16), P: FnOnce(crate::hal::DshotOutputPrescaler)>(
                 shared.set_send_telemetry(true);
             }
             shared.set_signal_timeout(0);
-            let old_config = *ctx.config;
-            let result = ctx.cmd.process(
-                cmd,
-                shared.armed(),
-                shared.running(),
-                ctx.config,
-                ctx.forward,
-                ctx.edt_armed,
-                ctx.edt_arm_enable,
-            );
-            for (offset, (old, new)) in old_config
-                .as_bytes()
-                .iter()
-                .zip(ctx.config.as_bytes().iter())
-                .enumerate()
-            {
-                if old != new {
-                    shared.push_config_write(offset as u8, *new);
-                }
-            }
-            match result {
-                CommandResult::SaveSettings => shared.set_save_settings_flag(true),
-                CommandResult::PlayTone(tone) => shared.set_tone_request(tone),
-                CommandResult::SendEscInfo => shared.set_send_esc_info_flag(true),
-                CommandResult::ProgrammingCommit { position, value } => {
-                    shared.push_config_write(position as u8, value);
-                }
-                _ => {}
-            }
-            shared.set_forward(*ctx.forward);
-            if ctx.cmd.take_edt_init() {
-                ctx.edt.request_init();
-            }
-            if ctx.cmd.take_edt_deinit() {
-                ctx.edt.request_deinit();
+            if !cancelled {
+                apply_command(cmd, shared, &mut ctx);
             }
         }
         TransferAction::ServoThrottle(value) => {
@@ -663,6 +645,7 @@ pub fn dispatch<C: FnOnce(u16), P: FnOnce(crate::hal::DshotOutputPrescaler)>(
             // current when it acts on the save flag.
             ctx.config.servo_low_threshold = low_threshold;
             ctx.config.servo_high_threshold = high_threshold;
+            shared.publish_servo_calibration(low_threshold, high_threshold);
             shared.push_config_write(
                 core::mem::offset_of!(crate::config::EepromConfig, servo_low_threshold) as u8,
                 low_threshold,
@@ -682,6 +665,57 @@ pub fn dispatch<C: FnOnce(u16), P: FnOnce(crate::hal::DshotOutputPrescaler)>(
     }
     if actions.bidir_detected {
         shared.set_dshot_telemetry(true);
+    }
+}
+
+/// One command or programming byte. Programming updates the config directly
+/// too: publish each changed byte once, never truncating an unvalidated
+/// programming position to a queue key.
+#[inline(always)]
+fn apply_command(
+    value: u16,
+    shared: &crate::shared_state::SharedState,
+    ctx: &mut InputContext<'_>,
+) {
+    use crate::dshot_commands::CommandResult;
+    let old_config = *ctx.config;
+    let result = if ctx.cmd.in_programming_mode() {
+        ctx.cmd
+            .process_programming(value, ctx.config)
+            .unwrap_or(CommandResult::None)
+    } else {
+        ctx.cmd.process(
+            value,
+            shared.armed(),
+            shared.running(),
+            ctx.config,
+            ctx.forward,
+            ctx.edt_armed,
+            ctx.edt_arm_enable,
+        )
+    };
+    for (offset, (old, new)) in old_config
+        .as_bytes()
+        .iter()
+        .zip(ctx.config.as_bytes().iter())
+        .enumerate()
+    {
+        if old != new {
+            shared.push_config_write(offset as u8, *new);
+        }
+    }
+    match result {
+        CommandResult::SaveSettings => shared.set_save_settings_flag(true),
+        CommandResult::PlayTone(tone) => shared.set_tone_request(tone),
+        CommandResult::SendEscInfo => shared.set_send_esc_info_flag(true),
+        CommandResult::ProgrammingCommit { .. } | CommandResult::None => {}
+    }
+    shared.set_forward(*ctx.forward);
+    if ctx.cmd.take_edt_init() {
+        ctx.edt.request_init();
+    }
+    if ctx.cmd.take_edt_deinit() {
+        ctx.edt.request_deinit();
     }
 }
 

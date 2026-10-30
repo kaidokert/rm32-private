@@ -23,8 +23,9 @@ use rm32::hal::InputCapture;
 /// 2. **Single core**: All STM32 targets (G071/F051/L431/G431) are
 ///    single-core. No other hart can access this cell.
 ///
-/// 3. **No main-loop access**: The main loop communicates via `SharedState`
-///    atomics, never touching `ISR_LOCAL`.
+/// 3. **Serialized main-loop access**: The fixed sine/configuration entry points
+///    mask interrupts for their entire borrow. It does not call ISR handlers,
+///    expose the reference, or delay while holding it.
 ///
 /// 4. **Init-once**: `get()` lazily initializes from `take_isr_state()`
 ///    exactly once (first ISR invocation). Subsequent calls return the
@@ -49,8 +50,8 @@ impl IsrCell {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn get(&self) -> &mut TargetIsrState {
-        // SAFETY: Called only from ISR context at a single priority level.
-        // No concurrent access possible (see struct-level safety doc).
+        // SAFETY: Called from same-priority ISRs or fixed main-loop entry points with interrupts
+        // masked. No concurrent/reentrant access (see struct-level safety doc).
         let opt = unsafe { &mut *self.0.get() };
         let needed_init = opt.is_none();
         let state =
@@ -191,6 +192,40 @@ fn tick_gap() {
             GAP_LOST.store(GAP_LOST.load(Relaxed).wrapping_add(1), Relaxed);
         }
     }
+}
+
+/// Recover input configuration after the bounded publication queue fills.
+/// Access the live ISR cell, not the initialization cell consumed by the first IRQ.
+pub fn resync_input_config(main: &mut rm32::main_state::MainState<crate::platform::StmPlatform>) {
+    let shared = isr::shared();
+    if shared.config_write_overflowed() {
+        cortex_m::interrupt::free(|_| {
+            let state = ISR_LOCAL.get();
+            rm32::system::SystemTick::<crate::platform::StmPlatform>::sync_config_snapshot(
+                shared,
+                main,
+                &state.config,
+            );
+        });
+    }
+}
+
+/// Claim a save and copy authoritative bytes with the input producer excluded.
+/// Flash I/O must happen after this function returns, outside the exclusion.
+pub fn prepare_input_save(
+    main: &mut rm32::main_state::MainState<crate::platform::StmPlatform>,
+) -> bool {
+    if !isr::shared().save_settings_flag() {
+        return false;
+    }
+    cortex_m::interrupt::free(|_| {
+        let state = ISR_LOCAL.get();
+        rm32::system::SystemTick::<crate::platform::StmPlatform>::prepare_config_save(
+            isr::shared(),
+            main,
+            &state.config,
+        )
+    })
 }
 
 /// 20kHz control loop tick (TIM6 ISR body).

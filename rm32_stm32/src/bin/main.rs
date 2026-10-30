@@ -845,6 +845,7 @@ fn main() -> ! {
 
         // Shared system tick: input processing + main loop pipeline.
         // Same function called by harness — eliminates divergence.
+        rm32_stm32::isr_handlers::resync_input_config(&mut main_state);
         rm32::system::SystemTick::sync_config_writes(shared, &mut main_state);
         system.tick_input(shared, &mut main_state);
         system.sync_isr_to_main(shared, &mut main_state);
@@ -1877,11 +1878,7 @@ fn main() -> ! {
         );
 
         // EEPROM save on DShot command
-        if shared.save_settings_flag() {
-            shared.set_save_settings_flag(false);
-            while let Some((offset, value)) = shared.pop_config_write() {
-                main_state.config.as_bytes_mut()[offset as usize] = value;
-            }
+        if rm32_stm32::isr_handlers::prepare_input_save(&mut main_state) {
             let mut flash = FlashStorage::new();
             flash.write(eeprom_address, main_state.config.as_bytes());
         }

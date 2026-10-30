@@ -294,6 +294,7 @@ struct Harness<P: Port> {
     // Unified system tick (shared with firmware)
     system: SystemTick<P>,
     transfer: rm32::transfer::TransferState,
+    crsf: rm32::crsf::CrsfParser,
     cmd_proc: rm32::dshot_commands::CommandProcessor,
     edt: rm32::edt::EdtScheduler,
     dshot: bool,
@@ -343,6 +344,7 @@ impl<P: Port> Harness<P> {
             input_pin_high: false,
             system: SystemTick::new(),
             transfer: rm32::transfer::TransferState::default(),
+            crsf: rm32::crsf::CrsfParser::new(),
             cmd_proc: rm32::dshot_commands::CommandProcessor::default(),
             edt: rm32::edt::EdtScheduler::default(),
             dshot: false,
@@ -491,6 +493,10 @@ impl<P: Port> Harness<P> {
         }
     }
 
+    fn handle_crsf_byte(&mut self, byte: u8) {
+        self.crsf.dispatch_byte(byte, &self.shared);
+    }
+
     fn edt_next_frame(&mut self, current: i16, voltage: u16, temperature: i16) -> i32 {
         match self.edt.next_frame(current, voltage, temperature) {
             rm32::edt::EdtFrame::Erpm => -1,
@@ -584,7 +590,10 @@ impl<P: Port> Harness<P> {
         }
 
         // --- Shared pipeline via run_tick (same orchestration as firmware) ---
-        self.main.config = self.config;
+
+        if self.shared.config_write_overflowed() {
+            SystemTick::sync_config_snapshot(&self.shared, &mut self.main, &self.config);
+        }
 
         // Borrow ISR-owned fields for the closure
         let commutation = &mut self.commutation;
@@ -780,7 +789,10 @@ impl<P: Port> Harness<P> {
                 self.dshot = v != 0;
                 self.shared.set_dshot(v != 0);
             }
-            "servoPwm" => self.servo_pwm = v != 0,
+            "servoPwm" => {
+                self.servo_pwm = v != 0;
+                self.shared.set_servo_pwm(v != 0);
+            }
             "forward" => {
                 self.shared.set_forward(v != 0);
                 self.commutation.set_forward(v != 0);
@@ -891,10 +903,15 @@ impl<P: Port> Harness<P> {
     }
 
     fn parse_kvs(&mut self, args: &str) {
+        let mut config_injected = false;
         for token in args.split_whitespace() {
             if let Some((k, v)) = token.split_once('=') {
                 self.apply_kv(k, v);
+                config_injected |= k.starts_with("eeprom.");
             }
+        }
+        if config_injected {
+            self.main.config = self.config;
         }
     }
 }
@@ -1025,6 +1042,101 @@ mod tests {
         );
         assert_eq!(harness.run_edt_next_command("deinit=1"), 0xEFF);
         assert_eq!(harness.run_edt_next_command(""), -1);
+    }
+}
+
+#[cfg(test)]
+mod dispatch_regressions {
+    use super::*;
+
+    type Harness = super::Harness<HarnessPlatform<QualifiedRigTuning>>;
+
+    fn armed_input() -> Harness {
+        let mut h = Harness::new();
+        h.shared.set_motor_mode(MotorMode::Armed);
+        h.shared.set_input_set(true);
+        h.shared.set_dshot(true);
+        h.dshot = true;
+        h.frametime_low = 1400;
+        h.frametime_high = 1650;
+        h
+    }
+    fn frame(h: &mut Harness, value: u16) {
+        let payload = value * 2;
+        let crc = (payload & 15) ^ ((payload / 16) & 15) ^ ((payload / 256) & 15);
+        let packet = payload * 16 + crc;
+        for i in 0..16 {
+            h.dma_buffer[2 * i] = i as u32 * 100;
+            h.dma_buffer[2 * i + 1] = i as u32 * 100
+                + if packet & (1 << (15 - i)) == 0 {
+                    25
+                } else {
+                    75
+                };
+        }
+        h.handle_transfer();
+    }
+    fn repeat(h: &mut Harness, value: u16) {
+        for _ in 0..6 {
+            frame(h, value);
+        }
+    }
+
+    #[test]
+    fn command_config_reaches_main_through_publication() {
+        let mut h = armed_input();
+        repeat(&mut h, 8);
+        assert_eq!(h.config.dir_reversed, 1);
+        assert_eq!(h.main.config.dir_reversed, 0);
+        SystemTick::sync_config_writes(&h.shared, &mut h.main);
+        assert_eq!(h.main.config.dir_reversed, 1);
+    }
+
+    #[test]
+    fn edt_commands_reach_the_response_scheduler() {
+        let mut h = armed_input();
+        repeat(&mut h, 13);
+        assert_eq!(h.edt_next_frame(0, 0, 0), 0xe00);
+        repeat(&mut h, 14);
+        assert_eq!(h.edt_next_frame(0, 0, 0), 0xeff);
+    }
+
+    #[test]
+    fn programming_data_is_not_motor_throttle() {
+        let mut h = armed_input();
+        repeat(&mut h, 36);
+        frame(&mut h, 48);
+        frame(&mut h, 201);
+        assert_eq!(h.shared.newinput(), 0);
+        frame(&mut h, 37);
+        SystemTick::sync_config_writes(&h.shared, &mut h.main);
+        assert_eq!(h.main.config.as_bytes()[48], 201);
+    }
+
+    #[test]
+    fn servo_calibration_is_published_before_save() {
+        let mut h = armed_input();
+        h.shared.set_motor_mode(MotorMode::Disarmed);
+        h.shared.set_dshot(false);
+        h.dshot = false;
+        h.shared.set_servo_pwm(true);
+        h.servo_pwm = true;
+        h.config.disable_stick_calibration = 0;
+        h.shared.set_adjusted_input(1900);
+        h.dma_buffer[0] = 0;
+        h.dma_buffer[1] = 1900;
+        for _ in 0..120 {
+            h.handle_transfer();
+        }
+        h.dma_buffer[1] = 1100;
+        for _ in 0..76 {
+            h.handle_transfer();
+        }
+        assert!(h.shared.save_settings_flag());
+        assert_eq!(h.shared.take_servo_calibration(), Some((187, 62)));
+        SystemTick::sync_config_writes(&h.shared, &mut h.main);
+        assert_eq!(h.main.config.servo_low_threshold, 187);
+        assert_eq!(h.main.config.servo_high_threshold, 62);
     }
 }
 
@@ -1163,6 +1275,23 @@ fn command<P: Port>(harness: &mut Harness<P>, line: &str) -> bool {
             shift, dshot_full, padding
         );
         io::stdout().flush().unwrap();
+    } else if let Some(rest) = line.strip_prefix("crsf ") {
+        let bytes: Result<Vec<u8>, _> = rest
+            .split_whitespace()
+            .map(|byte| u8::from_str_radix(byte, 16))
+            .collect();
+        match bytes {
+            Ok(bytes) => {
+                for byte in bytes {
+                    harness.handle_crsf_byte(byte);
+                }
+                harness.print_state();
+            }
+            Err(_) => {
+                println!("error: expected hexadecimal bytes");
+                io::stdout().flush().unwrap();
+            }
+        }
     } else if let Some(rest) = line.strip_prefix("edt_next") {
         let frame = harness.run_edt_next_command(rest);
         println!("edt_frame={}", frame);
