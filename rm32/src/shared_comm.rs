@@ -30,31 +30,20 @@ pub enum IsrAction {
     None = 0,
     /// Reset interval timer to 0 (stall handler, matches C's zcfoundroutine).
     ResetIntervalTimer = 1,
-    /// Fast-rotor desync recovery (divergence from AM32): halve the applied
-    /// duty (floor min_startup/2) instead of crashing to min_startup/2.
-    /// Only on the stay-interrupt branch where the rotor is known to
-    /// still be locked — duty/2 re-slews in ~2 ms instead of a ~15-20 ms
-    /// crawl from the startup floor.
-    DutyKickHalf = 2,
-    /// Desync recovery: drop the applied duty to min_startup/2 so the
-    /// restart ramps from low (AM32 desync handling).
-    DutyKickDown = 3,
     /// BEMF-timeout recovery: re-arm the commutation chain now — the COM
     /// timer may be dead after a timeout; AM32's zcfoundroutine actively
     /// re-commutates.
-    CommutateKick = 4,
+    CommutateKick = 2,
     /// Kill all FETs + mask comparator interrupts (LVC, stuck rotor).
     /// MUST stay the highest value — `request_isr_action` uses fetch_max
     /// for priority, and a kill outranks every recovery action.
-    AllOff = 5,
+    AllOff = 3,
 }
 
 impl IsrAction {
     pub const fn from_u8(value: u8) -> Self {
         match value {
             x if x == Self::ResetIntervalTimer as u8 => Self::ResetIntervalTimer,
-            x if x == Self::DutyKickHalf as u8 => Self::DutyKickHalf,
-            x if x == Self::DutyKickDown as u8 => Self::DutyKickDown,
             x if x == Self::CommutateKick as u8 => Self::CommutateKick,
             x if x == Self::AllOff as u8 => Self::AllOff,
             _ => Self::None,
@@ -240,6 +229,18 @@ pub trait Commands {
     fn isr_action(&self) -> IsrAction;
     fn request_isr_action(&self, action: IsrAction);
     fn clear_isr_action(&self, action: IsrAction);
+
+    /// Request that the next control tick reduce duty after a detected desync.
+    fn request_duty_kick_down(&self);
+    /// Consume a pending desync duty reduction, independently of timer actions.
+    fn take_duty_kick_down(&self) -> bool;
+    /// Fast-rotor desync recovery (kept divergence, `DesyncPolicy::
+    /// HalfKickStayInterrupt`): halve the applied duty, floored at the
+    /// kick-down level, instead of crashing to min_startup/2. Only on the
+    /// stay-interrupt branch, where the rotor is known to still be locked.
+    fn request_duty_kick_half(&self);
+    /// Consume a pending fast-rotor duty halving.
+    fn take_duty_kick_half(&self) -> bool;
 
     fn save_settings_flag(&self) -> bool;
     fn set_save_settings_flag(&self, v: bool);

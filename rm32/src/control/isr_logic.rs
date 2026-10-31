@@ -48,20 +48,13 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
     let action_interval_count = ctx.hal.interval().count();
     match action {
         crate::shared_comm::IsrAction::AllOff => {
+            ctx.shared.take_duty_kick_down();
+            ctx.shared.take_duty_kick_half();
             ctx.hal.bridge().all_off();
             ctx.hal.bemf().mask_irq();
             ctx.shared
                 .clear_isr_action(crate::shared_comm::IsrAction::AllOff);
             return;
-        }
-        crate::shared_comm::IsrAction::DutyKickDown => {
-            // Desync recovery: restart ramps from min_startup/2.
-            ctx.duty.kick_down();
-        }
-        crate::shared_comm::IsrAction::DutyKickHalf => {
-            // Fast-rotor desync recovery: rotor is still locked (stay-
-            // interrupt branch), so only shed half the torque.
-            ctx.duty.kick_half();
         }
         crate::shared_comm::IsrAction::CommutateKick => {
             // BEMF-timeout recovery, AM32 zcfoundroutine semantics: re-arm
@@ -170,6 +163,22 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             if sine_start {
                 ctx.shared.set_stepper_sine(true);
             }
+        }
+    }
+
+    // Apply this after startup handling: a desync can stop the motor to Armed,
+    // and `start_motor` must not overwrite the recovery ramp origin.
+    // Keep it separate from the prioritized timer action so both can run.
+    // Deliberate divergence from AM32 (public #103): AM32 restores
+    // `last_duty_cycle = min_startup_duty` on restart (main.c:1223), which
+    // discards the desync's min_startup/2 kick on the stop path.
+    let kick_down = ctx.shared.take_duty_kick_down();
+    let kick_half = ctx.shared.take_duty_kick_half();
+    if ctx.shared.running() {
+        if kick_down {
+            ctx.duty.kick_down();
+        } else if kick_half {
+            ctx.duty.kick_half();
         }
     }
 

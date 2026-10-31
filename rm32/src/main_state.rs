@@ -51,10 +51,10 @@ pub(crate) fn variable_pwm_mode2<P: Timing>(average_interval: u32, cpu_mhz: u8) 
 
 /// Compute duty ceiling from eRPM and temperature limits.
 /// Returns the more restrictive of the two (or 2000 if neither applies).
-/// Desync-check passes after polling mode (or a stop) before the detector
-/// compares revolutions again: the first two interrupt-mode passes can
-/// still average polled commutations (refactor_log Call 45).
-const CHANGEOVER_SETTLED: u8 = 3;
+/// Desync-check passes after polling mode before the detector compares
+/// revolutions again: the first two interrupt-mode passes can still average
+/// polled commutations (refactor_log Call 45).
+const DESYNC_SETTLED_CHECKS: u8 = 3;
 
 pub(crate) fn duty_ceiling(
     e_com_time: i32,
@@ -153,10 +153,12 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     pub dsy_hist: [[u32; 4]; 4],
     #[cfg(feature = "bench-diag")]
     chk_hist: [[u32; 4]; 4],
-    /// Desync-check passes since polling mode or a stop (saturating; see
-    /// the changeover guard). Starts settled: a rotor that never polled
-    /// is checked exactly as AM32 does.
-    chk_since_polling: u8,
+    /// Interrupt-mode desync checks since polling ended (see the settling
+    /// gate in `tick`).
+    desync_checks_after_polling: u8,
+    /// Polling ran since the last stop; the next interrupt-mode checks only
+    /// re-seed the detector until settled.
+    polling_mode_seen: bool,
     /// Wrong-phase-orbit trips (`OrbitTripConfig`) — lifetime count.
     pub orbit_trips: u32,
     /// Desync-detector re-arm threshold (zero_crosses). Normally the
@@ -243,7 +245,8 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             dsy_hist: [[0; 4]; 4],
             #[cfg(feature = "bench-diag")]
             chk_hist: [[0; 4]; 4],
-            chk_since_polling: CHANGEOVER_SETTLED,
+            desync_checks_after_polling: 0,
+            polling_mode_seen: false,
             orbit_trips: 0,
             desync_rearm_zc: 10,
             orbit_trip_count: 0,
@@ -453,10 +456,16 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             self.protection.bemf_timeout = BEMF_TIMEOUT_STRICT;
         }
 
-        // A stop or a polling stretch restarts the changeover count, so a
-        // start never inherits a settled count from the previous session.
-        if !shared.running() || shared.old_routine() {
-            self.chk_since_polling = 0;
+        // Polling and interrupt commutation have different timing precision.
+        // Let three checks sample interrupt-mode timing after polling before
+        // comparing averages from the two timing paths. A stop forgets the
+        // previous session's polling.
+        if !shared.running() {
+            self.desync_checks_after_polling = 0;
+            self.polling_mode_seen = false;
+        } else if shared.old_routine() {
+            self.desync_checks_after_polling = 0;
+            self.polling_mode_seen = true;
         }
 
         // Desync detection (re-arm gate is dynamic — see desync_rearm_zc)
@@ -486,14 +495,22 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             // stock AM32 8/8 clean on the same bench). Each pass averages
             // the revolution since the previous pass, so the pass after
             // the changeover can still hold polled commutations: compare
-            // only once both revolutions ran in interrupt mode (two
-            // interrupt-mode passes after the last polling one); until
-            // then a pass only re-seeds last_average_interval.
-            if !shared.old_routine() {
-                self.chk_since_polling = self.chk_since_polling.saturating_add(1);
-            }
-            let across_changeover = self.chk_since_polling < CHANGEOVER_SETTLED;
-            if !across_changeover
+            // only once both revolutions ran in interrupt mode; until then
+            // a pass only re-seeds last_average_interval. Detection stays
+            // active while polling, as in AM32.
+            let settled = if shared.old_routine() || !self.polling_mode_seen {
+                true
+            } else {
+                self.desync_checks_after_polling =
+                    self.desync_checks_after_polling.saturating_add(1);
+                if self.desync_checks_after_polling >= DESYNC_SETTLED_CHECKS {
+                    self.polling_mode_seen = false;
+                    true
+                } else {
+                    false
+                }
+            };
+            if settled
                 && diff > (self.timing.average_interval >> 1)
                 && self.timing.average_interval < P::DESYNC_MAX_INTERVAL
             {
@@ -552,9 +569,9 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                     self.dsy_demote_old = self.dsy_demote_old.wrapping_add(1);
                 }
                 if desync_from_interrupt_mode && fast_rotor {
-                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickHalf);
+                    shared.request_duty_kick_half();
                 } else {
-                    shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
+                    shared.request_duty_kick_down();
                 }
                 // Detector holdoff (see desync_rearm_zc).
                 if desync_from_interrupt_mode && fast_rotor {
@@ -669,7 +686,7 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                         self.orbit_trips = self.orbit_trips.wrapping_add(1);
                         self.desync_events = self.desync_events.wrapping_add(1);
                         shared.set_zero_crosses(0);
-                        shared.request_isr_action(crate::shared_comm::IsrAction::DutyKickDown);
+                        shared.request_duty_kick_down();
                         shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
                         if shared.adjusted_input() > 47
                             || shared.commutation_interval() > P::DESYNC_STOP_INTERVAL
@@ -1713,5 +1730,149 @@ mod tests {
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
         assert!(!main.needs_reset);
+    }
+
+    #[test]
+    fn polling_to_interrupt_timing_step_is_not_a_desync() {
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(crate::motor_mode::MotorMode::OldRoutine);
+        shared.set_adjusted_input(0);
+        shared.set_commutation_interval(100);
+        shared.set_e_com_time(1200);
+
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        shared.set_motor_mode(crate::motor_mode::MotorMode::Running);
+        shared.set_zero_crosses(20);
+        main.desync_check = true;
+        main.timing.last_average_interval = 1000;
+        main.timing.average_interval = 400;
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert!(
+            !shared.old_routine(),
+            "mode-change timing must only reseed the detector"
+        );
+    }
+
+    #[test]
+    fn desync_detection_remains_active_while_polling() {
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(crate::motor_mode::MotorMode::OldRoutine);
+        shared.set_adjusted_input(0);
+        shared.set_zero_crosses(20);
+        shared.set_commutation_interval(100);
+        shared.set_e_com_time(1500);
+
+        let mut main = make_test_main_state();
+        main.config.bi_direction = 1;
+        main.desync_check = true;
+        main.timing.last_average_interval = 1000;
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert_eq!(shared.zero_crosses(), 0);
+        assert!(shared.take_duty_kick_down());
+    }
+
+    #[test]
+    fn stable_interrupt_timing_change_triggers_recovery() {
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(crate::motor_mode::MotorMode::OldRoutine);
+        shared.set_adjusted_input(0);
+        // Above DESYNC_STAY_INTERRUPT_CI: the rig tuning's fast-rotor
+        // half-kick branch must not apply; below DESYNC_STOP_INTERVAL.
+        shared.set_commutation_interval(700);
+        shared.set_e_com_time(1200);
+
+        let mut main = make_test_main_state();
+        main.config.bi_direction = 1;
+        main.timing.last_average_interval = 400;
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        shared.set_motor_mode(crate::motor_mode::MotorMode::Running);
+        shared.set_zero_crosses(20);
+        for (check, average) in [1000, 1000, 400].into_iter().enumerate() {
+            shared.set_e_com_time((average * 3) as i32);
+            main.desync_check = true;
+            main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+            if (check as u8) + 1 < DESYNC_SETTLED_CHECKS {
+                assert_eq!(shared.motor_mode(), crate::motor_mode::MotorMode::Running);
+            }
+        }
+
+        assert_eq!(
+            shared.motor_mode(),
+            crate::motor_mode::MotorMode::OldRoutine
+        );
+        assert!(shared.take_duty_kick_down());
+        shared.transition(crate::motor_mode::MotorEvent::BemfLocked);
+        assert_eq!(shared.motor_mode(), crate::motor_mode::MotorMode::Running);
+    }
+
+    #[test]
+    fn stopped_motor_restarts_desync_settling_window() {
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(crate::motor_mode::MotorMode::Armed);
+        let mut main = make_test_main_state();
+        main.desync_checks_after_polling = DESYNC_SETTLED_CHECKS;
+        main.polling_mode_seen = true;
+
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert_eq!(main.desync_checks_after_polling, 0);
+        assert!(!main.polling_mode_seen);
+    }
+
+    fn run_desync_case(
+        zc: u32,
+        previous: u32,
+        average: u32,
+    ) -> (crate::motor_mode::MotorMode, bool) {
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(crate::motor_mode::MotorMode::Running);
+        shared.set_adjusted_input(0);
+        shared.set_zero_crosses(zc);
+        // Above DESYNC_STAY_INTERRUPT_CI: the rig tuning's fast-rotor
+        // half-kick branch must not apply; below DESYNC_STOP_INTERVAL.
+        shared.set_commutation_interval(700);
+        shared.set_e_com_time((average * 3) as i32);
+        let mut main = make_test_main_state();
+        main.config.bi_direction = 1;
+        main.desync_checks_after_polling = DESYNC_SETTLED_CHECKS;
+        main.desync_check = true;
+        main.timing.last_average_interval = previous;
+        main.timing.average_interval = average;
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+        (shared.motor_mode(), shared.take_duty_kick_down())
+    }
+
+    #[test]
+    fn desync_detection_obeys_zero_cross_and_interval_boundaries() {
+        use crate::motor_mode::MotorMode;
+        let platform_max = <crate::platform::TestPlatform as Timing>::DESYNC_MAX_INTERVAL;
+
+        assert_eq!(run_desync_case(10, 1000, 500), (MotorMode::Running, false));
+        assert_eq!(run_desync_case(11, 750, 500), (MotorMode::Running, false));
+        assert_eq!(
+            run_desync_case(11, 0, platform_max),
+            (MotorMode::Running, false)
+        );
+        assert_eq!(run_desync_case(11, 751, 500), (MotorMode::OldRoutine, true));
+    }
+
+    #[test]
+    fn bemf_timeout_requests_commutation_restart_while_running() {
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(crate::motor_mode::MotorMode::Running);
+        shared.set_adjusted_input(100);
+        shared.set_interval_timer_count(
+            <crate::platform::TestPlatform as Timing>::BEMF_STALL_TIMER_THRESHOLD + 1,
+        );
+        let mut main = make_test_main_state();
+
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert_eq!(shared.isr_action(), IsrAction::CommutateKick);
+        assert_eq!(shared.zero_crosses(), 0);
+        assert!(shared.old_routine());
     }
 }

@@ -36,6 +36,8 @@ pub struct TestShared {
     pub telem_counter: Cell<u16>,
     pub prop_brake_active: Cell<bool>,
     pub isr_action: Cell<IsrAction>,
+    pub duty_kick_down: Cell<bool>,
+    pub duty_kick_half: Cell<bool>,
     pub changeover_step: Cell<u8>,
     pub desync_check_pending: Cell<bool>,
     pub stall_protection_adjust: Cell<u16>,
@@ -82,6 +84,8 @@ impl TestShared {
             telem_counter: Cell::new(0),
             prop_brake_active: Cell::new(false),
             isr_action: Cell::new(IsrAction::None),
+            duty_kick_down: Cell::new(false),
+            duty_kick_half: Cell::new(false),
             changeover_step: Cell::new(0),
             desync_check_pending: Cell::new(false),
             stall_protection_adjust: Cell::new(0),
@@ -355,6 +359,18 @@ impl Commands for TestShared {
         if self.isr_action.get() == action {
             self.isr_action.set(IsrAction::None);
         }
+    }
+    fn request_duty_kick_down(&self) {
+        self.duty_kick_down.set(true);
+    }
+    fn take_duty_kick_down(&self) -> bool {
+        self.duty_kick_down.replace(false)
+    }
+    fn request_duty_kick_half(&self) {
+        self.duty_kick_half.set(true);
+    }
+    fn take_duty_kick_half(&self) -> bool {
+        self.duty_kick_half.replace(false)
     }
     fn save_settings_flag(&self) -> bool {
         self.save_settings_flag.get()

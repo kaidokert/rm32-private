@@ -1096,4 +1096,17 @@ mod tests {
             "fast commutation should apply 3x multiplier"
         );
     }
+
+    #[test]
+    fn desync_kick_down_caps_ramp_origin_at_half_startup_duty() {
+        let mut duty = DutyState::default();
+        duty.set_duty_limits(5, 201, 300);
+        duty.set_last(900);
+        duty.kick_down();
+        assert_eq!(duty.last(), 100);
+
+        duty.set_last(50);
+        duty.kick_down();
+        assert_eq!(duty.last(), 50);
+    }
 }

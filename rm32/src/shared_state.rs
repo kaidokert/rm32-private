@@ -79,6 +79,8 @@ pub struct SharedState {
     auto_advance: AtomicU8,           // commutation timing advance level
     prop_brake_active: AtomicBool,    // proportional brake engaged (main sets, ISR reads)
     isr_action: AtomicU8,             // main→ISR action request (IsrAction enum)
+    duty_kick_down: AtomicBool,       // main requests duty reduction after desync
+    duty_kick_half: AtomicBool,       // fast-rotor desync: halve duty (rig tuning)
     changeover_step: AtomicU8,        // sine changeover step (0=none, 1-6=pending)
     desync_check_pending: AtomicBool, // ISR sets on BEMF zero-cross, main reads+clears
     // Control-tick count (one per tick ISR). A clock, not a diagnostic:
@@ -138,6 +140,8 @@ impl SharedState {
             auto_advance: AtomicU8::new(0),
             prop_brake_active: AtomicBool::new(false),
             isr_action: AtomicU8::new(0), // IsrAction::None
+            duty_kick_down: AtomicBool::new(false),
+            duty_kick_half: AtomicBool::new(false),
             changeover_step: AtomicU8::new(0),
             desync_check_pending: AtomicBool::new(false),
             control_ticks: AtomicU32::new(0),
@@ -578,6 +582,18 @@ impl SharedState {
             .compare_exchange(action as u8, 0, REL, ACQ)
             .ok();
     }
+    pub fn request_duty_kick_down(&self) {
+        self.duty_kick_down.store(true, REL);
+    }
+    pub fn take_duty_kick_down(&self) -> bool {
+        self.duty_kick_down.swap(false, Ordering::AcqRel)
+    }
+    pub fn request_duty_kick_half(&self) {
+        self.duty_kick_half.store(true, REL);
+    }
+    pub fn take_duty_kick_half(&self) -> bool {
+        self.duty_kick_half.swap(false, Ordering::AcqRel)
+    }
     pub fn changeover_step(&self) -> u8 {
         self.changeover_step.load(ACQ)
     }
@@ -845,6 +861,18 @@ impl crate::shared_comm::Commands for SharedState {
     fn clear_isr_action(&self, action: crate::shared_comm::IsrAction) {
         SharedState::clear_isr_action(self, action);
     }
+    fn request_duty_kick_down(&self) {
+        SharedState::request_duty_kick_down(self);
+    }
+    fn take_duty_kick_down(&self) -> bool {
+        SharedState::take_duty_kick_down(self)
+    }
+    fn request_duty_kick_half(&self) {
+        SharedState::request_duty_kick_half(self);
+    }
+    fn take_duty_kick_half(&self) -> bool {
+        SharedState::take_duty_kick_half(self)
+    }
     fn save_settings_flag(&self) -> bool {
         SharedState::save_settings_flag(self)
     }
@@ -867,6 +895,17 @@ mod tests {
     use crate::shared_comm::{Commands, IsrAction, MotorStatus};
 
     use super::*;
+
+    #[test]
+    fn duty_kick_down_is_independent_of_prioritized_timer_actions() {
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        Commands::request_duty_kick_down(&shared);
+        Commands::request_isr_action(&shared, IsrAction::CommutateKick);
+
+        assert!(Commands::take_duty_kick_down(&shared));
+        assert!(!Commands::take_duty_kick_down(&shared));
+        assert_eq!(Commands::isr_action(&shared), IsrAction::CommutateKick);
+    }
 
     #[test]
     fn isr_action_handoff_is_clearable() {
