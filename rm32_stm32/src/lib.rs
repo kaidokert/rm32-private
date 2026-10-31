@@ -104,6 +104,7 @@ pub mod sector_hist;
 compile_error!("feature `debuguart` needs a backend: L431 (USART1/PB6) or G071 binz (USART3/PC10)");
 #[cfg(all(feature = "zctrace", not(feature = "stm32l431")))]
 compile_error!("feature `zctrace` is L431-only (COMP level probe uses L431 registers)");
+pub mod delay;
 pub mod dma_buf;
 pub mod emergency;
 pub mod flash;

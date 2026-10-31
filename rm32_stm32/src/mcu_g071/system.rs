@@ -92,7 +92,7 @@ impl System for SystemControl {
     }
 
     fn delay_micros(&mut self, us: u32) {
-        cortex_m::asm::delay(us * 64); // ~64 cycles per µs at 64MHz
+        crate::delay::delay_us(us);
     }
 
     fn delay_millis(&mut self, ms: u32) {

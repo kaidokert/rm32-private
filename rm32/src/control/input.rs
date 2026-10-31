@@ -46,8 +46,9 @@ impl InputState {
 
     pub(crate) fn new<P: crate::platform::Platform>() -> Self {
         Self {
-            // AM32 `commutation_interval > 1500` at 2 MHz: 750 us.
-            reverse_speed_threshold: crate::platform::us_to_ticks::<P>(750) as u16,
+            // AM32's initial 1500 (main.c:388); `SystemTick::tick_input`
+            // replaces it with the kv-derived value (main.c:818) every pass.
+            reverse_speed_threshold: crate::platform::am32_ticks_to::<P>(1500) as u16,
             ..Default::default()
         }
     }

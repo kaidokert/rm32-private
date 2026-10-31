@@ -16,9 +16,10 @@ eeprom.servo_dead_band=100
 running=1
 old_routine=0
 forward=1
-commutation_interval=500
+commutation_interval=250us
 
 @sequence
-# Reverse requested but motor spinning too fast (ci=500 < threshold=1500)
+# Reverse requested but motor spinning too fast: ci=250us (500 ticks at
+# 2 MHz) < AM32 threshold map(motor_kv=2000, 300, 3000, 1000, 500)=685 ticks
 # C behavior: newinput forced to center, adjusted=0, no direction flip
 tick 1  | throttle=500  | forward=1 adjusted_input=0

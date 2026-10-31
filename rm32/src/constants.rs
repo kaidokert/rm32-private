@@ -232,17 +232,11 @@ pub trait Timing: Platform + Sized {
     const RAMP_LOW_RPM_INTERVAL: u32 = us_to_ticks::<Self>(250);
 
     /// BEMF filter level (AM32 `Src/main.c:2631-2636`): slow-start step
-    /// (250 µs; 500 ticks), fast step (25 µs; 50 ticks), and the
-    /// average-interval span mapped onto levels 3..12 (50..250 µs).
+    /// (250 µs; 500 ticks) and fast step (25 µs; 50 ticks). The 3..12 map
+    /// between them uses AM32's 2 MHz ranges directly (`ticks_to_am32`).
     const FILTER_SLOW_INTERVAL: u32 = us_to_ticks::<Self>(250);
     const FILTER_FAST_INTERVAL: u32 = us_to_ticks::<Self>(25);
-    const FILTER_MAP_LO_INTERVAL: u32 = us_to_ticks::<Self>(50);
-    const FILTER_MAP_HI_INTERVAL: u32 = us_to_ticks::<Self>(250);
 
-    /// Variable PWM mode 1 breakpoints: commutation interval 48..100 µs
-    /// (96..200 ticks) maps the carrier period from half to full ARR.
-    const VARIABLE_PWM1_LO: u32 = us_to_ticks::<Self>(48);
-    const VARIABLE_PWM1_HI: u32 = us_to_ticks::<Self>(100);
     /// Variable PWM mode 2 breakpoints on average_interval: 50 and 125 µs
     /// (100 and 250 ticks).
     const VARIABLE_PWM2_LO: u32 = us_to_ticks::<Self>(50);
@@ -287,10 +281,6 @@ mod timing_tests {
         assert_eq!(P::RAMP_LOW_RPM_INTERVAL, 500);
         assert_eq!(P::FILTER_SLOW_INTERVAL, 500);
         assert_eq!(P::FILTER_FAST_INTERVAL, 50);
-        assert_eq!(P::FILTER_MAP_LO_INTERVAL, 100);
-        assert_eq!(P::FILTER_MAP_HI_INTERVAL, 500);
-        assert_eq!(P::VARIABLE_PWM1_LO, 96);
-        assert_eq!(P::VARIABLE_PWM1_HI, 200);
         assert_eq!(P::VARIABLE_PWM2_LO, 100);
         assert_eq!(P::VARIABLE_PWM2_HI, 250);
         assert_eq!(P::LED_BLINK_HALF_PERIOD, 2000);

@@ -82,23 +82,40 @@ pub fn six_intervals_to_us<P: Platform>(sum: u32) -> i32 {
     }
 }
 
-/// Electrical period in microseconds to average step interval in timer counts.
+/// Platform timer ticks to AM32's 2 MHz timer ticks. AM32 states several
+/// `map()` ranges in 2 MHz ticks; `map()` bisects, so its rounding depends on
+/// the endpoints themselves, and the same curve at another clock must convert
+/// the input rather than scale the endpoints. Free at 2 MHz.
 #[inline(always)]
-#[cfg(any(feature = "m0-exact-arithmetic", test))]
-pub fn e_com_us_to_avg_ticks<P: Platform>(e_com_us: i32) -> i32 {
-    if P::TIMER_HZ == 2_000_000 {
-        crate::fast_math::div3_i32(e_com_us)
+pub fn ticks_to_am32<P: Platform>(ticks: u32) -> u32 {
+    const AM32_TIMER_HZ: u32 = 2_000_000;
+    if P::TIMER_HZ == AM32_TIMER_HZ {
+        ticks
+    } else if AM32_TIMER_HZ.is_multiple_of(P::TIMER_HZ) {
+        ticks.saturating_mul(AM32_TIMER_HZ / P::TIMER_HZ)
     } else {
-        (e_com_us as i64 * P::TIMER_HZ as i64 / 6_000_000) as i32
+        (ticks as u64 * AM32_TIMER_HZ as u64 / P::TIMER_HZ as u64).min(u32::MAX as u64) as u32
+    }
+}
+
+/// AM32 2 MHz timer ticks to platform timer ticks (truncating); the inverse
+/// of [`ticks_to_am32`] for thresholds AM32 derives at configuration time.
+#[inline(always)]
+pub fn am32_ticks_to<P: Platform>(am32_ticks: u32) -> u32 {
+    const AM32_TIMER_HZ: u32 = 2_000_000;
+    if P::TIMER_HZ == AM32_TIMER_HZ {
+        am32_ticks
+    } else {
+        (am32_ticks as u64 * P::TIMER_HZ as u64 / AM32_TIMER_HZ as u64).min(u32::MAX as u64) as u32
     }
 }
 
 /// Electrical period in microseconds to average step interval in timer counts.
+/// At a 2 MHz timer this is AM32's `average_interval = e_com_time / 3`.
 #[inline(always)]
-#[cfg(not(any(feature = "m0-exact-arithmetic", test)))]
 pub fn e_com_us_to_avg_ticks<P: Platform>(e_com_us: i32) -> i32 {
     if P::TIMER_HZ == 2_000_000 {
-        e_com_us / 3
+        crate::fast_math::div3_i32(e_com_us)
     } else {
         (e_com_us as i64 * P::TIMER_HZ as i64 / 6_000_000) as i32
     }

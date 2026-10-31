@@ -75,7 +75,7 @@ impl rm32::hal::System for System {
         }
     }
     fn delay_micros(&mut self, us: u32) {
-        cortex_m::asm::delay(us * 48);
+        crate::delay::delay_us(us);
     }
     fn delay_millis(&mut self, ms: u32) {
         for _ in 0..ms {

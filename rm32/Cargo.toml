@@ -18,4 +18,3 @@ default = ["bench-diag"]
 # Excluded from the public projection.
 bench-diag = []
 dronecan = ["dep:dronecan"]
-m0-exact-arithmetic = []
