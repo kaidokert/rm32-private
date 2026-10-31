@@ -77,8 +77,6 @@ impl rm32::hal::System for System {
         crate::delay::delay_us(us);
     }
     fn delay_millis(&mut self, ms: u32) {
-        for _ in 0..ms {
-            self.delay_micros(1000);
-        }
+        crate::delay::delay_ms(ms);
     }
 }

@@ -24,19 +24,19 @@ pub fn systick_free_run() {
     }
 }
 
-/// Wait at least `us` microseconds at the active chip's core clock. Elapsed
-/// cycles accumulate between reads, so any length works as long as the loop
-/// is not preempted for a whole SysTick period (2^24 cycles, >= 98 ms).
+/// Wait at least `us` microseconds at the active chip's core clock
+/// ([`rm32::functions::delay_micros_on`], tested against AM32 on host).
+/// The loop must not be preempted for a whole SysTick period (2^24 cycles,
+/// >= 98 ms).
 pub fn delay_us(us: u32) {
     use crate::mcu::{Chip, ChipConfig};
     systick_free_run();
     // SAFETY: read-only access to the free-running SysTick counter.
     let st = unsafe { &*cortex_m::peripheral::SYST::PTR };
-    let mut remaining = us.saturating_mul(Chip::CPU_FREQUENCY_MHZ);
-    let mut prev = st.cvr.read();
-    while remaining > 0 {
-        let now = st.cvr.read();
-        remaining = remaining.saturating_sub(prev.wrapping_sub(now) & SYST_MASK);
-        prev = now;
-    }
+    rm32::functions::delay_micros_on(us, Chip::CPU_FREQUENCY_MHZ, SYST_MASK, || st.cvr.read());
+}
+
+/// AM32 `delayMillis` on [`delay_us`].
+pub fn delay_ms(ms: u32) {
+    rm32::functions::delay_millis_on(ms, delay_us);
 }

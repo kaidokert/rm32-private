@@ -67,6 +67,37 @@ pub fn get_crc8(buf: &[u8]) -> u8 {
     crc
 }
 
+/// AM32 `delayMicros` (`Src/functions.c`) on any free-running down-counter:
+/// return at the first read at which `us` microseconds have elapsed since
+/// the first read. `read_down` returns the counter (`mask + 1` states,
+/// `counts_per_us` counts per microsecond). Elapsed counts accumulate across
+/// reads, so the counter may wrap any number of times as long as consecutive
+/// reads are less than one counter period apart.
+///
+/// TODO(AM32 flaw, public #105): AM32 compares `(uint16_t)micros`, so a
+/// request of 65536 us or more waits `micros % 65536`. This waits the full
+/// time; every AM32 and rm32 caller passes less than 65536.
+pub fn delay_micros_on(us: u32, counts_per_us: u32, mask: u32, mut read_down: impl FnMut() -> u32) {
+    let mut remaining = us.saturating_mul(counts_per_us);
+    let mut prev = read_down();
+    // As AM32's `while`, the exit test always follows at least one more read.
+    loop {
+        let now = read_down();
+        remaining = remaining.saturating_sub(prev.wrapping_sub(now) & mask);
+        prev = now;
+        if remaining == 0 {
+            return;
+        }
+    }
+}
+
+/// AM32 `delayMillis`: `millis` calls of a 1000 us delay.
+pub fn delay_millis_on(ms: u32, mut delay_micros: impl FnMut(u32)) {
+    for _ in 0..ms {
+        delay_micros(1000);
+    }
+}
+
 /// Literal transcriptions of AM32 `Src/functions.c`, kept as test oracles.
 /// They are deliberately *not* tidied: recursion, `long` (i32 on ARM, widened
 /// here so the oracle cannot overflow) and statement order follow the C.
@@ -119,6 +150,20 @@ pub(crate) mod am32_c {
             };
         }
         crc_u
+    }
+
+    /// `void delayMicros(uint32_t micros)`, with `get_timer_us16` supplied.
+    pub(crate) fn delay_micros(micros: u32, mut get_timer_us16: impl FnMut() -> u16) {
+        let cval_start = get_timer_us16();
+        while (get_timer_us16().wrapping_sub(cval_start)) < (micros as u16) {}
+    }
+
+    /// `void delayMillis(uint32_t millis)`
+    pub(crate) fn delay_millis(mut millis: u32, mut delay_micros: impl FnMut(u32)) {
+        while millis > 0 {
+            millis -= 1;
+            delay_micros(1000);
+        }
     }
 
     /// `uint8_t get_crc8(uint8_t* Buf, uint8_t BufLen)`
@@ -341,5 +386,55 @@ mod tests {
             assert_eq!(get_crc8(&buf[..len as usize]), am32_c::get_crc8(&buf, len));
         }
         assert_eq!(get_crc8(&[]), 0);
+    }
+
+    /// A shared clock read by both delays: each read advances it by a
+    /// pseudo-random 0..=4 us, starting at `start_us`.
+    fn exit_time(start_us: u32, seed: u32, wait: impl FnOnce(&mut dyn FnMut() -> u32)) -> u32 {
+        let mut t = start_us;
+        let mut s = seed | 1;
+        let mut read = || {
+            let now = t;
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            t = t.wrapping_add(s % 5);
+            now
+        };
+        wait(&mut read);
+        t
+    }
+
+    #[test]
+    fn delay_micros_matches_am32_on_a_shared_clock() {
+        const MHZ: u32 = 64;
+        const SYST_MASK: u32 = 0x00FF_FFFF;
+        let mut cases = 0u32;
+        for us in (0..=3_000).chain((3_000..65_536).step_by(97)) {
+            for (start, seed) in [(0, 1), (65_530, 7), (0x0003_FFF0, 99), (u32::MAX - 3, 5)] {
+                let am32 = exit_time(start, seed, |read| {
+                    am32_c::delay_micros(us, || read() as u16)
+                });
+                // SysTick: down-counter at MHZ counts per us, 24 bits.
+                let rm32 = exit_time(start, seed, |read| {
+                    delay_micros_on(us, MHZ, SYST_MASK, || {
+                        0u32.wrapping_sub(read().wrapping_mul(MHZ)) & SYST_MASK
+                    })
+                });
+                assert_eq!(rm32, am32, "us={us}, start={start}");
+                cases += 1;
+            }
+        }
+        assert!(cases > 10_000);
+    }
+
+    #[test]
+    fn delay_millis_matches_am32() {
+        for ms in 0..=300 {
+            let (mut am32, mut rm32) = (0u32, 0u32);
+            am32_c::delay_millis(ms, |us| am32 += us);
+            delay_millis_on(ms, |us| rm32 += us);
+            assert_eq!(rm32, am32, "ms={ms}");
+        }
     }
 }

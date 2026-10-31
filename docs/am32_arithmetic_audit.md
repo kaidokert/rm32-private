@@ -19,7 +19,7 @@ Tests here compare against the C, never against rm32.
 | `getAbsDif()` | `functions::get_abs_dif` | identical where C is defined (no `int` overflow) | `functions::tests::get_abs_dif_matches_am32` |
 | `update_crc8()` | `functions::update_crc8` | identical, all 65,536 inputs | `functions::tests::update_crc8_matches_am32_exhaustively` |
 | `get_crc8()` | `functions::get_crc8` | identical for every length 0..=255 | `functions::tests::get_crc8_matches_am32` |
-| `delayMicros()` / `delayMillis()` | port `System::delay_micros` / `delay_millis` -> `rm32_stm32::delay::delay_us` | waits at least `us`, timed on the core-clock SysTick | hardware only (no host test). Fixed in this change: F051/G071/G431 used `asm::delay(us * MHz)`, which waits 3-4x too long; that stretched sine-start steps and tones |
+| `delayMicros()` / `delayMillis()` | `functions::delay_micros_on` / `delay_millis_on`, run by every port on the core-clock SysTick (`rm32_stm32::delay`) | identical exit read on a shared clock for every request below 65,536 us; `TODO(AM32 flaw, public #105)`: AM32 truncates longer requests to `micros % 65536`, rm32 waits the full time (no caller asks for that much) | `functions::tests::delay_micros_matches_am32_on_a_shared_clock`, `delay_millis_matches_am32`. Fixed in this change: F051/G071/G431 used `asm::delay(us * MHz)`, 3-4x long, which stretched sine-start steps and tones |
 | `get_timer_us16()`, `gpio_mode_*` | none | MCU-specific (AT32/GD32/WCH) | n/a |
 
 AM32's `map()` has an unreachable branch: the `in_min > in_max` swap can
