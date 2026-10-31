@@ -1,13 +1,17 @@
-//! Exact constant-divisor arithmetic for Cortex-M0 motor-control paths.
+//! Exact constant-divisor arithmetic for motor-control paths.
 //!
-//! Thumb-v6M has no integer divide instruction. LLVM can therefore turn even
-//! literal divisions into variable-latency `__aeabi_*div` calls.  These
-//! helpers keep the bounded control-path cases in 32-bit multiply/shift/subtract
-//! instructions. Their emitted use is enforced by the firmware link audit.
+//! Cortex-M0 targets do not have integer divide instructions. These bounded
+//! helpers preserve Rust's truncating integer-division results while replacing
+//! divide operations in the control and PWM paths with shifts, multiplies, and
+//! bounded corrections.
 
-/// Exact truncating signed division by three, without a divide helper.
+const PWM_NUMERATOR_MAX: u32 = crate::constants::DUTY_SCALE_MAX as u32 * u16::MAX as u32;
+const DIV5_INPUT_MAX: u32 = u8::MAX as u32 * u16::MAX as u32;
+
+/// Exact signed division by three, truncating toward zero over the full `i32`
+/// domain.
 #[inline(always)]
-pub const fn div3_i32(n: i32) -> i32 {
+pub(crate) const fn div3_i32(n: i32) -> i32 {
     if n < 0 {
         -(div3_u32(n.unsigned_abs()) as i32)
     } else {
@@ -15,9 +19,9 @@ pub const fn div3_i32(n: i32) -> i32 {
     }
 }
 
-/// Exact unsigned division by three (Hacker's Delight shift/add form).
-#[inline(always)]
-pub const fn div3_u32(n: u32) -> u32 {
+/// Exact unsigned division by three over the full `u32` domain.
+#[inline(never)]
+const fn div3_u32(n: u32) -> u32 {
     let mut q = (n >> 2) + (n >> 4);
     q += q >> 4;
     q += q >> 8;
@@ -26,19 +30,17 @@ pub const fn div3_u32(n: u32) -> u32 {
     q + ((11 * r) >> 5)
 }
 
-/// Exact unsigned division by five (shift/add estimate, then a bounded
-/// remainder correction; no divide helper on M0).
-#[inline(always)]
-pub const fn div5_u32(n: u32) -> u32 {
-    // q ~= n * 0.2 from below: 0.75 * (1 + 2^-4)(1 + 2^-8)(1 + 2^-16) / 4.
+/// Exact unsigned division by five for values formed from a `u8` setting and a
+/// `u16` timer value.
+#[inline(never)]
+const fn div5_u8_timer_product(n: u32) -> u32 {
+    debug_assert!(n <= DIV5_INPUT_MAX);
     let mut q = (n >> 1) + (n >> 2);
     q += q >> 4;
     q += q >> 8;
     q += q >> 16;
     q >>= 2;
     let mut r = n - q * 5;
-    // The estimate is low by at most 2 (5.1 M samples incl. the top of the
-    // range); three straight-line corrections, no loop on the ISR path.
     if r >= 5 {
         q += 1;
         r -= 5;
@@ -55,20 +57,22 @@ pub const fn div5_u32(n: u32) -> u32 {
     q
 }
 
-/// Exact `n / 2000` for any `u32`.
-///
-/// Fast path for products up to 16,000,000 (duty 2000 x ARR 8000; the
-/// default ARRs are 1999 / 2665 / 3332 / 7082): since 2000 = 16 * 125,
-/// discard the low four bits, then a ceil reciprocal with two bounded
-/// corrections keeps the multiply inside `u32` on M0. Larger products occur
-/// only with a low configured `pwm_frequency` (e.g. an 80 MHz timer at 8-10 kHz gives
-/// ARR 8028-10021): they divide the reduced value by 5 three times (floor
-/// division composes exactly), still without a divide helper. It used to
-/// `assert!`, i.e. panic in the control ISR.
-#[inline(always)]
-pub const fn div2000_pwm(n: u32) -> u32 {
+/// Exact unsigned division by ten for a product of a `u8` setting and a `u16`
+/// timer value. `floor(floor(n / 5) / 2) == floor(n / 10)`.
+#[inline(never)]
+pub(crate) const fn div10_u8_timer_product(n: u32) -> u32 {
+    div5_u8_timer_product(n) >> 1
+}
+
+/// Exact truncating division by [`crate::constants::DUTY_SCALE_MAX`] for
+/// products formed from a duty value in `0..=DUTY_SCALE_MAX` and a `u16` timer
+/// auto-reload value. Supports the full timer range, including high configured
+/// PWM periods.
+#[inline(never)]
+pub(crate) const fn div2000_pwm(n: u32) -> u32 {
+    debug_assert!(n <= PWM_NUMERATOR_MAX);
     if n > 16_000_000 {
-        return div5_u32(div5_u32(div5_u32(n >> 4)));
+        return div5_u8_timer_product(div5_u8_timer_product(div5_u8_timer_product(n >> 4)));
     }
     let reduced = n >> 4;
     let mut q = (reduced * 4195) >> 19;
@@ -81,27 +85,23 @@ pub const fn div2000_pwm(n: u32) -> u32 {
     q
 }
 
-/// Exact division by 1400 for the voltage-ramp numerator (0..=12,600).
-/// At most nine subtracts execute, and only on a ramp-update tick.
-#[inline(always)]
-pub const fn div1400_ramp(n: u32) -> u32 {
-    assert!(n <= 12_600);
-    let mut q = 0;
-    let mut r = n;
-    while r >= 1400 {
-        r -= 1400;
-        q += 1;
+/// Exact division by 1400 for the voltage-ramp numerator, whose maximum is
+/// `(RAMP_VOLTAGE_HIGH_CV - RAMP_VOLTAGE_LOW_CV) * 9`.
+#[inline(never)]
+pub(crate) const fn div1400_ramp(n: u32) -> u32 {
+    debug_assert!(n <= 12_600);
+    let mut q = (n * 11_984) >> 24;
+    if q * 1_400 > n {
+        q -= 1;
     }
     q
 }
 
-/// Exact `n / 1910` for the sine-start duty map (AM32
-/// `map(input, 137, 2047, minimum + 40, 2000)`): input span 1910 times a
-/// duty span of at most 2000.
-#[inline(always)]
-pub const fn div1910_sine(n: u32) -> u32 {
-    assert!(n <= 1910 * 2000);
-    // ceil(2^21 / 1910) = 1098; the estimate is high by at most one.
+/// Exact division by 1910 for the sine-start duty map. The input span is at
+/// most 1910 and the duty span is at most `DUTY_SCALE_MAX`.
+#[inline(never)]
+pub(crate) const fn div1910_sine(n: u32) -> u32 {
+    debug_assert!(n <= 1910 * crate::constants::DUTY_SCALE_MAX as u32);
     let mut q = (n * 1098) >> 21;
     if q * 1910 > n {
         q -= 1;
@@ -114,74 +114,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn div3_is_exact_across_motor_domain_and_signed_edges() {
-        for n in 0..=3 * u16::MAX as u32 {
-            assert_eq!(div3_u32(n), n / 3, "n={n}");
+    fn div3_matches_signed_division_over_motor_range_and_i32_edges() {
+        for n in -1_000_000..=1_000_000 {
+            assert_eq!(div3_i32(n), n / 3, "n={n}");
         }
-        for n in [u32::MAX, u32::MAX - 1, 0x8000_0000, 1_000_000_000] {
-            assert_eq!(div3_u32(n), n / 3, "n={n}");
-        }
-        for n in [i32::MIN, -196_605, -1, 0, 1, 196_605, i32::MAX] {
+        for n in [
+            i32::MIN,
+            i32::MIN + 1,
+            -4,
+            -3,
+            -2,
+            -1,
+            0,
+            1,
+            2,
+            3,
+            4,
+            i32::MAX,
+        ] {
             assert_eq!(div3_i32(n), n / 3, "n={n}");
         }
     }
 
     #[test]
-    fn div2000_is_exact_across_declared_domain() {
-        for n in 0..=16_000_000 {
-            assert_eq!(div2000_pwm(n), n / 2000, "n={n}");
+    fn div3_u32_matches_division_over_its_full_domain() {
+        for wide in 0..=u32::MAX as u64 {
+            let n = wide as u32;
+            assert_eq!(div3_u32(n), n / 3, "n={n}");
         }
     }
 
     #[test]
-    fn div2000_pwm_is_exact_and_total_above_the_fast_range() {
-        // Low pwm_frequency on 80/170 MHz timers (ARR 10021+) at full duty and
-        // with a strength-9 drag brake: these used to panic in the ISR.
-        for arr in [8028u32, 8885, 10021, 14164] {
-            for duty in [1600u32, 1800, 2000] {
-                let n = duty * arr;
-                assert_eq!(div2000_pwm(n), n / 2000, "duty={duty} arr={arr}");
-            }
-        }
-        for n in [16_000_000u32, 16_000_001, 20_042_000, u32::MAX] {
-            assert_eq!(div2000_pwm(n), n / 2000, "n={n}");
-        }
-        // Dense sweep of the fallback range plus a deterministic LCG sample.
-        let mut n: u32 = 16_000_001;
-        while n < u32::MAX - 997 {
-            assert_eq!(div2000_pwm(n), n / 2000, "n={n}");
-            n += 997;
-        }
-        let mut x: u32 = 0x1234_5678;
-        for _ in 0..2_000_000 {
-            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            assert_eq!(div2000_pwm(x), x / 2000, "x={x}");
+    fn div5_matches_division_over_its_full_setting_timer_domain() {
+        for n in 0..=DIV5_INPUT_MAX {
+            assert_eq!(div5_u8_timer_product(n), n / 5, "n={n}");
+            assert_eq!(div10_u8_timer_product(n), n / 10, "n={n}");
         }
     }
 
     #[test]
-    fn div5_is_exact_on_edges_and_samples() {
-        for n in (0u32..200_000).chain([u32::MAX, u32::MAX - 1, u32::MAX - 4, 1 << 31]) {
-            assert_eq!(div5_u32(n), n / 5, "n={n}");
-        }
-        let mut x: u32 = 0xdead_beef;
-        for _ in 0..2_000_000 {
-            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            assert_eq!(div5_u32(x), x / 5, "x={x}");
-        }
-    }
-
-    #[test]
-    fn div1910_is_exact_across_declared_domain() {
-        for n in 0..=1910 * 2000 {
-            assert_eq!(div1910_sine(n), n / 1910, "n={n}");
+    fn div2000_matches_division_over_full_duty_and_u16_timer_domain() {
+        for n in 0..=PWM_NUMERATOR_MAX {
+            assert_eq!(
+                div2000_pwm(n),
+                n / crate::constants::DUTY_SCALE_MAX as u32,
+                "n={n}"
+            );
         }
     }
 
     #[test]
-    fn div1400_is_exact_across_declared_domain() {
+    fn div1400_matches_division_over_the_full_ramp_domain() {
         for n in 0..=12_600 {
             assert_eq!(div1400_ramp(n), n / 1400, "n={n}");
+        }
+    }
+
+    #[test]
+    fn div1910_matches_division_over_the_full_sine_map_domain() {
+        for n in 0..=1910 * crate::constants::DUTY_SCALE_MAX as u32 {
+            assert_eq!(div1910_sine(n), n / 1910, "n={n}");
         }
     }
 }

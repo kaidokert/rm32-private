@@ -82,16 +82,23 @@ pub fn six_intervals_to_us<P: Platform>(sum: u32) -> i32 {
     }
 }
 
-/// Electrical period in microseconds to the average single-step interval in
-/// timer ticks (one sixth of the period). At a 2 MHz timer this is AM32's
-/// `e_com_time / 3`, computed divide-free ([`crate::fast_math::div3_i32`],
-/// exact for every `i32`). A port with another clock on a core without
-/// hardware divide must supply a divide-free form (its link audit catches
-/// the 64-bit division).
+/// Electrical period in microseconds to average step interval in timer counts.
 #[inline(always)]
+#[cfg(any(feature = "m0-exact-arithmetic", test))]
 pub fn e_com_us_to_avg_ticks<P: Platform>(e_com_us: i32) -> i32 {
     if P::TIMER_HZ == 2_000_000 {
         crate::fast_math::div3_i32(e_com_us)
+    } else {
+        (e_com_us as i64 * P::TIMER_HZ as i64 / 6_000_000) as i32
+    }
+}
+
+/// Electrical period in microseconds to average step interval in timer counts.
+#[inline(always)]
+#[cfg(not(any(feature = "m0-exact-arithmetic", test)))]
+pub fn e_com_us_to_avg_ticks<P: Platform>(e_com_us: i32) -> i32 {
+    if P::TIMER_HZ == 2_000_000 {
+        e_com_us / 3
     } else {
         (e_com_us as i64 * P::TIMER_HZ as i64 / 6_000_000) as i32
     }

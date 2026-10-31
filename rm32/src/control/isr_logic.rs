@@ -153,10 +153,17 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                     2,
                     crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
                 );
+                #[cfg(any(feature = "m0-exact-arithmetic", test))]
                 let brake_duty = crate::fast_math::div2000_pwm(
                     ctx.config.active_brake_power as u32 * tim1_arr as u32,
                 ) * 10;
-                ctx.hal.bridge().set_duty_all(brake_duty as u16);
+                #[cfg(not(any(feature = "m0-exact-arithmetic", test)))]
+                let brake_duty = (ctx.config.active_brake_power as u32 * tim1_arr as u32
+                    / crate::constants::DUTY_SCALE_MAX as u32)
+                    * 10;
+                ctx.hal
+                    .bridge()
+                    .set_duty_all(brake_duty.min(tim1_arr as u32) as u16);
             }
             // AM32: below the six-step threshold the sine stepper takes
             // over (phase positions are seeded by the main-loop stepper).
