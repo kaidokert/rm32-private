@@ -1012,4 +1012,21 @@ mod tests {
         assert!(shared.telem_counter_check_and_inc(5));
         assert!(!shared.telem_counter_check_and_inc(5));
     }
+
+    #[test]
+    fn gate_avg_roundtrips_via_core_atomic() {
+        use crate::shared_comm::MotorStatus;
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        let _: &core::sync::atomic::AtomicU32 = &shared.gate_avg;
+        assert_eq!(shared.gate_avg(), 0);
+        assert_eq!(MotorStatus::gate_avg(&shared), 0);
+
+        shared.set_gate_avg(1234);
+        assert_eq!(shared.gate_avg(), 1234);
+        assert_eq!(MotorStatus::gate_avg(&shared), 1234);
+
+        MotorStatus::set_gate_avg(&shared, 5678);
+        assert_eq!(shared.gate_avg(), 5678);
+        assert_eq!(MotorStatus::gate_avg(&shared), 5678);
+    }
 }

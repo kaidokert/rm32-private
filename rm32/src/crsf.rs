@@ -379,7 +379,7 @@ mod tests {
         }
     }
 
-    /// S7.4: a channels frame sets throttle, feeds the timeout, marks input.
+    /// A channels frame sets throttle, feeds the timeout, and marks input.
     #[test]
     fn dispatch_byte_sets_throttle() {
         let shared = crate::shared_state::SharedState::new::<crate::platform::TestPlatform>();

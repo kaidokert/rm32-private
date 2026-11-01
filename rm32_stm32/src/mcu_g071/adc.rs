@@ -137,10 +137,9 @@ impl AdcPeripheral for G071AdcOps {
     }
 
     /// ADC voltage regulator: must be on (and settled, tADCVREG_STUP
-    /// <= 20 µs) before calibration (RM0444 15.3.2; AM32
-    /// LL_ADC_EnableInternalRegulator). Previously never enabled, and the
-    /// CR *writes* below cleared it — ADCAL then never completed, init
-    /// returned Err (ignored), and every reading stayed 0.
+    /// <= 20 µs) before calibration (RM0444 §15.3.2; AM32
+    /// `LL_ADC_EnableInternalRegulator`). Every subsequent CR write preserves
+    /// `ADVREGEN` so calibration and conversions do not power down the ADC.
     fn power_up(&self) {
         let adc = unsafe { &*ADC::ptr() };
         adc.cr().write(|w| unsafe { w.bits(ADVREGEN) });
@@ -168,7 +167,11 @@ impl AdcPeripheral for G071AdcOps {
             100_000,
             "ADC ready",
         )?;
-        program_sequence()
+        if let Err(e) = program_sequence() {
+            adc.cr().write(|w| unsafe { w.bits(ADVREGEN | (1 << 1)) }); // ADDIS
+            return Err(e);
+        }
+        Ok(())
     }
 
     fn start_conversion(&self) {
