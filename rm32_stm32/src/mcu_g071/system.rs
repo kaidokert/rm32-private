@@ -69,10 +69,9 @@ impl System for SystemControl {
     fn start_watchdog(&mut self, prescaler: u8, reload: u16) {
         let iwdg = unsafe { &*stm32g0xx_hal::stm32::IWDG::PTR };
         // Start FIRST (KR=0xCCCC also starts LSI): with the IWDG stopped,
-        // SR.PVU/RVU never clear after the PR/RLR writes, and the old
-        // unlock-configure-wait-start order hung boot here forever (binz
-        // bring-up; the L431 port had the same defect). Bounded wait — a
-        // wedged IWDG must not hang the firmware either.
+        // SR.PVU/RVU never clear after the PR/RLR writes, so unlocking and
+        // polling SR before starting the watchdog hangs boot indefinitely.
+        // Bounded wait ensures a wedged IWDG cannot hang firmware init.
         unsafe {
             iwdg.kr().write(|w| w.bits(0xCCCC)); // start (and LSI)
             iwdg.kr().write(|w| w.bits(0x5555)); // unlock PR/RLR

@@ -53,6 +53,12 @@ pub fn adjust_irq_priorities(interval: u32, dshot_telem: bool) {
     const DSHOT_PRIORITY_THRESHOLD: u32 = 60;
     // SAFETY: NVIC is a core peripheral with a fixed address. We are the only
     // code adjusting these priorities; the main loop calls this outside of ISR context.
+    //
+    // STM32L4 implements 4 priority bits in the upper nibble of each IPR byte.
+    // `cortex_m::peripheral::NVIC::set_priority` writes the raw byte, so priority
+    // level N must be passed as `N << 4` (writing unshifted `1` lands in the
+    // unimplemented low nibble and reads back as `0`, making all three IRQs equal
+    // priority).
     let nvic =
         unsafe { &mut *(cortex_m::peripheral::NVIC::PTR as *mut cortex_m::peripheral::NVIC) };
     if dshot_telem && interval > DSHOT_PRIORITY_THRESHOLD {

@@ -51,11 +51,11 @@ impl Tim1Pwm {
         let tim = unsafe { &*TIM1::ptr() };
         tim.bdtr()
             .modify(|_, w| unsafe { w.dtg().bits(dead_time).moe().set_bit() });
-        // Output-compare setup the HAL's `bind_pin` never does (found by the
-        // binz register diff: CCMR1/2 = 0 = FROZEN, CCER = 0x444 = only the
-        // complementary enables — the high sides could never switch).
-        // AM32 G071 MX_TIM1_Init: PWM mode 1 + OCxPE on CH1..CH4, ARPE,
-        // CCxE + CCxNE on CH1..CH3 (CH4 configured, output off).
+        // Complete TIM1 output-compare setup not performed by `stm32g0xx-hal`'s
+        // `bind_pin` (which leaves CCMR1/CCMR2 at 0 = Frozen and only sets
+        // complementary CCxNE bits in CCER, preventing the high-side channels
+        // from switching). Matches AM32 G071 MX_TIM1_Init: PWM mode 1 + OCxPE
+        // on CH1..CH4, ARPE enabled, and CCxE + CCxNE on CH1..CH3.
         tim.ccmr1_output().write(|w| unsafe { w.bits(0x6868) });
         tim.ccmr2_output().write(|w| unsafe { w.bits(0x6868) });
         tim.ccer().write(|w| unsafe { w.bits(0x0555) });

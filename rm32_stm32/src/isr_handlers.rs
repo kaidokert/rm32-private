@@ -730,6 +730,11 @@ pub fn handle_exti_frame() -> rm32::transfer::CaptureConfig {
         },
         |prescaler| input.set_output_prescaler(prescaler),
     );
+    // Re-arm after each bidir telemetry reply at the prescaler detection
+    // chose (AM32 re-arms with its live `ic_timer_prescaler`).
+    if let Some(psc) = actions.next_capture.prescaler {
+        state.hal.input.set_capture_prescaler(psc);
+    }
     if actions.bidir_detected {
         DIAG.bidir_detected();
         // BENCH: auto-start EDT at bidir commit. Production activation is

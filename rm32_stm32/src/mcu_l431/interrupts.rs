@@ -81,16 +81,13 @@ fn DMA1_CH5() {
     let cyc_start = DIAG.stamp();
     let dma = unsafe { &*pac::DMA1::PTR };
     let dma_isr = dma.isr.read().bits();
-    // Acknowledge ALL CH5 flags up front (CGIF5 = bit 16 in IFCR clears
-    // TCIF5/HTIF5/TEIF5/GIF5 in one shot). Without this, if a transfer
-    // error (TEIF, bit 19) fires alone without TC, the ISR would return
-    // without clearing anything → NVIC re-fires forever (same class of
-    // bug as the COMP ISR pre-fix). TEIE is enabled in our CCR5=0x098B,
-    // so this path is reachable in principle.
+    // Clear all CH5 flags unconditionally (CGIF5 = bit 16 clears GIF5/TCIF5/HTIF5/TEIF5).
+    // If TEIF5 ever fires without TCIF5, failing to clear CGIF5 here would re-enter
+    // DMA1_CH5 indefinitely.
     unsafe {
         dma.ifcr.write(|w| w.bits(1 << 16));
     }
-    // Channel 5 TC flag = bit 17 — only process actual transfer complete
+    // Channel 5 TC flag = bit 17
     if dma_isr & (1 << 17) != 0 {
         // Disable DMA CH5
         unsafe {

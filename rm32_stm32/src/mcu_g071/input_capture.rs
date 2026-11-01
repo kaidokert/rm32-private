@@ -79,6 +79,9 @@ impl TimerOps for G071Timer {
         tim.egr().write(|w| w.ug().set_bit());
         tim.cnt().write(|w| unsafe { w.bits(0) });
     }
+    fn set_capture_prescaler(&mut self, prescaler: u8) {
+        self.prescaler = prescaler;
+    }
     fn configure_output(&self, prescaler: u16) {
         let tim = unsafe { &*TIM3::ptr() };
         tim.ccmr1_output().write(|w| unsafe { w.bits(0x60) });
@@ -138,11 +141,8 @@ pub fn init_g071() {
         .modify(|r, w| unsafe { w.bits(r.bits() | (1 << 1)) });
 
     gpiob.moder().modify(|_, w| w.moder4().alternate());
-    gpiob.afrl().modify(|_, w| w.afr(4).af1());
-    // Pull-up: AM32 main.c `setInputPullUp()` at boot (every G071 target
-    // but NEUTRONRC). Holds the line high while the FC releases it for the
-    // bidir telemetry slot; floating, it fails most frames and never arms.
     gpiob.pupdr().modify(|_, w| w.pupdr4().pull_up());
+    gpiob.afrl().modify(|_, w| w.afr(4).af1());
 
     dmamux
         .ccr(0)
@@ -156,5 +156,7 @@ pub fn init_g071() {
 /// (64 / 6) here broke decode after the first reply: no throttle, signal
 /// timeout reset loop.
 pub fn new_capture() -> DshotCapture {
-    GenericCapture::new(G071Dma, G071Timer { prescaler: 1 }, G071Pin)
+    // Start at the ~6 MHz detection prescaler (`64 / 6`, matching `CaptureConfig::dshot_detection`);
+    // `handle_exti_frame` updates `self.prescaler` once protocol detection selects the active rate.
+    GenericCapture::new(G071Dma, G071Timer { prescaler: 64 / 6 }, G071Pin)
 }

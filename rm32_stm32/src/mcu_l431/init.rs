@@ -14,25 +14,22 @@ pub fn init(
     let dp = pac::Peripherals::take().unwrap();
     let _cp = cortex_m::Peripherals::take().unwrap();
 
-    // Clock tree: AM32-matched. 80 MHz SYSCLK = HSI16 / 2 * 20 / 2 (M=2/N=20/R=2).
-    // The stm32l4xx-hal `cfgr.sysclk(80MHz).freeze()` picks M=1/N=10/R=2 instead
-    // — same final frequency but different VCO and PLL jitter spectrum, plus a
-    // different RCC.PLLCFGR readback. We need byte-for-byte parity with AM32,
-    // so do the register writes directly.
-    //
-    // Order is load-bearing: FLASH wait states MUST be raised to 4 before
-    // SYSCLK exceeds 16 MHz, or the CPU may fetch garbage instructions.
-    //
-    // PRFTEN: deliberately ON — a documented divergence from AM32 (which
-    // runs prefetch off). The minz saga (board_init.rs, commit 8d32e66):
-    // PRFTEN off + 4WS makes hot-ISR fetch timing depend on code
-    // alignment, so ANY rebuild moves marginal timing (engage went
-    // 3-4/8 -> 8/8 from this one bit, same binary otherwise). The clone —
-    // our behavioral parity reference — runs prefetch on. It is also the
-    // prime suspect for rm32's polarity-correlated ZC accept excursions
-    // (the rising/falling persistence branches sit at different flash
-    // alignments; without prefetch the two polarities sample at different
-    // effective cadence).
+    // Clock tree: AM32-matched 80 MHz SYSCLK = HSI16 / 2 * 20 / 2 (M=2, N=20, R=2).
+    // Ensure PWR regulator is in Range 1 (VOS = 0b01, required for up to 80 MHz per
+    // RM0394 §5.1.8) and configure 4 Flash wait states, prefetch, and instruction/data
+    // caches before raising SYSCLK above 16 MHz.
+    dp.RCC.apb1enr1.modify(|_, w| w.pwren().set_bit());
+    dp.PWR.cr1.modify(|_, w| unsafe { w.vos().bits(0b01) });
+    let _ = crate::regs::wait_for(
+        || dp.PWR.sr2.read().vosf().bit_is_clear(),
+        1_000_000,
+        "PWR VOS1",
+    );
+
+    // PRFTEN: deliberately ON, a documented divergence from AM32 (which runs
+    // prefetch off). PRFTEN off + 4WS makes hot-ISR fetch timing depend on
+    // code alignment, so any rebuild moves marginal timing (minz board_init.rs,
+    // commit 8d32e66); the AM32 clone used as behavioural reference runs it on.
     dp.FLASH.acr.write(|w| unsafe {
         w.latency()
             .bits(4)
@@ -43,11 +40,21 @@ pub fn init(
             .dcen()
             .set_bit()
     });
-    while dp.FLASH.acr.read().latency().bits() != 4 {}
+    let _ = crate::regs::wait_for(
+        || dp.FLASH.acr.read().latency().bits() == 4,
+        1_000_000,
+        "FLASH latency",
+    );
 
     dp.RCC.cr.modify(|_, w| w.hsion().set_bit());
-    while dp.RCC.cr.read().hsirdy().bit_is_clear() {}
+    let _ = crate::regs::wait_for(
+        || dp.RCC.cr.read().hsirdy().bit_is_set(),
+        1_000_000,
+        "HSI16 ready",
+    );
 
+    // RM0394 §6.4.4: STM32L4 RCC_PLLCFGR has no PLLRGE field (bits [3:2] are reserved);
+    // VCO input frequency is HSI16 / PLLM = 16 MHz / 2 = 8 MHz (within L4's 4–16 MHz spec).
     dp.RCC.pllcfgr.write(|w| unsafe {
         w.pllsrc()
             .bits(2) // HSI16
@@ -62,15 +69,23 @@ pub fn init(
     });
 
     dp.RCC.cr.modify(|_, w| w.pllon().set_bit());
-    while dp.RCC.cr.read().pllrdy().bit_is_clear() {}
+    if crate::regs::wait_for(
+        || dp.RCC.cr.read().pllrdy().bit_is_set(),
+        1_000_000,
+        "PLL ready",
+    )
+    .is_ok()
+    {
+        dp.RCC.cfgr.modify(|_, w| unsafe { w.sw().bits(0b11) });
+        let _ = crate::regs::wait_for(
+            || dp.RCC.cfgr.read().sws().bits() == 0b11,
+            1_000_000,
+            "SYSCLK PLL switch",
+        );
+    }
 
-    dp.RCC.cfgr.modify(|_, w| unsafe { w.sw().bits(0b11) });
-    while dp.RCC.cfgr.read().sws().bits() != 0b11 {}
-
-    // NVIC priority grouping = 3 (4 bits preempt / 0 subpriority on Cortex-M4).
-    // AM32 does this via HAL_NVIC_SetPriorityGrouping. Affects how priorities
-    // assigned to peripheral IRQs get interpreted by the NVIC; matching here
-    // keeps ISR preemption behavior identical to AM32.
+    // NVIC priority grouping = 3 (4 bits preempt / 0 subpriority on Cortex-M4),
+    // matching AM32's HAL_NVIC_SetPriorityGrouping configuration.
     unsafe {
         core::ptr::write_volatile(0xE000_ED0C as *mut u32, 0x05FA_0300);
     }
@@ -84,52 +99,46 @@ pub fn init(
         // Enable TIM1 (APB2ENR bit 11)
         rcc_pac.apb2enr.modify(|_, w| w.tim1en().set_bit());
 
-        // PA8/9/10 as AF1 (TIM1_CH1/2/3 on L4 = AF1, not AF2)
+        // PA8/9/10 as AF1 (TIM1_CH1/2/3 on L4 = AF1, not AF2);
+        // PA7 = TIM1_CH1N (AF1), parked output-low until the first commutation step.
         let gpioa = &*pac::GPIOA::ptr();
-        gpioa.moder.modify(|r, w| {
-            w.bits(
-                (r.bits() & !(0b11 << 16 | 0b11 << 18 | 0b11 << 20))
-                    | (0b10 << 16 | 0b10 << 18 | 0b10 << 20),
-            )
-        });
+        gpioa.bsrr.write(|w| w.bits(1 << (7 + 16)));
+        gpioa.afrl.modify(|_, w| w.afrl7().bits(1));
         gpioa.afrh.modify(|r, w| {
             w.bits((r.bits() & !(0xFFF)) | (1 | 1 << 4 | 1 << 8)) // AF1
         });
-        // PA7 = TIM1_CH1N (AF1). AM32 sets the AFRL bits even though MODER
-        // stays as OUTPUT (safety idle — PA7 stays driven low by GPIO until
-        // motor is armed). Matching the AFRL bits is parity-only here.
-        gpioa.afrl.modify(|_, w| w.afrl7().bits(1));
-        // PB0 = TIM1_CH2N, PB1 = TIM1_CH3N (both AF1). Same safety pattern.
-        // PB6 = USART1_TX (AF7) half-duplex telemetry pad — set MODER=AF +
-        //       PUPDR=pull-up + AFRL=7 here so the line idles high regardless
-        //       of which USART1 path (`debuguart` or `telemetry_uart`) takes
-        //       over later (both use .modify() and preserve these bits).
-        // PB4  = reset state has PUPDR=0b01 (NJTRST pull-up). AM32 clears it.
+        gpioa.moder.modify(|r, w| {
+            w.bits(
+                (r.bits() & !(0b11 << 14 | 0b11 << 16 | 0b11 << 18 | 0b11 << 20))
+                    | (0b01 << 14 | 0b10 << 16 | 0b10 << 18 | 0b10 << 20),
+            )
+        });
+        // PB0 = TIM1_CH2N (AF1), PB1 = TIM1_CH3N (AF1), parked output-low until armed;
+        // PB6 = USART1_TX (AF7, pull-up). Clear PB4's reset NJTRST pull-up so COMP2 INP is unbiased.
         let gpiob = &*pac::GPIOB::ptr();
+        gpiob.bsrr.write(|w| w.bits((1 << 16) | (1 << 17)));
         gpiob
             .afrl
             .modify(|_, w| w.afrl0().bits(1).afrl1().bits(1).afrl6().bits(7));
-        gpiob.moder.modify(|_, w| w.moder6().bits(0b10));
+        gpiob.moder.modify(|_, w| {
+            w.moder0()
+                .bits(0b01)
+                .moder1()
+                .bits(0b01)
+                .moder6()
+                .bits(0b10)
+        });
         gpiob
             .pupdr
             .modify(|_, w| w.pupdr4().bits(0b00).pupdr6().bits(0b01));
     }
 
-    // TIM1 PWM: 80 MHz / (ARR+1) = 24 kHz, motor PWM. AM32-matched fields.
-    //
-    // - CCMR1 = 0x6868: OC1/2 PWM mode 1 (0b110) with output preload (OCxPE=1).
-    // - CCMR2 = 0x6868: same for OC3/4 (AM32 has both ch3 AND ch4 PWM-mode'd
-    //   with preload, even though ch4 isn't routed to a pin — used internally
-    //   as TRGO source for sample-and-hold timing).
-    // - CCER  = 0x1555: CC1E + CC1NE + CC2E + CC2NE + CC3E + CC3NE + CC4E.
-    //   Old code wrote 0x555 (no CH4E), which prevented the CCR4 trigger.
-    // - CCR4  = 0x64 (100): trigger value for OC4REF (TRGO_4, used for BEMF
-    //   sample timing).
-    // - BDTR  = DTG | BKP | MOE. Old code missed BKP (break input active-high
-    //   polarity) — without it, BRK behaves opposite to AM32 if a break event
-    //   ever fires.
-    // - CR1   = ARPE + CEN. Old code missed ARPE (auto-reload preload),
-    //   meaning ARR writes take effect immediately instead of on next update.
+    // TIM1 PWM: 80MHz / (ARR+1) = 24kHz -> ARR = 3332, AM32-matched fields:
+    // - CCMR1/CCMR2 = 0x6868 (OC1..OC4 PWM mode 1 with OCxPE preload)
+    // - CCER = 0x1555 (CC1..CC3 complementary + CC4E for OC4REF trigger)
+    // - CCR4 = 0x64 (100)
+    // - BDTR = DTG | BKP | MOE
+    // - CR1  = ARPE | CEN
     unsafe {
         let tim1 = &*pac::TIM1::ptr();
         tim1.psc.write(|w| w.psc().bits(0));
@@ -234,37 +243,28 @@ pub fn init(
         tim7.cr1.write(|w| w.cen().set_bit());
     }
 
-    // NVIC priorities — AM32-matched. On STM32L4 the NVIC has 4 priority bits
-    // stored in the UPPER nibble of each IPR byte (PRIGROUP=3 from clock init
-    // = 4 preempt bits, 0 sub bits). cortex_m's `set_priority` writes the raw
-    // byte, so to use priority level N we must pass `N << 4` (AM32 uses the
-    // CMSIS NVIC_SetPriority macro which does this shift internally).
-    //
-    // Priorities (lower number = higher priority, can preempt higher numbers):
+    // NVIC priorities — AM32-matched. STM32L4 implements 4 priority bits in the
+    // upper nibble of each IPR byte (PRIGROUP = 3: 4 preempt bits, 0 subpriority).
+    // `cortex_m::peripheral::NVIC::set_priority` writes the raw byte, so priority
+    // level N must be passed as `N << 4`:
     //   COMP             0  — BEMF zero-cross, must preempt tenKhzRoutine
     //   TIM1_UP_TIM16    0  — commutation timer, same urgency as COMP
-    //   DMA1_CH5         1  — DSHOT/PWM input capture
-    //   EXTI15_10        2  — SW-triggered frame processing
-    //   TIM6_DACUNDER    3  — 20 kHz control loop (LOWEST: tenKhzRoutine can
-    //                          run long and be preempted by motor-critical IRQs)
-    //
-    // Without these priorities, all IRQs default to 0 and TIM6 ISR blocks
-    // commutation/BEMF until it returns. tenKhzRoutine can take ~45 µs of the
-    // 50 µs TIM6 budget; without preemption, commutation timing decays under
-    // load → motor chops.
+    //   DMA1_CH5         1  — DShot/PWM input capture
+    //   EXTI15_10        2  — software-triggered frame processing
+    //   TIM6_DACUNDER    3  — 20 kHz control loop (lowest priority)
     unsafe {
         use pac::{Interrupt, NVIC};
-        NVIC::unmask(Interrupt::TIM6_DACUNDER);
-        NVIC::unmask(Interrupt::TIM1_UP_TIM16);
-        NVIC::unmask(Interrupt::COMP);
-        NVIC::unmask(Interrupt::DMA1_CH5);
-        NVIC::unmask(Interrupt::EXTI15_10);
         let mut nvic = cortex_m::Peripherals::steal().NVIC;
         nvic.set_priority(Interrupt::COMP, 0 << 4);
         nvic.set_priority(Interrupt::TIM1_UP_TIM16, 0 << 4);
         nvic.set_priority(Interrupt::DMA1_CH5, 1 << 4);
         nvic.set_priority(Interrupt::EXTI15_10, 2 << 4);
         nvic.set_priority(Interrupt::TIM6_DACUNDER, 3 << 4);
+        NVIC::unmask(Interrupt::TIM6_DACUNDER);
+        NVIC::unmask(Interrupt::TIM1_UP_TIM16);
+        NVIC::unmask(Interrupt::COMP);
+        NVIC::unmask(Interrupt::DMA1_CH5);
+        NVIC::unmask(Interrupt::EXTI15_10);
         // benchuart: USART2 RX is serviced by DMA1_CH6 + main-loop drain
         // (bench_uart::drain_dma) — no NVIC vector. The former RXNE-ISR
         // path at level 2 lost bytes whenever prio-0/1 bursts exceeded

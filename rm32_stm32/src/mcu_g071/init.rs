@@ -17,13 +17,11 @@ pub fn init(
     let dp = stm32::Peripherals::take().unwrap();
     let _cp = cortex_m::Peripherals::take().unwrap();
     let mut rcc = dp.RCC.freeze(RccConfig::pll());
-    // Flash prefetch buffer ON — AM32 Mcu/g071/Src/peripherals.c:29
-    // (`FLASH->ACR |= FLASH_ACR_PRFTEN`). rm32 never set it, so at 64 MHz /
-    // 2 wait states every sequential line fetch and branch target paid the
-    // full latency: the 20 kHz tick alone averaged 1610 cycles (25 us) idle
-    // and overran ~37 % of ticks at 30 % duty, starving the main loop into
-    // IWDG resets above ~80 % (binz). Read-modify-write ONLY: ACR bit 18
-    // (DBG_SWEN) resets to 1 and a wholesale write disables SWD.
+    // Enable Flash prefetch buffer — AM32 Mcu/g071/Src/peripherals.c:29
+    // (`FLASH->ACR |= FLASH_ACR_PRFTEN`). At 64 MHz with 2 wait states,
+    // leaving prefetch disabled forces every sequential line fetch and branch
+    // target to pay full Flash wait-state latency. Use read-modify-write so
+    // ACR bit 18 (DBG_SWEN, reset value 1) is preserved and SWD stays active.
     unsafe {
         let flash = &*stm32::FLASH::ptr();
         flash.acr().modify(|r, w| w.bits(r.bits() | (1 << 8))); // PRFTEN
@@ -79,11 +77,11 @@ pub fn init(
 
     // NVIC priorities — AM32 G071-matched (Mcu/g071/Src/peripherals.c:
     // COMP 0, COM timer 0, input DMA 1, tenKhzRoutine TIM6 2, EXTI4_15 2).
-    // Cortex-M0+ implements 2 priority bits in the TOP of each IPR byte;
-    // cortex_m's `set_priority` writes the raw byte, so level N is
-    // `N << 6` (CMSIS NVIC_SetPriority shifts internally). Previously
-    // unset (all level 0): TIM6's control tick could not be preempted by
-    // COMP/commutation — the same defect class as the L431 priority fix.
+    // Cortex-M0+ implements 2 priority bits in the upper bits [7:6] of each
+    // IPR byte; cortex_m's `set_priority` writes the raw byte, so level N is
+    // `N << 6` (CMSIS NVIC_SetPriority shifts internally). Without this, all
+    // IRQs remain at priority 0 and TIM6's 20 kHz control tick blocks BEMF
+    // zero-crossing and commutation interrupts until it returns.
     unsafe {
         use stm32::{Interrupt, NVIC};
         let mut nvic = cortex_m::Peripherals::steal().NVIC;

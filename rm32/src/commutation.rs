@@ -35,10 +35,10 @@ impl Commutation {
         &mut self,
         commutation_interval: u16,
     ) -> i32 {
-        // Running sum of the six slots (binz WCET: the 6-term re-sum ran on
-        // every commutation in the priority-0 ISR). `step` is 1..=6 by
+        // Running sum of the six slots avoids re-summing all six elements on
+        // every priority-0 commutation ISR entry. `step` is 1..=6 by
         // construction; `& 7` and the 8-slot array keep the index in range
-        // without a panic path on the COM ISR's longest path.
+        // without a bounds-check panic path on the ISR hot path.
         debug_assert!((1..=6).contains(&self.step), "step {}", self.step);
         let k = (self.step.wrapping_sub(1) & 7) as usize;
         let old = self.intervals[k];
@@ -83,8 +83,9 @@ impl Commutation {
         self.step
     }
 
-    /// Set current step.
+    /// Set current step (clamped to valid six-step sector `1..=6`).
     pub fn set_step(&mut self, v: u8) {
+        let v = v.clamp(1, 6);
         self.step = v;
     }
 
@@ -220,5 +221,45 @@ mod tests {
         }
         // Steps 2,3,4,5,6,1 -> rising: false,true,false,true,false,true
         assert_eq!(risings, [false, true, false, true, false, true]);
+    }
+
+    #[test]
+    fn record_interval_running_sum_matches_six_slot_sum_across_wraps() {
+        use crate::platform::TestPlatform;
+        let mut c = Commutation::new();
+        let mut ref_slots = [0u16; 6];
+        let samples = [
+            120u16, 340, 560, 780, 910, 1024, 65535, 0, 42, 999, 12345, 54321, 17, 888,
+        ];
+        for (idx, &sample) in samples.iter().enumerate() {
+            if idx == 7 {
+                c.set_forward(false);
+            }
+            c.advance();
+            ref_slots[(c.step() - 1) as usize] = sample;
+            let expected_sum: u32 = ref_slots.iter().map(|&v| v as u32).sum();
+            let got = c.record_interval::<TestPlatform>(sample);
+            let expected = crate::platform::six_intervals_to_us::<TestPlatform>(expected_sum);
+            assert_eq!(got, expected, "idx={idx}, step={}", c.step());
+        }
+
+        // Out-of-range set_step inputs clamp to 1..=6 so slots 6..8 are never touched.
+        c.set_step(0);
+        assert_eq!(c.step(), 1);
+        ref_slots[0] = 500;
+        let expected_sum: u32 = ref_slots.iter().map(|&v| v as u32).sum();
+        assert_eq!(
+            c.record_interval::<TestPlatform>(500),
+            crate::platform::six_intervals_to_us::<TestPlatform>(expected_sum)
+        );
+
+        c.set_step(7);
+        assert_eq!(c.step(), 6);
+        ref_slots[5] = 700;
+        let expected_sum: u32 = ref_slots.iter().map(|&v| v as u32).sum();
+        assert_eq!(
+            c.record_interval::<TestPlatform>(700),
+            crate::platform::six_intervals_to_us::<TestPlatform>(expected_sum)
+        );
     }
 }
