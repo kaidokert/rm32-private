@@ -1570,6 +1570,42 @@ mod tests {
     }
 
     #[test]
+    fn isr_bemf_polling_saturates_wide_interval_count() {
+        let mut comm = crate::commutation::Commutation::new(); // rising=true
+        let mut bemf = crate::control::state::BemfState::default();
+        bemf.sync_config(1, 0, 0);
+        let mut duty = crate::control::state::DutyState::default();
+        let config = crate::config::EepromConfig::default();
+        let mut armed_timeout = make_armed_timeout();
+        let shared = TestShared::new();
+        let mut hal = MockMotorHal::new();
+
+        shared.mode.set(crate::motor_mode::MotorMode::OldRoutine);
+        shared.adjusted_input.set(200);
+        shared.commutation_interval.set(1_000);
+        hal.comp.level = false;
+        hal.interval.count = 70_000;
+
+        isr_logic::ten_khz_tick(&mut crate::control::context::MotorContext {
+            commutation: &mut comm,
+            bemf: &mut bemf,
+            duty: &mut duty,
+            config: &config,
+            armed_timeout_count: &mut armed_timeout,
+            voltage_based_ramp: false,
+            shared: &shared,
+            hal: &mut hal,
+        });
+
+        assert_eq!(bemf.this_zc_time(), u16::MAX);
+        assert_eq!(
+            shared.commutation_interval.get(),
+            (u16::MAX as u32 + 3 * 1_000) / 4
+        );
+        assert_eq!(hal.interval.count, 0);
+    }
+
+    #[test]
     fn isr_bemf_zero_cross_saturates_wide_interval_count() {
         // A 32-bit interval timer past 0xFFFF must saturate, not wrap
         // 70_000 into 4_464 (a short interval from a long one).

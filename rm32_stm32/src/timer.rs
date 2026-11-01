@@ -198,18 +198,14 @@ impl IntervalTimer for Tim2Interval {
     }
 }
 
-/// Free-running commutation timer with ARPE (AM32 pattern).
+/// Free-running commutation timer (`TIM14` on G071/F051, `TIM16` on L431/G431).
 ///
-/// TIM14 on G071/F051, TIM16 on L431/G431. Timer runs continuously from
-/// boot with CR1 = ARPE | CEN. set_and_enable() writes the new ARR (which
-/// goes to the preload register because ARPE=1) and force-loads it via UG,
-/// resetting CNT to 0. The timer never stops, so commutation timing has no
-/// disable→enable jitter gap.
-///
-/// Previous one-shot pattern (disable CEN, set ARR, re-enable CEN per
-/// commutation) introduced enough timing jitter to make motor control
-/// visibly choppy. Captured AM32 register dumps during motor spin show
-/// TIM16.CR1=0x81 (ARPE+CEN) which is what this matches.
+/// The counter runs continuously from boot with `CR1 = CEN` (`ARPE = 0`) so
+/// `set_and_enable` never stops or restarts `CEN`, eliminating stop/start
+/// prescaler jitter. Keeping `ARPE = 0` ensures each arm's `ARR = timeout`
+/// takes effect immediately for the current countdown (whereas `ARPE = 1`
+/// without `UG` leaves the new `ARR` in preload until the previous reload
+/// value wraps, which would stall startup on the `0xFFFF` boot reload).
 pub struct Tim14Com {
     raw: ComTimerRaw,
 }
@@ -243,18 +239,12 @@ impl Tim14Com {
 
 impl ComTimer for Tim14Com {
     fn set_and_enable(&mut self, timeout: u16) {
-        // AM32-verbatim SET_AND_ENABLE_COM_INT (peripherals.h:19-21):
-        // CNT=0, ARR=timeout, SR=0, UIE on. NO UG — the previous
-        // UG-based sequence had a clock-domain race: the UG-induced UIF
-        // sets in the (prescaled) timer clock domain AFTER the CPU's
-        // back-to-back SR=0 write has completed, so the "clear" cleared
-        // nothing and enabling UIE fired the ISR IMMEDIATELY — every
-        // commutation landed ~3 µs after the ZC accept (~30° effective
-        // advance) with wait_time computed but never applied. Caught by
-        // the edge probe: tim16_lat pinned at 6-8 ticks with arms of
-        // wait+1 (55-99); confirmed by in-ISR ARR/CNT16/CNT2 snapshots.
-        // With ARPE on, the ARR write lands in preload and latches at
-        // the next update — AM32's own stale-by-one quirk, mirrored.
+        // AM32-matched SET_AND_ENABLE_COM_INT (peripherals.h:19-21):
+        // CNT=0, ARR=timeout, SR=0, UIE on, with no EGR.UG and no CR1.CEN
+        // stop/start toggle. Firing EGR.UG here would assert UIF in the
+        // prescaled timer clock domain after a back-to-back CPU `SR = 0`
+        // write completes, leaving UIF set when UIE is enabled and firing
+        // the commutation ISR prematurely.
         #[cfg(feature = "zctrace")]
         crate::edge_probe::armed(timeout);
         self.raw.write_cnt(0);
