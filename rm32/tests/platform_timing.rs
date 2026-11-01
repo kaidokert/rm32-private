@@ -339,3 +339,28 @@ fn variable_pwm_carrier_is_independent_of_interval_timer_clock() {
         }
     }
 }
+
+#[test]
+fn filter_level_is_independent_of_interval_timer_clock() {
+    fn filter<P: Platform>(period_us: i32, interval: u32) -> u8 {
+        let shared = SharedState::new::<P>();
+        shared.set_zero_crosses(200);
+        shared.set_e_com_time(period_us);
+        shared.set_commutation_interval(interval);
+        let mut main = main_state::<P>();
+        SystemTick::<P>::new().tick_main(
+            &shared,
+            &mut main,
+            &mut AdcProbe::default(),
+            &mut Telemetry::default(),
+        );
+        shared.filter_level()
+    }
+    for step_us in 1..=300 {
+        assert_eq!(
+            filter::<Standard>(step_us * 6, step_us as u32 * 2),
+            filter::<Alternate>(step_us * 6, step_us as u32),
+            "step {step_us} us"
+        );
+    }
+}

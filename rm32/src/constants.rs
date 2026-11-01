@@ -237,8 +237,6 @@ pub trait Timing: Platform + Sized {
     const FILTER_SLOW_INTERVAL: u32 = us_to_ticks::<Self>(250);
     const FILTER_FAST_INTERVAL: u32 = us_to_ticks::<Self>(25);
 
-    /// Variable PWM mode 2 breakpoints on average_interval: 50 and 125 µs
-    /// (100 and 250 ticks).
     const VARIABLE_PWM2_LO: u32 = us_to_ticks::<Self>(50);
     const VARIABLE_PWM2_HI: u32 = us_to_ticks::<Self>(125);
 
