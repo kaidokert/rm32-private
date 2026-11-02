@@ -1,248 +1,67 @@
 //! Motor phase output control (6-step commutation via GPIO mode switching).
 //!
 //! PhaseDriver is generic over 6 pin types — all pin identity is resolved
-//! at compile time. Runtime methods contain no branches on port or pin number.
+//! at compile time. On standard non-`bridge_enable` bridges, `com_step` uses
+//! a compile-time `[bsrr_a, bsrr_b, moder_a_mask, moder_a_val, moder_b_mask,
+//! moder_b_val]` lookup table derived from `rm32::bridge::step_legs`, issuing
+//! one `BSRR` write per port (ordered break-before-make so any outgoing
+//! solid-low gate on the opposite port is cleared before the new solid-low
+//! gate is asserted) followed by one `MODER` read-modify-write per port
+//! (clearing outgoing alternate-function low-side gates before enabling incoming
+//! ones). On `G0_A`/`F0_A`/`L4_N`, all three high-side PWM pins (`PA10`, `PA9`,
+//! `PA8`) share `GPIOA`, so high-side PWM handoff completes in a single
+//! `GPIOA.MODER` write after both ports' `ODR` latches are pre-staged low.
 //!
 //! Pin assignments for HARDWARE_GROUP_G0_A:
 //!   Phase A: high=PA10, low=PB1
 //!   Phase B: high=PA9,  low=PB0
 //!   Phase C: high=PA8,  low=PA7
+//!
+//! Why batched: deaf-window A/B at 70% comp (2026-07-26, L431): sequential
+//! ~1 per 1-2.5k windows, batched 4 per 89k. The sequential writer's ordered
+//! pin ops span ~1-2 us of mixed old/new bridge states per commutation.
 
 use crate::gpio_pin::GpioPin;
 use crate::gpio_regs::GpioPort;
 use core::marker::PhantomData;
-use rm32::hal::PhaseOutput;
+use rm32::bridge::{LegRole, step_legs};
+use rm32::hal::{PhaseOutput, PwmMode};
 
 /// GPIO MODER values.
 const MODE_OUTPUT: u32 = 0b01;
 const MODE_ALTERNATE: u32 = 0b10;
 
-/// Bench live drive-mode override ('D' command): 0 = follow config,
-/// 1 = force diode (comp off), 2 = force complementary. Lets the bench
-/// flip drive physics mid-run to separate steady-state comp behavior
-/// from the spin-up churn. Read once per com_step — negligible.
+/// Bench live drive-mode override ('D' command): 0 = follow the core,
+/// 1 = force diode, 2 = force complementary. Lets the bench flip drive
+/// physics mid-run. Read once per com_step.
 #[cfg(feature = "benchuart")]
 pub static COMP_PWM_LIVE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
-/// Bench live commutation-writer toggle ('E' command): 0 = sequential
-/// per-pin (AM32 phaseouts order), 1 = atomic (clone set_phase_roles:
-/// one BSRR write per port then one MODER write per port — final pin
-/// levels snap simultaneously, no intermediate bridge states).
-///
-/// Deaf-window A/B at 70%/comp (07-26): sequential ~1 per 1-2.5k
-/// windows, atomic 4 per 89k (10-20x), diode 1 per 90k, clone 0 per
-/// 281k. The sequential interleave's transient bridge states during
-/// phase handover are the dominant source of the deaf-window/
-/// orbit-entry class under complementary drive. Promoted to ALL L431
-/// builds (B6) — the bench lever (`PHASE_ATOMIC_LIVE` + 'A' toggle)
-/// is retired; the axis is settled.
-///
-/// L431 atomic com_step, ported from the clone's proven
-/// `set_phase_roles` (minz/src/tim1_motor_pwm.rs) onto rm32's AM32
-/// pin naming: A = PA10/PB1, B = PA9/PB0, C = PA8/PA7 (hi/lo).
-/// BSRR first (one write per port), MODER second (one modify per
-/// port). The sequential writer's six ordered pin ops span ~1-2 µs of
-/// mixed old/new bridge states per commutation; this path has none.
-#[cfg(feature = "stm32l431")]
-pub fn l431_atomic_com_step(step: u8, comp: bool) {
-    const AF: u32 = 0b10;
-    const OUT: u32 = 0b01;
-    // (hi_is_gpioa always true; lo: A,B on GPIOB pins 1,0; C on GPIOA pin 7)
-    // phase index 0=A,1=B,2=C → (hi_pin@GPIOA, lo_pin, lo_on_gpioa)
-    const PINS: [(u32, u32, bool); 3] = [(10, 1, false), (9, 0, false), (8, 7, true)];
-    // per step (1-6): (pwm_phase, low_phase, float_phase), from the core's
-    // six-step table
-    const ROLES: [(usize, usize, usize); 6] = step_roles();
-    let Some(&(pwm, low, fl)) = ROLES.get((step as usize).wrapping_sub(1)) else {
-        return;
-    };
-
-    let mut bsrr_a = 0u32;
-    let mut bsrr_b = 0u32;
-    let mut moder_a_val = 0u32;
-    let mut moder_a_mask = 0u32;
-    let mut moder_b_val = 0u32;
-    let mut moder_b_mask = 0u32;
-    let mut set_a = |pin: u32, mode: u32| {
-        moder_a_mask |= 0b11 << (pin * 2);
-        moder_a_val |= mode << (pin * 2);
-    };
-    let mut set_b = |pin: u32, mode: u32| {
-        moder_b_mask |= 0b11 << (pin * 2);
-        moder_b_val |= mode << (pin * 2);
-    };
-
-    for (idx, &(hi, lo, lo_a)) in PINS.iter().enumerate() {
-        let (hi_mode, lo_mode, hi_lvl, lo_lvl) = if idx == pwm {
-            // driven leg: hi AF; lo AF (complementary) or OUTPUT-low (diode)
-            (
-                AF,
-                if comp { AF } else { OUT },
-                None,
-                if comp { None } else { Some(false) },
-            )
-        } else if idx == low {
-            // low leg: hi off, low FET solid on
-            (OUT, OUT, Some(false), Some(true))
-        } else {
-            debug_assert_eq!(idx, fl);
-            // floating leg: both off
-            (OUT, OUT, Some(false), Some(false))
+/// Derive the operation order from the semantic table at compile time for the
+/// sequential `bridge_enable` fallback: floating first, low second, driven last.
+const fn ordered_phases(step: u8) -> [u8; 3] {
+    let legs = step_legs(step, PwmMode::Diode);
+    let mut order = [0; 3];
+    let mut phase = 0;
+    while phase < 3 {
+        let slot = match legs[phase] {
+            LegRole::Float => 0,
+            LegRole::LowSolid => 1,
+            _ => 2,
         };
-        set_a(hi, hi_mode);
-        if let Some(l) = hi_lvl {
-            bsrr_a |= 1 << (hi + if l { 0 } else { 16 });
-        }
-        if lo_a {
-            set_a(lo, lo_mode);
-            if let Some(l) = lo_lvl {
-                bsrr_a |= 1 << (lo + if l { 0 } else { 16 });
-            }
-        } else {
-            set_b(lo, lo_mode);
-            if let Some(l) = lo_lvl {
-                bsrr_b |= 1 << (lo + if l { 0 } else { 16 });
-            }
-        }
+        order[slot] = phase as u8;
+        phase += 1;
     }
-
-    const GPIOA: u32 = 0x4800_0000;
-    const GPIOB: u32 = 0x4800_0400;
-    unsafe {
-        if bsrr_a != 0 {
-            core::ptr::write_volatile((GPIOA + 0x18) as *mut u32, bsrr_a);
-        }
-        if bsrr_b != 0 {
-            core::ptr::write_volatile((GPIOB + 0x18) as *mut u32, bsrr_b);
-        }
-        let ma = (GPIOA) as *mut u32;
-        core::ptr::write_volatile(
-            ma,
-            (core::ptr::read_volatile(ma) & !moder_a_mask) | moder_a_val,
-        );
-        let mb = (GPIOB) as *mut u32;
-        core::ptr::write_volatile(
-            mb,
-            (core::ptr::read_volatile(mb) & !moder_b_mask) | moder_b_val,
-        );
-    }
+    order
 }
-
-/// Per step 1..=6, the (driven, low, floating) phase indices of
-/// [`rm32::bridge::step_legs`] (0 = A, 1 = B, 2 = C).
-#[cfg(feature = "stm32l431")]
-const fn step_roles() -> [(usize, usize, usize); 6] {
-    use rm32::bridge::{LegRole, step_legs};
-    let mut roles = [(0, 0, 0); 6];
-    let mut s = 0;
-    while s < 6 {
-        let legs = step_legs(s as u8 + 1, true);
-        let mut idx = 0;
-        while idx < 3 {
-            match legs[idx] {
-                LegRole::PwmComplementary => roles[s].0 = idx,
-                LegRole::LowSolid => roles[s].1 = idx,
-                LegRole::Float => roles[s].2 = idx,
-                _ => panic!("step_legs: unexpected leg role in a commutation step"),
-            }
-            idx += 1;
-        }
-        s += 1;
-    }
-    roles
-}
-
-/// G071 port of the L431 atomic commutation writer (same AM32 G0_A pin map:
-/// A = PA10/PB1, B = PA9/PB0, C = PA8/PA7; G0 GPIO MODER @0x00, BSRR @0x18).
-/// The register images are computed at compile time per (comp, step), so
-/// the commutation ISR does one table lookup, two BSRR writes and two MODER
-/// read-modify-writes. The generic sequential writer it replaces was 543
-/// instructions (AM32's comStep: 359) — the dominant share of the COM root
-/// in the binz WCET gate. Same order as the L431 writer: BSRR first, then
-/// MODER, so the final pin levels land together.
-#[cfg(feature = "stm32g071")]
-mod g071_atomic {
-    const AF: u32 = 0b10;
-    const OUT: u32 = 0b01;
-    use rm32::bridge::{LegRole, step_legs};
-
-    /// phase index 0=A,1=B,2=C -> (hi pin @GPIOA, lo pin, lo on GPIOA)
-    const PINS: [(u32, u32, bool); 3] = [(10, 1, false), (9, 0, false), (8, 7, true)];
-
-    /// [bsrr_a, bsrr_b, moder_a_mask, moder_a_val, moder_b_mask, moder_b_val]
-    /// for step `step_ix + 1` of the core's six-step table.
-    const fn plan(step_ix: usize, comp: bool) -> [u32; 6] {
-        let legs = step_legs(step_ix as u8 + 1, comp);
-        let mut r = [0u32; 6];
-        let mut idx = 0;
-        while idx < 3 {
-            let (hi, lo, lo_a) = PINS[idx];
-            // (hi_mode, lo_mode, hi_level: 0 none/1 low, lo_level: 0 none/1 low/2 high)
-            let (hi_mode, lo_mode, hi_lvl, lo_lvl) = match legs[idx] {
-                // driven leg: hi AF; lo AF (complementary) or OUTPUT-low (diode)
-                LegRole::PwmComplementary => (AF, AF, 0u32, 0u32),
-                LegRole::PwmDiode => (AF, OUT, 0, 1),
-                LegRole::LowSolid => (OUT, OUT, 1, 2), // low leg: hi off, low FET on
-                LegRole::Float => (OUT, OUT, 1, 1),    // floating leg: both off
-                LegRole::LowPwm => (OUT, AF, 1, 0),    // hi off, low PWM
-            };
-            r[2] |= 0b11 << (hi * 2);
-            r[3] |= hi_mode << (hi * 2);
-            if hi_lvl == 1 {
-                r[0] |= 1 << (hi + 16);
-            }
-            let bsrr_lo = match lo_lvl {
-                1 => 1 << (lo + 16),
-                2 => 1 << lo,
-                _ => 0,
-            };
-            if lo_a {
-                r[2] |= 0b11 << (lo * 2);
-                r[3] |= lo_mode << (lo * 2);
-                r[0] |= bsrr_lo;
-            } else {
-                r[4] |= 0b11 << (lo * 2);
-                r[5] |= lo_mode << (lo * 2);
-                r[1] |= bsrr_lo;
-            }
-            idx += 1;
-        }
-        r
-    }
-
-    const fn table(comp: bool) -> [[u32; 6]; 6] {
-        let mut t = [[0u32; 6]; 6];
-        let mut s = 0;
-        while s < 6 {
-            t[s] = plan(s, comp);
-            s += 1;
-        }
-        t
-    }
-
-    static PLAN: [[[u32; 6]; 6]; 2] = [table(false), table(true)];
-
-    const GPIOA: u32 = 0x5000_0000;
-    const GPIOB: u32 = 0x5000_0400;
-
-    #[inline]
-    pub fn com_step(step: u8, comp: bool) {
-        let Some(p) = PLAN[comp as usize].get((step as usize).wrapping_sub(1)) else {
-            return;
-        };
-        // SAFETY: G071 GPIOA/GPIOB BSRR (write-only set/reset) and MODER
-        // (RMW of only the six gate pins' fields); ISR-exclusive owner of
-        // the gate-pin modes while running.
-        unsafe {
-            core::ptr::write_volatile((GPIOA + 0x18) as *mut u32, p[0]);
-            core::ptr::write_volatile((GPIOB + 0x18) as *mut u32, p[1]);
-            let ma = GPIOA as *mut u32;
-            core::ptr::write_volatile(ma, (core::ptr::read_volatile(ma) & !p[2]) | p[3]);
-            let mb = GPIOB as *mut u32;
-            core::ptr::write_volatile(mb, (core::ptr::read_volatile(mb) & !p[4]) | p[5]);
-        }
-    }
-}
+const PHASE_ORDER: [[u8; 3]; 6] = [
+    ordered_phases(1),
+    ordered_phases(2),
+    ordered_phases(3),
+    ordered_phases(4),
+    ordered_phases(5),
+    ordered_phases(6),
+];
 
 /// Pulse output toggle function — stored as fn pointer to avoid storing raw addresses.
 /// Monomorphized per pin type at `enable_pulse_output` call site.
@@ -251,7 +70,7 @@ type PulseToggleFn = fn(u32);
 /// 3-phase driver, parameterized by 6 compile-time pin types.
 ///
 /// AH/AL = Phase A high/low, BH/BL = Phase B, CH/CL = Phase C.
-/// After monomorphization, all port/pin constants are inlined — zero overhead.
+/// Port and pin constants are resolved at compile time.
 pub struct PhaseDriver<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin>
 {
     /// PWM/enable bridge mode: low-side pins are enable (output high/low)
@@ -265,6 +84,99 @@ pub struct PhaseDriver<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: G
 impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin>
     PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
+    const PINS: [(u8, bool, u8, bool); 3] = [
+        (AH::PIN, AH::PORT_B, AL::PIN, AL::PORT_B),
+        (BH::PIN, BH::PORT_B, BL::PIN, BL::PORT_B),
+        (CH::PIN, CH::PORT_B, CL::PIN, CL::PORT_B),
+    ];
+
+    /// Compute `[bsrr_a, bsrr_b, moder_a_mask, moder_a_val, moder_b_mask, moder_b_val]`
+    /// for commutation step `step_ix + 1`.
+    const fn plan_step(step_ix: usize, mode: PwmMode) -> [u32; 6] {
+        let legs = step_legs(step_ix as u8 + 1, mode);
+        let mut r = [0u32; 6];
+        let mut idx = 0;
+        while idx < 3 {
+            let (hi, hi_b, lo, lo_b) = Self::PINS[idx];
+            // (hi_mode, lo_mode, hi_lvl: 1=low, lo_lvl: 1=low/2=high)
+            // Every pin except the active LowSolid low-side gate resets its ODR
+            // latch low via BSRR, including pins in MODE_ALTERNATE, so a later
+            // transition back to MODE_OUTPUT never exposes a stale high latch.
+            let (hi_mode, lo_mode, hi_lvl, lo_lvl) = match legs[idx] {
+                LegRole::PwmComplementary => (MODE_ALTERNATE, MODE_ALTERNATE, 1u32, 1u32),
+                LegRole::PwmDiode => (MODE_ALTERNATE, MODE_OUTPUT, 1, 1),
+                LegRole::LowSolid => (MODE_OUTPUT, MODE_OUTPUT, 1, 2),
+                LegRole::Float => (MODE_OUTPUT, MODE_OUTPUT, 1, 1),
+                LegRole::LowPwm => (MODE_OUTPUT, MODE_ALTERNATE, 1, 1),
+            };
+            let hi_shift = hi as u32 * 2;
+            let bsrr_hi = if hi_lvl == 1 {
+                1u32 << (hi as u32 + 16)
+            } else {
+                0
+            };
+            if hi_b {
+                r[1] |= bsrr_hi;
+                r[4] |= 0b11 << hi_shift;
+                r[5] |= hi_mode << hi_shift;
+            } else {
+                r[0] |= bsrr_hi;
+                r[2] |= 0b11 << hi_shift;
+                r[3] |= hi_mode << hi_shift;
+            }
+
+            let lo_shift = lo as u32 * 2;
+            let bsrr_lo = match lo_lvl {
+                1 => 1u32 << (lo as u32 + 16),
+                2 => 1u32 << (lo as u32),
+                _ => 0,
+            };
+            if lo_b {
+                r[1] |= bsrr_lo;
+                r[4] |= 0b11 << lo_shift;
+                r[5] |= lo_mode << lo_shift;
+            } else {
+                r[0] |= bsrr_lo;
+                r[2] |= 0b11 << lo_shift;
+                r[3] |= lo_mode << lo_shift;
+            }
+            idx += 1;
+        }
+        r
+    }
+
+    /// Build the six-step GPIO register plan table for `mode` drive mode.
+    const fn plan_table(mode: PwmMode) -> [[u32; 6]; 6] {
+        let mut t = [[0u32; 6]; 6];
+        let mut s = 0;
+        while s < 6 {
+            t[s] = Self::plan_step(s, mode);
+            s += 1;
+        }
+        t
+    }
+
+    const PLAN: [[[u32; 6]; 6]; 2] = [
+        Self::plan_table(PwmMode::Diode),
+        Self::plan_table(PwmMode::Complementary),
+    ];
+
+    /// The drive mode the core decided (`rm32::bridge::drive_mode`); bench
+    /// images can force it with the 'D' key.
+    #[inline(always)]
+    fn drive(mode: PwmMode) -> PwmMode {
+        #[cfg(feature = "benchuart")]
+        {
+            match COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed) {
+                1 => return PwmMode::Diode,
+                2 => return PwmMode::Complementary,
+                _ => {}
+            }
+        }
+        mode
+    }
+
+    /// Construct a standard six-FET phase driver (`bridge_enable = false`).
     pub fn new() -> Self {
         Self {
             bridge_enable: false,
@@ -273,6 +185,7 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         }
     }
 
+    /// Construct a PWM/enable bridge phase driver (`bridge_enable = true`).
     pub fn new_bridge() -> Self {
         Self {
             bridge_enable: true,
@@ -293,38 +206,29 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         self.pulse = Some((toggle::<P::Port>, P::BSRR_SET));
     }
 
-    /// The drive mode the core decided (`rm32::bridge::drive_complementary`);
-    /// bench images can force it with the 'D' key (1 = diode, 2 =
-    /// complementary, anything else = the core's decision).
-    #[inline]
-    fn drive(complementary: bool) -> bool {
-        #[cfg(feature = "benchuart")]
-        {
-            match COMP_PWM_LIVE.load(core::sync::atomic::Ordering::Relaxed) {
-                1 => return false,
-                2 => return true,
-                _ => {}
-            }
-        }
-        complementary
-    }
-
     /// Phase PWM: high-side alternate (TIM1), low-side depends on mode.
     ///
-    /// Normal: low-side alternate (complementary) or output LOW.
-    /// Bridge: enable pin output HIGH (complementary) or no-op.
+    /// Normal: low-side alternate with ODR latch cleared (complementary) or output LOW.
+    /// Bridge: enable pin output HIGH (complementary) or output LOW (diode).
     #[inline]
-    fn phase_pwm<H: GpioPin, L: GpioPin>(&self, comp: bool) {
+    fn phase_pwm<H: GpioPin, L: GpioPin>(&self, mode: PwmMode) {
         if self.bridge_enable {
-            if comp {
-                L::set_mode(MODE_OUTPUT);
-                L::set_high(); // enable on
-            }
-        } else if !comp {
             L::set_mode(MODE_OUTPUT);
-            L::set_low();
+            match mode {
+                PwmMode::Complementary => L::set_high(), // enable on
+                PwmMode::Diode => L::set_low(),          // enable off
+            }
         } else {
-            L::set_mode(MODE_ALTERNATE);
+            match mode {
+                PwmMode::Diode => {
+                    L::set_mode(MODE_OUTPUT);
+                    L::set_low();
+                }
+                PwmMode::Complementary => {
+                    L::set_mode(MODE_ALTERNATE);
+                    L::set_low();
+                }
+            }
         }
         H::set_mode(MODE_ALTERNATE);
     }
@@ -338,13 +242,38 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         H::set_low();
     }
 
-    /// Phase FLOAT: both FETs off / enable off.
+    /// Phase FLOAT: clear output latches low before switching both FETs to output mode.
     #[inline]
     fn phase_float<H: GpioPin, L: GpioPin>() {
-        L::set_mode(MODE_OUTPUT);
         L::set_low();
-        H::set_mode(MODE_OUTPUT);
+        L::set_mode(MODE_OUTPUT);
         H::set_low();
+        H::set_mode(MODE_OUTPUT);
+    }
+
+    /// Apply a precomputed `[bsrr_a, bsrr_b, moder_a_mask, moder_a_val, moder_b_mask, moder_b_val]`
+    /// commutation plan with break-before-make cross-port ordering.
+    #[inline(always)]
+    fn apply_plan(p: &[u32; 6]) {
+        use crate::mcu::{PortA, PortB};
+        // Clear any outgoing solid-low gate on the opposite port before asserting
+        // the incoming solid-low gate (`BSRR` lower 16 bits).
+        if (p[0] & 0xFFFF) != 0 {
+            PortB::write_bsrr(p[1]);
+            PortA::write_bsrr(p[0]);
+        } else {
+            PortA::write_bsrr(p[0]);
+            PortB::write_bsrr(p[1]);
+        }
+        // Switch any port leaving alternate-function mode to output-low before
+        // enabling alternate-function mode on the other port.
+        if (p[5] & 0xAAAA_AAAA) == 0 {
+            PortB::modify_moder(|v| (v & !p[4]) | p[5]);
+            PortA::modify_moder(|v| (v & !p[2]) | p[3]);
+        } else {
+            PortA::modify_moder(|v| (v & !p[2]) | p[3]);
+            PortB::modify_moder(|v| (v & !p[4]) | p[5]);
+        }
     }
 }
 
@@ -359,92 +288,70 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
 impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPin> PhaseOutput
     for PhaseDriver<AH, AL, BH, BL, CH, CL>
 {
-    // Pinned out of line, where it already was before S5.3: shorter now
-    // that the drive mode arrives as an argument, it must not get copied
-    // into each of its callers.
+    /// Drive six-step commutation `step` (`1..=6`) using `mode`.
     #[inline(never)]
-    fn com_step(&mut self, step: u8, complementary: bool) {
-        let comp = Self::drive(complementary);
-        // B6: atomic writer always-on for L431 complementary bridges
-        // (10-20x fewer deaf windows than the sequential path; the pin
-        // map matches the AM32 L431 reference pinout shared by all
-        // upstream L431 targets). bridge_enable boards keep the
-        // sequential writer — their pin semantics differ.
-        #[cfg(feature = "stm32l431")]
-        if !self.bridge_enable {
-            l431_atomic_com_step(step, comp);
-            return;
-        }
-        // G071: same writer, compile-time register images (binz WCET gate).
-        // On a board without an enable-style bridge (build cfg) the atomic
-        // writer is the WHOLE function: the sequential writer below is not
-        // compiled in, so it is not on the COM ISR's longest path either.
-        #[cfg(all(feature = "stm32g071", not(rm32_bridge_enable)))]
+    #[allow(unexpected_cfgs)]
+    fn com_step(&mut self, step: u8, mode: PwmMode) {
+        let mode = Self::drive(mode);
+        #[cfg(all(target_arch = "arm", not(rm32_bridge_enable)))]
         {
-            g071_atomic::com_step(step, comp);
-            return;
-        }
-        #[cfg(all(feature = "stm32g071", rm32_bridge_enable))]
-        if !self.bridge_enable {
-            g071_atomic::com_step(step, comp);
+            if let Some(p) = Self::PLAN[mode as usize].get((step as usize).wrapping_sub(1)) {
+                Self::apply_plan(p);
+            }
             return;
         }
         #[allow(unreachable_code)]
-        match step {
-            1 => {
-                Self::phase_float::<CH, CL>();
-                Self::phase_low::<BH, BL>();
-                self.phase_pwm::<AH, AL>(comp);
+        if !self.bridge_enable {
+            if let Some(p) = Self::PLAN[mode as usize].get((step as usize).wrapping_sub(1)) {
+                Self::apply_plan(p);
             }
-            2 => {
-                Self::phase_float::<AH, AL>();
-                Self::phase_low::<BH, BL>();
-                self.phase_pwm::<CH, CL>(comp);
-            }
-            3 => {
-                Self::phase_float::<BH, BL>();
-                Self::phase_low::<AH, AL>();
-                self.phase_pwm::<CH, CL>(comp);
-            }
-            4 => {
-                Self::phase_float::<CH, CL>();
-                Self::phase_low::<AH, AL>();
-                self.phase_pwm::<BH, BL>(comp);
-            }
-            5 => {
-                Self::phase_float::<AH, AL>();
-                Self::phase_low::<CH, CL>();
-                self.phase_pwm::<BH, BL>(comp);
-            }
-            6 => {
-                Self::phase_float::<BH, BL>();
-                Self::phase_low::<CH, CL>();
-                self.phase_pwm::<AH, AL>(comp);
-            }
-            _ => {}
+            return;
+        }
+        if !(1..=6).contains(&step) {
+            return;
+        }
+        let [float, low, pwm] = PHASE_ORDER[(step - 1) as usize];
+        match float {
+            0 => Self::phase_float::<AH, AL>(),
+            1 => Self::phase_float::<BH, BL>(),
+            _ => Self::phase_float::<CH, CL>(),
+        }
+        match low {
+            0 => Self::phase_low::<AH, AL>(),
+            1 => Self::phase_low::<BH, BL>(),
+            _ => Self::phase_low::<CH, CL>(),
+        }
+        match pwm {
+            0 => self.phase_pwm::<AH, AL>(mode),
+            1 => self.phase_pwm::<BH, BL>(mode),
+            _ => self.phase_pwm::<CH, CL>(mode),
         }
     }
 
+    /// Turn all three half-bridges off (floating).
     fn all_off(&mut self) {
         Self::phase_float::<AH, AL>();
         Self::phase_float::<BH, BL>();
         Self::phase_float::<CH, CL>();
     }
 
+    /// Brake all three phases low.
     fn full_brake(&mut self) {
         Self::phase_low::<AH, AL>();
         Self::phase_low::<BH, BL>();
         Self::phase_low::<CH, CL>();
     }
 
+    /// Configure all three phases for PWM drive (sine startup).
     #[inline(never)]
-    fn all_pwm(&mut self, complementary: bool) {
-        let comp = Self::drive(complementary);
-        self.phase_pwm::<AH, AL>(comp);
-        self.phase_pwm::<BH, BL>(comp);
-        self.phase_pwm::<CH, CL>(comp);
+    fn all_pwm(&mut self, mode: PwmMode) {
+        let mode = Self::drive(mode);
+        self.phase_pwm::<AH, AL>(mode);
+        self.phase_pwm::<BH, BL>(mode);
+        self.phase_pwm::<CH, CL>(mode);
     }
 
+    /// Configure high-side FETs off and low-side FETs for proportional PWM braking.
     fn proportional_brake(&mut self) {
         if self.bridge_enable {
             return; // not supported on PWM/enable bridge boards
@@ -460,11 +367,10 @@ impl<AH: GpioPin, AL: GpioPin, BH: GpioPin, BL: GpioPin, CH: GpioPin, CL: GpioPi
         CL::set_mode(MODE_ALTERNATE);
     }
 
+    /// Toggle the optional RPM pulse output on steps 1 and 4.
     fn pulse_toggle(&mut self, step: u8) {
-        if let Some((toggle_fn, mask)) = self.pulse {
-            if step == 1 || step == 4 {
-                toggle_fn(mask);
-            }
+        if let (Some((toggle_fn, mask)), 1 | 4) = (self.pulse, step) {
+            toggle_fn(mask);
         }
     }
 }

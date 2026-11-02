@@ -307,13 +307,9 @@ const OTHER_LINE: u32 = 1 << 3;
 #[test]
 fn floating_phase_matches_six_step_truth_table_and_invalid_fallback() {
     let expected = [Phase::C, Phase::A, Phase::B, Phase::C, Phase::A, Phase::B];
-    // Devel's lookup is branch-free over `step & 7` (an ISR path): invalid
-    // steps 0 and 7 fall back to C, higher values alias their low 3 bits.
-    // AM32's changeCompInput has no fallback, so neither choice is parity.
-    for step in 0..=255u8 {
-        let low = step & 7;
-        let phase = if (1..=6).contains(&low) {
-            expected[usize::from(low - 1)]
+    for step in 0..=255 {
+        let phase = if (1..=6).contains(&step) {
+            expected[usize::from(step - 1)]
         } else {
             Phase::C
         };

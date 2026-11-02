@@ -219,7 +219,7 @@ pub enum ToneEvent {
 ///
 /// Drive is the config's `comp_pwm` bit alone: a note only starts while the
 /// motor is not running, and old_routine is a running mode, so the core's
-/// drive decision (`bridge::drive_complementary`) reduces to it; AM32's
+/// drive decision (`bridge::drive_mode`) reduces to it; AM32's
 /// tones likewise follow comp_pwm alone.
 #[inline(always)]
 pub fn step<P, B, M, F>(
@@ -243,7 +243,7 @@ pub fn step<P, B, M, F>(
             bridge.set_period(base_period);
             bridge.set_tone_divider(n.prescaler);
             bridge.set_duty_all(tone_duty(config.beep_volume));
-            bridge.com_step(n.step, config.use_comp_pwm());
+            bridge.com_step(n.step, config.pwm_mode());
         }
         ToneAction::Silence => {
             on_event(ToneEvent::Silence);
@@ -362,14 +362,14 @@ mod tests {
         }
     }
     impl crate::hal::PhaseOutput for Rec {
-        fn com_step(&mut self, step: u8, complementary: bool) {
-            self.push(b'c', step as u16, complementary as u16);
+        fn com_step(&mut self, step: u8, mode: crate::hal::PwmMode) {
+            self.push(b'c', step as u16, mode.is_complementary() as u16);
         }
         fn all_off(&mut self) {
             self.push(b'o', 0, 0);
         }
         fn full_brake(&mut self) {}
-        fn all_pwm(&mut self, _: bool) {}
+        fn all_pwm(&mut self, _: crate::hal::PwmMode) {}
         fn proportional_brake(&mut self) {}
     }
     impl crate::bridge::Bridge for Rec {

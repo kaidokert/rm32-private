@@ -77,7 +77,7 @@ mod tests {
         last_duty: u16,
         all_off_called: bool,
         com_step_calls: u32,
-        last_complementary: Option<bool>,
+        last_com_step_mode: Option<crate::hal::PwmMode>,
         prop_brake_calls: u32,
         order: *const MockOrder,
     }
@@ -87,23 +87,23 @@ mod tests {
                 last_duty: 0,
                 all_off_called: false,
                 com_step_calls: 0,
-                last_complementary: None,
+                last_com_step_mode: None,
                 prop_brake_calls: 0,
                 order: ptr::null(),
             }
         }
     }
     impl hal::PhaseOutput for MockBridge {
-        fn com_step(&mut self, _: u8, complementary: bool) {
+        fn com_step(&mut self, _: u8, mode: crate::hal::PwmMode) {
             self.com_step_calls += 1;
-            self.last_complementary = Some(complementary);
+            self.last_com_step_mode = Some(mode);
         }
         fn all_off(&mut self) {
             self.all_off_called = true;
             record_order(self.order, |order| &order.all_off);
         }
         fn full_brake(&mut self) {}
-        fn all_pwm(&mut self, _: bool) {}
+        fn all_pwm(&mut self, _: crate::hal::PwmMode) {}
         fn proportional_brake(&mut self) {
             self.prop_brake_calls += 1;
             record_order(self.order, |order| &order.prop_brake);
@@ -1078,14 +1078,22 @@ mod tests {
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
-                comp_pwm,
+                if comp_pwm {
+                    crate::hal::PwmMode::Complementary
+                } else {
+                    crate::hal::PwmMode::Diode
+                },
                 false,
                 true,
             );
             assert_eq!(phase.com_step_calls, 1, "{mode:?}");
             assert_eq!(
-                phase.last_complementary,
-                Some(want),
+                phase.last_com_step_mode,
+                Some(if want {
+                    crate::hal::PwmMode::Complementary
+                } else {
+                    crate::hal::PwmMode::Diode
+                }),
                 "{mode:?} comp_pwm={comp_pwm}"
             );
         }
@@ -1096,7 +1104,7 @@ mod tests {
         use hal::Phase;
         // AM32 changeCompInput: step 1/4 -> C, 2/5 -> A, 3/6 -> B; the
         // ports' old mux tables sent 0 and 7 to C. Values >= 8 (never
-        // produced by Commutation) wrap modulo 8.
+        // produced by Commutation) also fall back to C, never to a valid step.
         let want = [
             Phase::C, // 0
             Phase::C,
@@ -1110,7 +1118,7 @@ mod tests {
         for step in 0..=255u8 {
             assert_eq!(
                 hal::floating_phase(step),
-                want[(step % 8) as usize],
+                want.get(step as usize).copied().unwrap_or(Phase::C),
                 "step {step}"
             );
         }
@@ -1141,7 +1149,7 @@ mod tests {
                     &mut com_timer,
                     &mut comp,
                     &mut phase,
-                    false,
+                    crate::hal::PwmMode::Diode,
                     false,
                     true,
                 );
@@ -1182,7 +1190,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             false,
             true,
         );
@@ -1224,7 +1232,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             false,
             true,
         );
@@ -1263,7 +1271,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             false,
             true,
         );
@@ -1299,7 +1307,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             false,
             true,
         );
@@ -1344,7 +1352,7 @@ mod tests {
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
-                false,
+                crate::hal::PwmMode::Diode,
                 bidirectional,
                 true,
             );
@@ -1384,7 +1392,7 @@ mod tests {
                 &mut com_timer,
                 &mut comp,
                 &mut phase,
-                false,
+                crate::hal::PwmMode::Diode,
                 bidirectional,
                 false,
             );
@@ -1428,7 +1436,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             false,
             true,
         );
@@ -1464,7 +1472,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             false,
             false,
         );
@@ -1500,7 +1508,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             false,
             true,
         );
@@ -1537,7 +1545,7 @@ mod tests {
             &mut com_timer,
             &mut comp,
             &mut phase,
-            false,
+            crate::hal::PwmMode::Diode,
             true,
             true,
         );

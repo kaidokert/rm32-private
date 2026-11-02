@@ -21,15 +21,15 @@ pub use crate::bridge::Bridge;
 pub trait PhaseOutput {
     /// Drive commutation step `step` (1..=6, [`crate::bridge::step_legs`])
     /// with the driven leg complementary or diode
-    /// ([`crate::bridge::drive_complementary`], the core's decision); any
+    /// ([`crate::bridge::drive_mode`], the core's decision); any
     /// other step leaves the outputs unchanged.
-    fn com_step(&mut self, step: u8, complementary: bool);
+    fn com_step(&mut self, step: u8, mode: PwmMode);
     /// Every leg floating (AM32 `allOff`).
     fn all_off(&mut self);
     /// Every low side on (AM32 `fullBrake`).
     fn full_brake(&mut self);
     /// Every leg driven by PWM (AM32 `allpwm`).
-    fn all_pwm(&mut self, complementary: bool);
+    fn all_pwm(&mut self, mode: PwmMode);
     /// High sides off, low sides PWM (AM32 `proportionalBrake`).
     fn proportional_brake(&mut self);
     /// RPM pulse output on steps 1 and 4 (debug); boards without one ignore it.
@@ -47,25 +47,55 @@ pub enum Phase {
     C,
 }
 
-/// The phase left floating (and so sensed for BEMF) in commutation step
-/// `step` (AM32 `changeCompInput`): 1|4 -> C, 2|5 -> A, 3|6 -> B, and 0 or
-/// 7 -> C as the ports' mux tables did. `Commutation` keeps `step` in
-/// 1..=6; larger values wrap modulo 8.
+/// Low-side gate drive mode for PWM-driven bridge legs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum PwmMode {
+    /// Non-complementary drive: high-side FET switches PWM while the low-side
+    /// FET stays off (freewheeling through the body diode).
+    Diode = 0,
+    /// Complementary PWM: high-side and low-side FETs switch in hardware
+    /// complementary PWM with dead-time insertion (synchronous rectification).
+    Complementary = 1,
+}
+
+impl PwmMode {
+    /// True when this mode is [`PwmMode::Complementary`].
+    #[inline(always)]
+    pub const fn is_complementary(self) -> bool {
+        matches!(self, Self::Complementary)
+    }
+}
+
+const FLOATING_PHASE_TABLE: [Phase; 8] = {
+    let mut table = [Phase::C; 8];
+    let mut step = 1u8;
+    while step <= 6 {
+        let legs = crate::bridge::step_legs(step, PwmMode::Diode);
+        table[step as usize] = if matches!(legs[0], crate::bridge::LegRole::Float) {
+            Phase::A
+        } else if matches!(legs[1], crate::bridge::LegRole::Float) {
+            Phase::B
+        } else {
+            Phase::C
+        };
+        step += 1;
+    }
+    table
+};
+
+/// Floating phase for six-step commutation. Invalid steps retain the
+/// established comparator fallback to C; they do not wrap into valid steps.
 ///
-/// A branch-free table: a `match` compiles to a bit-test chain on M0.
+/// Uses a compile-time lookup table so Cortex-M0 targets emit a direct indexed
+/// load instead of a multi-branch bit-test chain on every commutation.
 #[inline(always)]
 pub const fn floating_phase(step: u8) -> Phase {
-    const TABLE: [Phase; 8] = [
-        Phase::C,
-        Phase::C,
-        Phase::A,
-        Phase::B,
-        Phase::C,
-        Phase::A,
-        Phase::B,
-        Phase::C,
-    ];
-    TABLE[(step & 7) as usize]
+    if step < 8 {
+        FLOATING_PHASE_TABLE[step as usize]
+    } else {
+        Phase::C
+    }
 }
 
 /// BEMF sensing: the comparator's phase routing and its edge interrupt.

@@ -417,7 +417,7 @@ pub fn handle_tim14() {
         &mut state.hal.com_timer,
         &mut state.hal.comp,
         &mut state.hal.phase,
-        state.config.use_comp_pwm(),
+        state.config.pwm_mode(),
         state.config.is_bidirectional(),
         state.config.use_strict_changeover(),
     );

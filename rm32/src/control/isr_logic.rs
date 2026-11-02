@@ -91,7 +91,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
         ctx.commutation.set_step(changeover);
         ctx.hal.bridge().com_step(
             changeover,
-            crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+            crate::bridge::drive_mode(ctx.config.pwm_mode(), ctx.shared),
         );
         ctx.hal.bridge().latch();
         let ci = ctx.shared.commutation_interval();
@@ -131,7 +131,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.shared.set_e_com_time(e_com);
                 ctx.hal.bridge().com_step(
                     step,
-                    crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+                    crate::bridge::drive_mode(ctx.config.pwm_mode(), ctx.shared),
                 );
                 route_bemf(ctx.hal.bemf(), ctx.commutation);
                 ctx.shared
@@ -151,7 +151,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             if ctx.config.brake_on_stop == 2 {
                 ctx.hal.bridge().com_step(
                     2,
-                    crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+                    crate::bridge::drive_mode(ctx.config.pwm_mode(), ctx.shared),
                 );
                 // AM32 main.c:1936.
                 // TODO(AM32 parity, public #105): AM32 adds DEAD_TIME here.
@@ -265,10 +265,9 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
                 ctx.hal.com_timer().disable_interrupt();
                 ctx.hal.bemf().mask_irq();
                 ctx.hal.bridge().set_duty_all(0);
-                ctx.hal.bridge().all_pwm(crate::bridge::drive_complementary(
-                    ctx.config.use_comp_pwm(),
-                    ctx.shared,
-                ));
+                ctx.hal
+                    .bridge()
+                    .all_pwm(crate::bridge::drive_mode(ctx.config.pwm_mode(), ctx.shared));
                 ctx.duty.sine_outputs_on = true;
             }
         } else {
@@ -419,7 +418,7 @@ fn bemf_polling<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
             ctx.shared.set_e_com_time(e_com);
             ctx.hal.bridge().com_step(
                 step,
-                crate::bridge::drive_complementary(ctx.config.use_comp_pwm(), ctx.shared),
+                crate::bridge::drive_mode(ctx.config.pwm_mode(), ctx.shared),
             );
             ctx.hal.bridge().pulse_toggle(step);
             route_bemf(ctx.hal.bemf(), ctx.commutation);
@@ -443,7 +442,7 @@ pub fn commutation_timer_expired<P, S, C, B, T, W>(
     com_timer: &mut T,
     comp: &mut C,
     bridge: &mut B,
-    comp_pwm: bool,
+    pwm_mode: hal::PwmMode,
     bidirectional: bool,
     strict_changeover: bool,
 ) where
@@ -468,7 +467,7 @@ pub fn commutation_timer_expired<P, S, C, B, T, W>(
     let ci0 = shared.commutation_interval();
     let e_com = commutation.record_interval::<P>(ci0 as u16);
     shared.set_e_com_time(e_com);
-    bridge.com_step(step, crate::bridge::drive_complementary(comp_pwm, shared));
+    bridge.com_step(step, crate::bridge::drive_mode(pwm_mode, shared));
     bridge.pulse_toggle(step);
     route_bemf(comp, commutation);
 
