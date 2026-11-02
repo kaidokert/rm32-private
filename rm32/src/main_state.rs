@@ -527,11 +527,12 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                 && diff > (self.timing.average_interval >> 1)
                 && self.timing.average_interval < P::DESYNC_MAX_INTERVAL
             {
-                // AM32's `average_interval = 5000` reset here is dead code
-                // (placed after zero_crosses is zeroed) — match the
-                // reference's behavior (no reset), not its intent;
-                // "fixing" the ordering creates a desync echo that
-                // double-kicks duty during recovery.
+                // AM32's `if (zero_crosses > 100) { average_interval = 5000; }`
+                // sits after `zero_crosses = 0` and is unreachable dead code.
+                // Match that runtime behavior: resetting `average_interval`
+                // before `last_average_interval = average_interval` seeds 5000
+                // into the detector and triggers a false second desync echo on
+                // the following revolution.
                 #[cfg(feature = "bench-diag")]
                 {
                     self.dsy_snap = [
@@ -591,12 +592,11 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                     self.desync_rearm_zc = rearm_holdoff_zc;
                 }
                 if !(desync_from_interrupt_mode && fast_rotor) {
-                    // DesyncFallback first: Running→OldRoutine (sets
-                    // old_routine=1). Then StopMotor conditionally:
-                    // OldRoutine→Armed (sets running=0). Order matters:
-                    // StopMotor before DesyncFallback would go Running→
-                    // Armed, blocking DesyncFallback (Armed has no
-                    // transition).
+                    // DesyncFallback first (Running -> OldRoutine), then StopMotor
+                    // conditionally (OldRoutine -> Armed); StopMotor first would
+                    // transition directly to Armed where DesyncFallback is ignored.
+                    // Both orders end in the same mode. AM32 sets running = 0
+                    // before old_routine = 1 (main.c), so this order is not parity.
                     shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
                     if (self.config.bi_direction == 0 && shared.adjusted_input() > 47)
                         || shared.commutation_interval() > P::DESYNC_STOP_INTERVAL
@@ -1874,18 +1874,94 @@ mod tests {
 
     #[test]
     fn bemf_timeout_requests_commutation_restart_while_running() {
+        for bi_direction in [0u8, 1u8] {
+            let shared = SharedState::new::<crate::platform::TestPlatform>();
+            shared.set_motor_mode(crate::motor_mode::MotorMode::Running);
+            shared.set_adjusted_input(100);
+            shared.set_interval_timer_count(
+                <crate::platform::TestPlatform as Timing>::BEMF_STALL_TIMER_THRESHOLD + 1,
+            );
+            let mut main = make_test_main_state();
+            main.config.bi_direction = bi_direction;
+
+            main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+            assert_eq!(shared.isr_action(), IsrAction::CommutateKick);
+            assert_eq!(shared.zero_crosses(), 0);
+            assert!(shared.old_routine());
+        }
+    }
+
+    #[test]
+    fn desync_recovery_high_zc_does_not_seed_false_echo() {
+        use crate::motor_mode::MotorMode;
+
         let shared = SharedState::new::<crate::platform::TestPlatform>();
-        shared.set_motor_mode(crate::motor_mode::MotorMode::Running);
-        shared.set_adjusted_input(100);
-        shared.set_interval_timer_count(
-            <crate::platform::TestPlatform as Timing>::BEMF_STALL_TIMER_THRESHOLD + 1,
-        );
+        shared.set_motor_mode(MotorMode::Running);
+        shared.set_adjusted_input(0);
+        shared.set_zero_crosses(200);
+        // Above DESYNC_STAY_INTERRUPT_CI: the rig tuning stays in interrupt mode below it.
+        shared.set_commutation_interval(700);
+        shared.set_e_com_time(1500);
+
         let mut main = make_test_main_state();
+        main.config.bi_direction = 1;
+        main.desync_checks_after_polling = DESYNC_SETTLED_CHECKS;
+        main.desync_check = true;
+        main.timing.last_average_interval = 800;
+        main.timing.average_interval = 500;
 
         main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
 
-        assert_eq!(shared.isr_action(), IsrAction::CommutateKick);
+        assert_eq!(shared.motor_mode(), MotorMode::OldRoutine);
+        assert!(shared.take_duty_kick_down());
         assert_eq!(shared.zero_crosses(), 0);
-        assert!(shared.old_routine());
+        assert_eq!(main.timing.average_interval, 500);
+        assert_eq!(main.timing.last_average_interval, 500);
+
+        // Once the motor re-enters closed-loop Running at the same 500-tick
+        // average interval, the next settled desync check must not fire a
+        // spurious second desync from a 5000-tick reset seed.
+        shared.set_motor_mode(MotorMode::Running);
+        shared.set_zero_crosses(11);
+        shared.set_e_com_time(1500);
+        main.desync_checks_after_polling = DESYNC_SETTLED_CHECKS;
+        main.desync_check = true;
+
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert_eq!(shared.motor_mode(), MotorMode::Running);
+        assert!(!shared.take_duty_kick_down());
+    }
+
+    #[test]
+    fn desync_recovery_orders_fallback_before_conditional_stop() {
+        use crate::motor_mode::MotorMode;
+
+        // Unidirectional throttle > 47 triggers DesyncFallback (Running -> OldRoutine)
+        // followed by StopMotor (OldRoutine -> Armed). Reversing the calls would
+        // transition directly Running -> Armed and ignore DesyncFallback.
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(MotorMode::Running);
+        shared.set_adjusted_input(100);
+        shared.set_zero_crosses(25);
+        // Above DESYNC_STAY_INTERRUPT_CI: the rig tuning stays in interrupt mode below it.
+        shared.set_commutation_interval(700);
+        shared.set_e_com_time(1500);
+
+        let mut main = make_test_main_state();
+        main.config.bi_direction = 0;
+        main.desync_checks_after_polling = DESYNC_SETTLED_CHECKS;
+        main.desync_check = true;
+        main.timing.last_average_interval = 800;
+        main.timing.average_interval = 500;
+
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert_eq!(shared.motor_mode(), MotorMode::Armed);
+        assert_eq!(shared.mode_transition_count(), 2);
+        assert_eq!(shared.last_transition_from(), MotorMode::OldRoutine);
+        assert!(!shared.running());
+        assert!(!shared.old_routine());
     }
 }

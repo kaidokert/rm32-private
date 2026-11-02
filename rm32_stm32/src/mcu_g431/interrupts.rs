@@ -73,7 +73,7 @@ fn EXTI15_10() {
     let ch1 = dma.ch1();
     unsafe {
         ch1.ndtr().write(|w| w.bits(next_capture.edges_per_burst));
-        ch1.cr().modify(|r, w| w.bits(r.bits() | 1));
+        ch1.cr().modify(|r, w| w.bits(r.bits() | 1)); // Enable CH1
     }
     unsafe {
         tim15.cr1().modify(|r, w| w.bits(r.bits() | 1));

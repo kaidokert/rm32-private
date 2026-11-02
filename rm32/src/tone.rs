@@ -16,11 +16,10 @@
 /// One tone note: PWM timer prescaler (pitch), commutation step (which
 /// windings hum), duration in milliseconds.
 ///
-/// 4-byte aligned (8 bytes): at its natural 2-byte alignment the 6-byte copy
-/// out of the tune tables became a call to the generic `memcpy` (297
-/// instructions on thumbv6m) inside the 20 kHz tick; aligned, LLVM copies it
-/// with two word loads/stores (binz WCET gate).
-#[derive(Clone, Copy)]
+/// Word-aligned so Cortex-M0 (`thumbv6m`) copies notes from tune tables with
+/// two 32-bit loads/stores instead of calling `__aeabi_memcpy` (297
+/// instructions) in the tick ISR.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C, align(4))]
 pub struct Note {
     pub prescaler: u16,
@@ -435,5 +434,11 @@ mod tests {
         run(&mut t, &mut rec, 0, false, &mut ev);
         assert_eq!((ev, rec.take().1), (None, 0), "idle: no writes");
         assert_eq!(tone_duty(5), 15);
+    }
+
+    #[test]
+    fn note_layout_is_word_aligned_for_thumbv6m_loads() {
+        assert_eq!(core::mem::size_of::<Note>(), 8);
+        assert_eq!(core::mem::align_of::<Note>(), 4);
     }
 }

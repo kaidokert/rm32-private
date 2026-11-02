@@ -95,6 +95,10 @@ pub struct SharedState {
     // placement).
     one_khz_counter: AtomicU8,
     telem_counter: AtomicU16,
+    #[cfg(test)]
+    mode_transition_count: AtomicU32,
+    #[cfg(test)]
+    last_transition_from: AtomicU8,
 }
 
 impl SharedState {
@@ -148,6 +152,10 @@ impl SharedState {
             tone_request: AtomicU8::new(0),
             one_khz_counter: AtomicU8::new(0),
             telem_counter: AtomicU16::new(0),
+            #[cfg(test)]
+            mode_transition_count: AtomicU32::new(0),
+            #[cfg(test)]
+            last_transition_from: AtomicU8::new(MotorMode::Disarmed as u8),
         }
     }
 
@@ -188,13 +196,28 @@ impl SharedState {
     /// Atomic state transition via CAS.
     /// On M4: hardware LDREX/STREX. On M0: portable-atomic disables interrupts.
     pub fn transition(&self, event: crate::motor_mode::MotorEvent) {
-        self.motor_mode
-            .fetch_update(REL, ACQ, |cur| {
-                let mode = MotorMode::from_u8(cur);
-                let new = mode.transition(event);
-                if new != mode { Some(new as u8) } else { None }
-            })
-            .ok();
+        #[allow(unused_variables)]
+        if let Ok(prev) = self.motor_mode.fetch_update(REL, ACQ, |cur| {
+            let mode = MotorMode::from_u8(cur);
+            let new = mode.transition(event);
+            if new != mode { Some(new as u8) } else { None }
+        }) {
+            #[cfg(test)]
+            {
+                self.mode_transition_count.fetch_add(1, REL);
+                self.last_transition_from.store(prev, REL);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mode_transition_count(&self) -> u32 {
+        self.mode_transition_count.load(ACQ)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_transition_from(&self) -> MotorMode {
+        MotorMode::from_u8(self.last_transition_from.load(ACQ))
     }
 
     // Convenience getters (delegate to motor_mode)

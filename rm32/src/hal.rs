@@ -204,7 +204,7 @@ pub trait InputCapture {
     fn set_pull_none(&mut self);
     /// Set inverted input polarity (for boards with signal inversion).
     fn set_inverted(&mut self, _inverted: bool) {}
-    /// Access the DMA receive buffer (DShot/servo frames).
+    /// Access the captured edge timestamps (DShot/servo frames).
     fn edges(&self) -> &[u32; 64];
     /// Access the GCR encode buffer (bidirectional DShot telemetry).
     fn gcr_buffer(&mut self) -> &mut [u32; 37];
@@ -214,7 +214,7 @@ pub trait InputCapture {
     /// Called during protocol detection. DShot600=0, DShot300=1, DShot150=3.
     fn set_output_prescaler(&mut self, prescaler: DshotOutputPrescaler);
     /// Record the active capture timer prescaler selected by protocol detection
-    /// so `receive_dshot_dma()` restores it after bidirectional DShot TX.
+    /// so `start_capture()` restores it after bidirectional DShot TX.
     fn set_capture_prescaler(&mut self, _prescaler: u16) {}
 }
 
