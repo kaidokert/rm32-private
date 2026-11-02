@@ -378,6 +378,9 @@ impl Commands for TestShared {
     fn set_save_settings_flag(&self, v: bool) {
         self.save_settings_flag.set(v);
     }
+    fn control_ticks(&self) -> u32 {
+        self.control_ticks.get()
+    }
     fn increment_control_ticks(&self) {
         self.control_ticks
             .set(self.control_ticks.get().wrapping_add(1));
@@ -418,5 +421,117 @@ mod tests {
         assert!(shared.desync_check_pending());
         shared.set_desync_check_pending(false);
         assert!(!shared.desync_check_pending());
+    }
+
+    #[test]
+    fn domain_traits_roundtrip_without_dummy_defaults() {
+        let shared = TestShared::default();
+
+        // MotorStatus & MotorStatusExt
+        assert_eq!(shared.motor_mode(), MotorMode::Disarmed);
+        shared.set_motor_mode(MotorMode::Armed);
+        assert!(shared.armed());
+        shared.set_armed(false);
+        assert!(!shared.armed());
+        shared.set_armed(true);
+        assert!(shared.armed());
+        shared.set_running(true);
+        assert!(shared.running());
+        assert!(shared.old_routine());
+        shared.set_old_routine(false);
+        assert!(shared.running());
+        assert!(!shared.old_routine());
+        shared.set_old_routine(true);
+        assert!(shared.old_routine());
+        shared.set_running(false);
+        assert!(!shared.running());
+        shared.set_stepper_sine(true);
+        assert!(shared.stepper_sine());
+        shared.set_stepper_sine(false);
+        assert!(!shared.stepper_sine());
+        shared.transition(MotorEvent::StartMotor);
+        assert!(shared.running());
+        shared.set_zero_crosses(10);
+        assert_eq!(shared.zero_crosses(), 10);
+        shared.increment_zero_crosses();
+        assert_eq!(shared.zero_crosses(), 11);
+        shared.set_commutation_interval(900);
+        assert_eq!(shared.commutation_interval(), 900);
+        shared.set_e_com_time(4321);
+        assert_eq!(shared.e_com_time(), 4321);
+        shared.set_gate_avg(321);
+        assert_eq!(shared.gate_avg(), 321);
+        shared.set_interval_timer_count(999);
+        assert_eq!(shared.interval_timer_count(), 999);
+        shared.set_duty_cycle(777);
+        assert_eq!(shared.duty_cycle(), 777);
+        shared.set_forward(false);
+        assert!(!shared.forward());
+
+        // Throttle
+        assert!(!shared.dshot_telemetry());
+        shared.set_input_set(true);
+        assert!(shared.input_set());
+        shared.set_is_dshot(true);
+        assert!(shared.is_dshot());
+        shared.set_newinput(1100);
+        assert_eq!(shared.newinput(), 1100);
+        shared.set_adjusted_input(900);
+        assert_eq!(shared.adjusted_input(), 900);
+        shared.set_duty_cycle_setpoint(800);
+        assert_eq!(shared.duty_cycle_setpoint(), 800);
+        shared.increment_signal_timeout();
+        assert_eq!(shared.signal_timeout(), 1);
+        shared.set_prop_brake_active(true);
+        assert!(shared.prop_brake_active());
+
+        // Drive
+        shared.set_tim1_arr(1500);
+        assert_eq!(shared.tim1_arr(), 1500);
+        shared.set_filter_level(8);
+        assert_eq!(shared.filter_level(), 8);
+        shared.set_min_bemf_counts(4);
+        assert_eq!(shared.min_bemf_counts(), 4);
+        shared.set_auto_advance(3);
+        assert_eq!(shared.auto_advance(), 3);
+
+        // Protections
+        shared.set_duty_maximum(1600);
+        assert_eq!(shared.duty_maximum(), 1600);
+        shared.set_stall_protection_adjust(42);
+        assert_eq!(shared.stall_protection_adjust(), 42);
+        shared.set_current_limit_adjust(1400);
+        assert_eq!(shared.current_limit_adjust(), 1400);
+
+        // Telemetry
+        shared.set_send_telemetry(true);
+        assert!(shared.send_telemetry());
+        shared.set_send_esc_info_flag(true);
+        assert!(shared.send_esc_info_flag());
+        shared.set_battery_voltage(1680);
+        assert_eq!(shared.battery_voltage(), 1680);
+        shared.set_actual_current(1250);
+        assert_eq!(shared.actual_current.get(), 1250);
+        shared.set_degrees_celsius(55);
+        assert_eq!(shared.degrees_celsius.get(), 55);
+        assert!(!shared.telem_counter_check_and_inc(2));
+        assert!(shared.telem_counter_check_and_inc(2));
+
+        // Commands
+        shared.request_isr_action(IsrAction::CommutateKick);
+        assert_eq!(shared.isr_action(), IsrAction::CommutateKick);
+        shared.clear_isr_action(IsrAction::CommutateKick);
+        assert_eq!(shared.isr_action(), IsrAction::None);
+        shared.request_duty_kick_down();
+        assert!(shared.take_duty_kick_down());
+        assert!(!shared.take_duty_kick_down());
+        shared.set_save_settings_flag(true);
+        assert!(shared.save_settings_flag());
+        shared.increment_control_ticks();
+        assert_eq!(shared.control_ticks(), 1);
+        shared.one_khz_counter_inc();
+        assert!(!shared.one_khz_counter_check_and_reset(2));
+        shared.one_khz_counter_inc();
+        assert!(shared.one_khz_counter_check_and_reset(2));
     }
 }

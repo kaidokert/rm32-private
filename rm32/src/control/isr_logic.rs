@@ -212,7 +212,7 @@ pub fn ten_khz_tick<S: SharedComm, H: MotorHal>(ctx: &mut MotorContext<S, H>) {
 
     // Ramp rate limiting. The average is read here, after `bemf_polling`
     // may have updated e_com this tick, and is also the COMP gate's latch
-    // (see `IsrTiming::gate_avg`): one division per tick. Clamped at 0
+    // (see `MotorStatus::gate_avg`): one division per tick. Clamped at 0
     // only: AM32's 5000 is a one-shot desync reset, not a cap -- clamping
     // continuously halves the spin-up gate (4/4 climb failures measured).
     // The AllOff tick returns before this and skips one latch; AllOff
@@ -347,7 +347,7 @@ pub enum BemfIrq {
 /// The COMP interrupt's acceptance gate (AM32 `COMP_IRQHandler`,
 /// stm32l4xx_it.c:276-290 / stm32g0xx_it.c): the gate opens once the
 /// interval timer has run past half the control tick's latched average
-/// (`IsrTiming::gate_avg`, stale on purpose; read directly as AM32 reads
+/// (`MotorStatus::gate_avg`, stale on purpose; read directly as AM32 reads
 /// `average_interval` -- the old ports' fresh e_com/3 fallback for an
 /// unlatched 0 is gone: the tick latches from boot, and while the latch is
 /// 0 so, nearly always, is e_com/3). Gate open on an edge -> `Open` (the

@@ -47,6 +47,7 @@ pub struct ToneScheduler {
     note_idx: u8,
     ticks_left: u32,
     active: bool,
+    active_pwm_mode: Option<crate::hal::PwmMode>,
 }
 
 /// AM32 beacon tune tables — verbatim from main.c:1204's dispatch:
@@ -242,10 +243,13 @@ pub fn step<P, B, M, F>(
             bridge.set_period(base_period);
             bridge.set_tone_divider(n.prescaler);
             bridge.set_duty_all(tone_duty(config.beep_volume));
-            bridge.com_step(n.step, config.pwm_mode());
+            let mode = config.pwm_mode();
+            tone.active_pwm_mode = Some(mode);
+            bridge.com_step(n.step, mode);
         }
         ToneAction::Silence => {
             on_event(ToneEvent::Silence);
+            tone.active_pwm_mode = None;
             let mut bridge = bridge();
             bridge.all_off();
             bridge.set_tone_divider(0);
@@ -253,7 +257,15 @@ pub fn step<P, B, M, F>(
         }
         ToneAction::Idle => {
             if tone.active() {
-                bridge().set_duty_all(tone_duty(config.beep_volume));
+                let mode = config.pwm_mode();
+                let mut bridge = bridge();
+                bridge.set_duty_all(tone_duty(config.beep_volume));
+                if tone.active_pwm_mode != Some(mode)
+                    && let Some(n) = tone.note_for()
+                {
+                    tone.active_pwm_mode = Some(mode);
+                    bridge.com_step(n.step, mode);
+                }
             }
         }
     }
@@ -384,6 +396,48 @@ mod tests {
         fn set_tone_divider(&mut self, div: u16) {
             self.push(b'v', div, 0);
         }
+    }
+
+    /// A `comp_pwm` change while a note plays reapplies the note's windings
+    /// in the new mode once; later ticks only re-assert the duty.
+    #[test]
+    fn step_reapplies_mode_when_comp_pwm_changes_mid_note() {
+        let mut t = ToneScheduler::default();
+        let mut rec = Rec::default();
+        let mut config = crate::config::EepromConfig {
+            beep_volume: 6,
+            comp_pwm: 0,
+            ..Default::default()
+        };
+        let mut run = |t: &mut ToneScheduler, config: &crate::config::EepromConfig, req| {
+            step::<crate::platform::TestPlatform, _, _, _>(
+                t,
+                req,
+                false,
+                config,
+                3332,
+                || &mut rec,
+                |_| {},
+            );
+        };
+        run(&mut t, &config, TONE_BEACON_BASE);
+        config.comp_pwm = 1;
+        run(&mut t, &config, 0);
+        run(&mut t, &config, 0);
+        let n = DEFAULT_TONE[0];
+        let (log, len) = rec.take();
+        assert_eq!(
+            &log[..len],
+            &[
+                (b'p', 3332, 0),
+                (b'v', n.prescaler, 0),
+                (b'd', 18, 0),
+                (b'c', n.step as u16, 0),
+                (b'd', 18, 0),
+                (b'c', n.step as u16, 1),
+                (b'd', 18, 0),
+            ]
+        );
     }
 
     /// S7.4: `step` applies AM32's note sequence (period, pitch, volume

@@ -1964,4 +1964,45 @@ mod tests {
         assert!(!shared.running());
         assert!(!shared.old_routine());
     }
+
+    #[test]
+    fn lvc_mode1_per_cell_triggers_disarm_and_all_off() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_comm::Commands;
+        use crate::shared_state::SharedState;
+
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(MotorMode::OldRoutine);
+
+        let mut main = make_test_main_state();
+        main.config.low_voltage_cut_off = 1;
+        main.cell_count = 3;
+        main.low_cell_volt_cutoff = 330;
+        main.protection.set_low_voltage_count(LVC_NORMAL_THRESHOLD);
+
+        trip_one_khz(&shared);
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert!(!shared.armed());
+        assert_eq!(Commands::isr_action(&shared), IsrAction::AllOff);
+    }
+
+    #[test]
+    fn signal_timeout_unarmed_resets_input_and_requests_reset() {
+        use crate::motor_mode::MotorMode;
+        use crate::shared_state::SharedState;
+
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+        shared.set_motor_mode(MotorMode::Disarmed);
+        shared.set_input_set(true);
+        for _ in 0..=<crate::platform::TestPlatform as Timing>::SIGNAL_TIMEOUT_UNARMED {
+            shared.increment_signal_timeout();
+        }
+
+        let mut main = make_test_main_state();
+        main.tick(&shared, &mut MockAdc::new(), &mut MockTelem);
+
+        assert!(!shared.input_set());
+        assert!(main.needs_reset);
+    }
 }

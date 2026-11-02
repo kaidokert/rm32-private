@@ -245,6 +245,8 @@ pub trait Commands {
     fn save_settings_flag(&self) -> bool;
     fn set_save_settings_flag(&self, v: bool);
 
+    /// Free-running control ISR count, wrapping at u32::MAX. Never reset by main.
+    fn control_ticks(&self) -> u32;
     /// Advance the free-running control-tick count (TIM6 ISR side, once per
     /// tick). The main loop measures its 1 s and LED periods against it, as
     /// AM32's main loop polls `tenkhzcounter` / `ledcounter`, which

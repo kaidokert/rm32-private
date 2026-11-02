@@ -426,7 +426,7 @@ impl SharedState {
         self.e_com_time.store(v as u32, REL);
     }
 
-    /// See `IsrTiming::gate_avg`. Relaxed: one word, no ordering with
+    /// See `MotorStatus::gate_avg`. Relaxed: one word, no ordering with
     /// other fields.
     pub fn gate_avg(&self) -> u32 {
         self.gate_avg.load(core::sync::atomic::Ordering::Relaxed)
@@ -650,8 +650,6 @@ impl crate::shared_comm::MotorStatus for SharedState {
     fn transition(&self, event: crate::motor_mode::MotorEvent) {
         SharedState::transition(self, event);
     }
-    // Override convenience setters to use atomic CAS inherent methods
-    // instead of the non-atomic trait defaults (load + store).
     fn set_armed(&self, v: bool) {
         SharedState::set_armed(self, v);
     }
@@ -902,6 +900,9 @@ impl crate::shared_comm::Commands for SharedState {
     fn set_save_settings_flag(&self, v: bool) {
         SharedState::set_save_settings_flag(self, v);
     }
+    fn control_ticks(&self) -> u32 {
+        SharedState::control_ticks(self)
+    }
     fn increment_control_ticks(&self) {
         SharedState::increment_control_ticks(self);
     }
@@ -915,7 +916,9 @@ impl crate::shared_comm::Commands for SharedState {
 
 #[cfg(test)]
 mod tests {
-    use crate::shared_comm::{Commands, IsrAction, MotorStatus};
+    use crate::shared_comm::{
+        Commands, Drive, IsrAction, MotorStatus, MotorStatusExt, Protections, Telemetry, Throttle,
+    };
 
     use super::*;
 
@@ -1038,7 +1041,6 @@ mod tests {
 
     #[test]
     fn gate_avg_roundtrips_via_core_atomic() {
-        use crate::shared_comm::MotorStatus;
         let shared = SharedState::new::<crate::platform::TestPlatform>();
         let _: &core::sync::atomic::AtomicU32 = &shared.gate_avg;
         assert_eq!(shared.gate_avg(), 0);
@@ -1051,5 +1053,105 @@ mod tests {
         MotorStatus::set_gate_avg(&shared, 5678);
         assert_eq!(shared.gate_avg(), 5678);
         assert_eq!(MotorStatus::gate_avg(&shared), 5678);
+    }
+
+    #[test]
+    fn shared_state_domain_traits_roundtrip_without_dummy_defaults() {
+        use crate::motor_mode::MotorEvent;
+        let shared = SharedState::new::<crate::platform::TestPlatform>();
+
+        // MotorStatus & MotorStatusExt
+        assert_eq!(MotorStatus::motor_mode(&shared), MotorMode::Disarmed);
+        MotorStatus::set_motor_mode(&shared, MotorMode::Armed);
+        assert!(MotorStatusExt::armed(&shared));
+        MotorStatus::set_armed(&shared, false);
+        assert!(!MotorStatusExt::armed(&shared));
+        MotorStatus::set_armed(&shared, true);
+        assert!(MotorStatusExt::armed(&shared));
+        MotorStatus::set_running(&shared, true);
+        assert!(MotorStatusExt::running(&shared));
+        assert!(MotorStatusExt::old_routine(&shared));
+        MotorStatus::set_old_routine(&shared, false);
+        assert!(MotorStatusExt::running(&shared));
+        assert!(!MotorStatusExt::old_routine(&shared));
+        MotorStatus::set_running(&shared, false);
+        assert!(!MotorStatusExt::running(&shared));
+        MotorStatus::set_stepper_sine(&shared, true);
+        assert!(MotorStatusExt::stepper_sine(&shared));
+        MotorStatus::set_stepper_sine(&shared, false);
+        assert!(!MotorStatusExt::stepper_sine(&shared));
+        MotorStatus::transition(&shared, MotorEvent::StartMotor);
+        assert!(MotorStatusExt::running(&shared));
+        MotorStatus::set_zero_crosses(&shared, 10);
+        assert_eq!(MotorStatus::zero_crosses(&shared), 10);
+        MotorStatus::increment_zero_crosses(&shared);
+        assert_eq!(MotorStatus::zero_crosses(&shared), 11);
+        MotorStatus::set_commutation_interval(&shared, 900);
+        assert_eq!(MotorStatus::commutation_interval(&shared), 900);
+        MotorStatus::set_e_com_time(&shared, 4321);
+        assert_eq!(MotorStatus::e_com_time(&shared), 4321);
+        MotorStatus::set_interval_timer_count(&shared, 999);
+        assert_eq!(MotorStatus::interval_timer_count(&shared), 999);
+        MotorStatus::set_duty_cycle(&shared, 777);
+        assert_eq!(MotorStatus::duty_cycle(&shared), 777);
+        MotorStatus::set_forward(&shared, false);
+        assert!(!MotorStatus::forward(&shared));
+
+        // Throttle
+        assert!(!Throttle::dshot_telemetry(&shared));
+        Throttle::set_input_set(&shared, true);
+        assert!(Throttle::input_set(&shared));
+        Throttle::set_is_dshot(&shared, true);
+        assert!(Throttle::is_dshot(&shared));
+        Throttle::set_newinput(&shared, 1100);
+        assert_eq!(Throttle::newinput(&shared), 1100);
+        Throttle::set_adjusted_input(&shared, 900);
+        assert_eq!(Throttle::adjusted_input(&shared), 900);
+        Throttle::set_duty_cycle_setpoint(&shared, 800);
+        assert_eq!(Throttle::duty_cycle_setpoint(&shared), 800);
+        Throttle::increment_signal_timeout(&shared);
+        assert_eq!(Throttle::signal_timeout(&shared), 1);
+        Throttle::set_prop_brake_active(&shared, true);
+        assert!(Throttle::prop_brake_active(&shared));
+
+        // Drive
+        Drive::set_tim1_arr(&shared, 1500);
+        assert_eq!(Drive::tim1_arr(&shared), 1500);
+        Drive::set_filter_level(&shared, 8);
+        assert_eq!(Drive::filter_level(&shared), 8);
+        Drive::set_min_bemf_counts(&shared, 4);
+        assert_eq!(Drive::min_bemf_counts(&shared), 4);
+        Drive::set_auto_advance(&shared, 3);
+        assert_eq!(Drive::auto_advance(&shared), 3);
+
+        // Protections
+        Protections::set_duty_maximum(&shared, 1600);
+        assert_eq!(Protections::duty_maximum(&shared), 1600);
+        Protections::set_stall_protection_adjust(&shared, 42);
+        assert_eq!(Protections::stall_protection_adjust(&shared), 42);
+        Protections::set_current_limit_adjust(&shared, 1400);
+        assert_eq!(Protections::current_limit_adjust(&shared), 1400);
+
+        // Telemetry
+        Telemetry::set_send_telemetry(&shared, true);
+        assert!(Telemetry::send_telemetry(&shared));
+        Telemetry::set_send_esc_info_flag(&shared, true);
+        assert!(Telemetry::send_esc_info_flag(&shared));
+        Telemetry::set_battery_voltage(&shared, 1680);
+        assert_eq!(Telemetry::battery_voltage(&shared), 1680);
+        Telemetry::set_actual_current(&shared, 1250);
+        assert_eq!(shared.actual_current(), 1250);
+        Telemetry::set_degrees_celsius(&shared, 55);
+        assert_eq!(shared.degrees_celsius(), 55);
+        assert!(!Telemetry::telem_counter_check_and_inc(&shared, 2));
+        assert!(Telemetry::telem_counter_check_and_inc(&shared, 2));
+
+        // Commands
+        Commands::set_save_settings_flag(&shared, true);
+        assert!(Commands::save_settings_flag(&shared));
+        Commands::increment_control_ticks(&shared);
+        assert_eq!(Commands::control_ticks(&shared), 1);
+        Commands::one_khz_counter_inc(&shared);
+        assert!(Commands::one_khz_counter_check_and_reset(&shared, 1));
     }
 }
