@@ -53,6 +53,8 @@ pub fn init(
 
     let adc = super::adc::new_adc();
     if let Err(e) = adc.init() {
+        // Format with `{}` (not `{:?}`) so `core::fmt`'s debug-escape tables
+        // are not linked into flash.
         let (kind, what) = e.parts();
         crate::dprintln!("[rm32] ADC init FAILED: {} {}", kind, what);
     }

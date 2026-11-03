@@ -13,6 +13,9 @@ use std::sync::{
 mod adc_generic;
 #[path = "../../rm32_stm32/src/adc_hal.rs"]
 mod adc_hal;
+#[allow(unexpected_cfgs)]
+#[path = "../../rm32_stm32/src/board_ext.rs"]
+mod board_ext;
 #[path = "../../rm32_stm32/src/comp_hal.rs"]
 mod comp_hal;
 #[path = "../../rm32_stm32/src/comparator.rs"]
@@ -35,17 +38,6 @@ mod regs;
 pub mod asm {
     pub fn delay(_: u32) {}
     pub fn nop() {}
-}
-
-/// Devel keeps `BemfPins` in rm32_stm32's board extensions; mirror it here
-/// for the included adapters.
-mod board_ext {
-    #[derive(Clone, Copy, Debug)]
-    pub struct BemfPins {
-        pub phase_a: u32,
-        pub phase_b: u32,
-        pub phase_c: u32,
-    }
 }
 
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -614,9 +606,67 @@ fn g071_adc_enable_rejects_corrupted_chselr_readback() {
     g071_adc::G071AdcOps.power_up();
     assert!(g071_adc::G071AdcOps.calibrate().is_ok());
     match g071_adc::G071AdcOps.enable() {
-        Err(regs::InitError::Timeout("ADC CHSELR readback")) => {}
+        Err(e @ regs::InitError::Timeout("ADC CHSELR readback")) => {
+            assert_eq!(e.parts(), ("timeout", "ADC CHSELR readback"));
+        }
         other => panic!("expected ADC CHSELR readback timeout, got {:?}", other),
     }
     // Failed sequence programming must disable the ADC (ADDIS clears ADEN) while keeping ADVREGEN.
     assert_eq!(BANK.cr.get(), 1 << 28);
+}
+
+#[test]
+fn init_error_parts_splits_subsystem_and_detail_across_all_variants() {
+    use regs::InitError;
+    assert_eq!(
+        InitError::Timeout("ADC ADRDY").parts(),
+        ("timeout", "ADC ADRDY")
+    );
+    assert_eq!(
+        InitError::AdcInit("calibration").parts(),
+        ("adc", "calibration")
+    );
+    assert_eq!(
+        InitError::ClockInit("PLL lock").parts(),
+        ("clock", "PLL lock")
+    );
+    assert_eq!(InitError::UartInit("TEACK").parts(), ("uart", "TEACK"));
+    assert_eq!(InitError::FlashError("unlock").parts(), ("flash", "unlock"));
+}
+
+#[test]
+fn board_ext_defaults_to_healthy_and_enabled_when_no_pins_configured() {
+    let ext = board_ext::BoardExt {
+        gate_enable: None,
+        nfault: None,
+        three_shunt: false,
+        bench_dir_reversed: false,
+        bench_sine_start: false,
+        bench_pwm_khz: 0,
+        bench_fixed_pwm: false,
+        bemf_pins: pins([6, 7, 8]),
+    };
+    ext.init_pins();
+    ext.set_gate_enable(false);
+    assert!(ext.gate_enabled());
+    assert!(!ext.fault());
+    ext.drive_gate(false);
+    ext.drive_gate(true);
+    assert_eq!(ext.bemf_pins, pins([6, 7, 8]));
+}
+
+#[test]
+#[should_panic(expected = "gate_enable_pin / nfault_pin are implemented for G071 only")]
+fn board_ext_rejects_gate_enable_pin_on_non_g071_targets() {
+    let ext = board_ext::BoardExt {
+        gate_enable: Some(board_ext::PinRef { port: 3, pin: 1 }),
+        nfault: None,
+        three_shunt: false,
+        bench_dir_reversed: false,
+        bench_sine_start: false,
+        bench_pwm_khz: 0,
+        bench_fixed_pwm: false,
+        bemf_pins: pins([1, 2, 3]),
+    };
+    ext.init_pins();
 }

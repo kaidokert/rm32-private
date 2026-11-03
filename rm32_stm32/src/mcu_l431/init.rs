@@ -214,32 +214,31 @@ pub fn init(
     let telem = super::telemetry_uart::L431TelemUart::init()
         .unwrap_or_else(|_| super::telemetry_uart::L431TelemUart::post_init());
 
-    // TIM6: AM32-matched decomposition. 80 MHz / (PSC+1) / (ARR+1) = 80M/80/51
-    // ≈ 19.6 kHz. Previous code used PSC=0/ARR=3999 (same 20 kHz mean rate but
-    // single 80 MHz tick — counter rolls every 50 μs instead of every 51 μs at
-    // 1 MHz). AM32 ticks at 1 MHz internally; the synchronizer between APB1
-    // and the timer block sees different jitter, and any code that samples
-    // TIM6.CNT mid-period would read different values. Match AM32 exactly.
-    //
-    // Also enable TIM7 clock (AM32 enables it even though firmware doesn't use
-    // it yet) so RCC.APB1ENR1 matches byte-for-byte.
+    const TIM6_HZ: u32 = 1_000_000;
+    const CONTROL_RELOAD: u16 =
+        (TIM6_HZ / <crate::platform::StmPlatform as rm32::platform::Platform>::TICK_HZ - 1) as u16;
+    // TIM6: 1 MHz tick (PSC=79), reload derived from StmPlatform::TICK_HZ (ARR=49 -> 20 kHz).
+    // AM32 writes ARR = 1000000/LOOP_FREQUENCY_HZ = 50, a 51-tick period and so
+    // 19.6 kHz, not its stated 20 kHz. Not carried: every tick-derived time here
+    // assumes TICK_HZ.
+    // TIM7: AM32 peripherals.c:159, free-running 1 MHz 16-bit counter (PSC=79, ARR=0xFFFF, CEN).
     unsafe {
         rcc_pac
             .apb1enr1
             .modify(|_, w| w.tim6en().set_bit().tim7en().set_bit());
         let tim6 = &*pac::TIM6::ptr();
-        tim6.psc.write(|w| w.psc().bits(0x4F)); // 79 → 1 MHz tick
-        tim6.arr.write(|w| w.arr().bits(0x32)); // 50 → 51-tick period
+        tim6.psc.write(|w| w.bits(0x4F));
+        tim6.arr.write(|w| w.bits(CONTROL_RELOAD as u32));
         tim6.egr.write(|w| w.ug().set_bit());
         tim6.sr.write(|w| w.uif().clear_bit());
         tim6.dier.write(|w| w.uie().set_bit());
         tim6.cr1.write(|w| w.cen().set_bit());
 
-        // TIM7: AM32 runs it as a free-running 1 MHz μs counter. Firmware
-        // doesn't currently consume it, but match AM32 for register parity.
         let tim7 = &*pac::TIM7::ptr();
-        tim7.psc.write(|w| w.psc().bits(0x4F));
-        tim7.arr.write(|w| w.arr().bits(0xFFFF));
+        tim7.psc.write(|w| w.bits(0x4F));
+        tim7.arr.write(|w| w.bits(0xFFFF));
+        tim7.egr.write(|w| w.ug().set_bit());
+        tim7.sr.write(|w| w.uif().clear_bit());
         tim7.cr1.write(|w| w.cen().set_bit());
     }
 

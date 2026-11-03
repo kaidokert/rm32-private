@@ -16,9 +16,8 @@ pub enum InitError {
 }
 
 impl InitError {
-    /// (kind, subsystem) for plain `{}` printing. `{:?}` on the `&'static
-    /// str` payload pulls core's Unicode escape tables (~0.8 KB) into the
-    /// image — that overflowed the binz G071 flash region.
+    /// `(kind, subsystem)` for plain `{}` printing without pulling `core::fmt`
+    /// debug escape tables into flash.
     pub fn parts(&self) -> (&'static str, &'static str) {
         match *self {
             InitError::Timeout(s) => ("timeout", s),
