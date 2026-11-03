@@ -354,8 +354,11 @@ impl TransferState {
     /// (PIO, RMT, SPI; no edge capture): [`process`](Self::process)'s DShot
     /// path at layer 1 ([`dshot::unpack`]). The port is DShot-only, so
     /// detection is two consecutive packets with a valid CRC (normal or
-    /// bidirectional), like `process`'s two matching frames. There is no
-    /// frame time to average; everything else matches `process`.
+    /// bidirectional), like `process`'s two matching frames. Because a
+    /// pre-sliced 16-bit word carries no edge timestamps, wire-rate
+    /// configuration stays with the port (`next_capture` is always
+    /// [`CaptureConfig::DSHOT`] with `prescaler: None`, and there is no
+    /// frame time to average); everything else matches `process`.
     #[allow(clippy::too_many_arguments)]
     pub fn process_packet(
         &mut self,
@@ -554,10 +557,9 @@ pub struct InputContext<'a> {
 }
 
 /// Apply one frame's `TransferActions` to the shared and ISR-side state:
-/// the one dispatch firmware and harness share (S7.3; the harness copy had
-/// drifted: no config-diff writes, `ProgrammingCommit`, EDT init/deinit or
-/// calibration writes). `set_prescaler` receives the bidirectional DShot
-/// output prescaler when detection locks DShot (the port's register work).
+/// the shared dispatch used by both firmware and the host harness.
+/// `set_prescaler` receives the bidirectional DShot output prescaler when
+/// detection locks DShot (the port's register work).
 ///
 /// `on_command` runs first on a decoded command (a port's bench hooks).
 /// Both hooks run where the firmware's inline code ran them: hooked outside
@@ -924,6 +926,7 @@ mod tests {
     }
 
     impl Twin {
+        /// Create a fresh pair of edge-capture and packet-slicing transfer states.
         fn new() -> Self {
             Self {
                 edges: TransferState::default(),
@@ -934,6 +937,7 @@ mod tests {
             }
         }
 
+        /// Advance both `process` and `process_packet` by one frame and assert identical state.
         fn step(&mut self, f: Frame) -> TransferActions {
             extern crate std;
             use std::format;
@@ -1070,7 +1074,28 @@ mod tests {
         );
 
         // Bidir commit: unarmed, line idling high, inverted-CRC frames.
+        // First exercise an interrupted confirm sequence (valid normal frame
+        // after idle-high threshold resets `bidir_confirms` and `high_pin_count`),
+        // then run a full uninterrupted confirm sequence to completion.
         let mut t = Twin::new();
+        for _ in 0..105 {
+            t.step(Frame {
+                inverted: true,
+                pin_high: true,
+                adjusted: 0,
+                ..steady
+            });
+        }
+        assert!(t.packet.bidir_confirms > 0);
+        t.step(Frame {
+            inverted: false,
+            pin_high: true,
+            adjusted: 0,
+            ..steady
+        });
+        assert_eq!(t.packet.bidir_confirms, 0);
+        assert_eq!(t.packet.high_pin_count, 1);
+
         let mut committed = false;
         for _ in 0..300 {
             committed |= t
@@ -1441,8 +1466,9 @@ mod tests {
         ));
     }
 
-    // ---- S7.3: the shared dispatch -------------------------------------
+    // ---- Shared dispatch tests -----------------------------------------
 
+    /// Test fixture holding the ISR-owned input context fields for `dispatch`.
     struct Isr {
         config: crate::config::EepromConfig,
         cmd: crate::dshot_commands::CommandProcessor,
@@ -1454,6 +1480,7 @@ mod tests {
     }
 
     impl Isr {
+        /// Create default ISR input state with the given `edt_arm_enable` setting.
         fn new(edt_arm_enable: bool) -> Self {
             Self {
                 config: crate::config::EepromConfig::default(),
@@ -1500,6 +1527,7 @@ mod tests {
         }
     }
 
+    /// Create a `SharedState` instance pre-Transitioned to the armed state.
     fn armed_shared() -> crate::shared_state::SharedState {
         let shared = crate::shared_state::SharedState::new::<Mhz64>();
         shared.set_armed(true);
@@ -1507,6 +1535,7 @@ mod tests {
         shared
     }
 
+    /// Build a non-telemetry `TransferAction::DshotCommand` for tests.
     fn command(cmd: u16) -> TransferAction {
         TransferAction::DshotCommand {
             cmd,
@@ -1515,7 +1544,7 @@ mod tests {
     }
 
     /// A config-changing command publishes exactly the changed byte to main
-    /// (the write the harness copy never made) and the direction.
+    /// and updates the direction.
     #[test]
     fn dispatch_command_publishes_config_diff() {
         let shared = armed_shared();
@@ -1575,7 +1604,7 @@ mod tests {
     }
 
     /// Servo calibration persists both thresholds, publishes both bytes and
-    /// asks main to save (the harness copy did not publish).
+    /// asks main to save.
     #[test]
     fn dispatch_servo_calibration_publishes_thresholds() {
         let shared = armed_shared();
