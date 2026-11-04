@@ -23,10 +23,14 @@ macro_rules! dprintln {
     }};
 }
 
-/// [`dprintln!`]'s body: format OUTSIDE any critical section; each
-/// already-formatted fragment (a literal piece or one formatted value) goes
-/// to RTT under its own short critical section (a buffer copy), and to the
-/// debug UART when that feature is on. Then the newline.
+/// Format `args` outside a critical section, for RTT and the debug UART.
+///
+/// `rtt_target::rprintln!` runs `core::fmt::write` inside
+/// `critical_section::with` (disabling all interrupts, including priority 0).
+/// Calling `write_fmt` here runs formatting with interrupts enabled; each
+/// already-formatted fragment goes to RTT under its own short critical section
+/// (a buffer copy), and to the debug UART when that feature is on, followed by
+/// the trailing newline.
 pub fn dline(args: core::fmt::Arguments) {
     struct Sinks;
     impl core::fmt::Write for Sinks {

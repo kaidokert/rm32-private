@@ -561,9 +561,9 @@ pub struct InputContext<'a> {
 /// `set_prescaler` receives the bidirectional DShot output prescaler when
 /// detection locks DShot (the port's register work).
 ///
-/// `on_command` runs first on a decoded command (a port's bench hooks).
-/// Both hooks run where the firmware's inline code ran them: hooked outside
-/// the match, LLVM tail-duplicated a shared-state store into a second path.
+/// `on_command` runs first on a decoded command. Both callbacks run inside
+/// their respective match arms so LLVM does not tail-duplicate shared-state
+/// stores into a second path.
 #[inline(always)]
 pub fn dispatch<C: FnOnce(u16), P: FnOnce(crate::hal::DshotOutputPrescaler)>(
     actions: &TransferActions,
@@ -1497,7 +1497,7 @@ mod tests {
             &mut self,
             shared: &crate::shared_state::SharedState,
             action: TransferAction,
-        ) -> (u32, Option<u16>) {
+        ) -> (Option<u16>, Option<u16>) {
             let actions = TransferActions {
                 action,
                 next_capture: CaptureConfig::DSHOT300_DETECTED,
@@ -1506,7 +1506,7 @@ mod tests {
                 #[cfg(feature = "bench-diag")]
                 high_pin_count: 0,
             };
-            let (mut hooked, mut psc) = (0, None);
+            let (mut hooked, mut psc) = (None, None);
             dispatch(
                 &actions,
                 shared,
@@ -1520,7 +1520,7 @@ mod tests {
                     frametime_low: &mut self.ft.0,
                     frametime_high: &mut self.ft.1,
                 },
-                |_| hooked += 1,
+                |cmd| assert!(hooked.replace(cmd).is_none()),
                 |p| psc = Some(p.raw()),
             );
             (hooked, psc)
@@ -1553,7 +1553,7 @@ mod tests {
             assert_eq!(
                 isr.run(&shared, command(crate::dshot::commands::DIRECTION_REVERSED))
                     .0,
-                1
+                Some(crate::dshot::commands::DIRECTION_REVERSED)
             );
         }
         assert_eq!(isr.config.dir_reversed, 1);
@@ -1640,7 +1640,7 @@ mod tests {
             &shared,
             TransferAction::InputDetected(DetectedProtocol::Dshot),
         );
-        assert_eq!((hooked, psc), (0, Some(1)));
+        assert_eq!((hooked, psc), (None, Some(1)));
         assert!(shared.input_set() && shared.dshot());
     }
 }
