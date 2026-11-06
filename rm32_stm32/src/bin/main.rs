@@ -983,6 +983,7 @@ fn main() -> ! {
             ],
             main_state.dsy_snap,
             main_state.dsy_hist,
+            main_state.orbit_obs,
         );
         #[cfg(all(feature = "benchuart", feature = "stm32g071"))]
         {

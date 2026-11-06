@@ -172,12 +172,13 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     /// fast-rotor fire so the stay-interrupt response cannot self-loop
     /// against a stale average during commanded transients.
     pub(crate) desync_rearm_zc: u32,
-    /// Consecutive 1 kHz ticks with current above the orbit line.
-    pub(crate) orbit_trip_count: u16,
-    /// Duty snapshot (refreshed every ~100 ms) for orbit-trip
-    /// commanded-transient suppression.
-    pub(crate) orbit_duty_snap: u16,
-    pub(crate) orbit_duty_snap_age: u16,
+    /// Wrong-phase-orbit trip state (`OrbitTripConfig`).
+    orbit_guard: crate::tuning::OrbitGuard,
+    /// Orbit-trip margin, latest 1 kHz sample (bench): [current - line (mA),
+    /// current (mA), duty, ms since the duty last moved, bit 0 = locked and
+    /// not held off, bit 1 = locked].
+    #[cfg(feature = "bench-diag")]
+    pub orbit_obs: [i32; 5],
     pub(crate) last_armed: bool,
     /// Set on the tick when arming transition happens
     pub just_armed: bool,
@@ -256,9 +257,9 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             polling_mode_seen: false,
             orbit_trips: 0,
             desync_rearm_zc: 10,
-            orbit_trip_count: 0,
-            orbit_duty_snap: 0,
-            orbit_duty_snap_age: 0,
+            orbit_guard: crate::tuning::OrbitGuard::default(),
+            #[cfg(feature = "bench-diag")]
+            orbit_obs: [0; 5],
             last_armed: false,
             just_armed: false,
             needs_reset: false,
@@ -675,40 +676,38 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             // locked means the acceptance chain is clocking off switching
             // artifacts in a wrong phase — force the full desync response;
             // the demote IS the phase reset.
-            if let Some(orbit) = <P::Tuning as TuningPolicy>::ORBIT_TRIP {
-                self.orbit_duty_snap_age += 1;
-                if self.orbit_duty_snap_age >= 100 {
-                    self.orbit_duty_snap = shared.duty_cycle();
-                    self.orbit_duty_snap_age = 0;
-                }
-                let transient =
-                    get_abs_dif(shared.duty_cycle() as i32, self.orbit_duty_snap as i32)
-                        > orbit.transient_duty as u32;
-                if shared.running()
-                    && shared.zero_crosses() > 1000
-                    && !transient
-                    && orbit_current::<P::Tuning>(
-                        self.measurements.actual_current.0,
-                        shared.duty_cycle(),
-                        self.measurements.battery_voltage.0,
-                    )
+            if let Some(orbit) = <P::Tuning as TuningPolicy>::ORBIT_TRIP.as_ref() {
+                let locked = shared.running() && shared.zero_crosses() > 1000;
+                let current_ma = self.measurements.actual_current.0 as i32;
+                let line = crate::tuning::orbit_line::<P::Tuning>(
+                    shared.duty_cycle(),
+                    self.measurements.battery_voltage.0,
+                )
+                .unwrap_or(i32::MAX);
+                let step =
+                    self.orbit_guard
+                        .tick(orbit, locked, shared.duty_cycle(), current_ma > line);
+                #[cfg(feature = "bench-diag")]
                 {
-                    self.orbit_trip_count += 1;
-                    if self.orbit_trip_count > orbit.trip_ms {
-                        self.orbit_trip_count = 0;
-                        self.orbit_trips = self.orbit_trips.wrapping_add(1);
-                        self.desync_events = self.desync_events.wrapping_add(1);
-                        shared.set_zero_crosses(0);
-                        shared.request_duty_kick_down();
-                        shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
-                        if shared.adjusted_input() > 47
-                            || shared.commutation_interval() > P::DESYNC_STOP_INTERVAL
-                        {
-                            shared.transition(crate::motor_mode::MotorEvent::StopMotor);
-                        }
+                    self.orbit_obs = [
+                        current_ma - line,
+                        current_ma,
+                        shared.duty_cycle() as i32,
+                        step.since_move_ms as i32,
+                        (locked && !step.held) as i32 | ((locked as i32) << 1),
+                    ];
+                }
+                if step.trip {
+                    self.orbit_trips = self.orbit_trips.wrapping_add(1);
+                    self.desync_events = self.desync_events.wrapping_add(1);
+                    shared.set_zero_crosses(0);
+                    shared.request_duty_kick_down();
+                    shared.transition(crate::motor_mode::MotorEvent::DesyncFallback);
+                    if shared.adjusted_input() > 47
+                        || shared.commutation_interval() > P::DESYNC_STOP_INTERVAL
+                    {
+                        shared.transition(crate::motor_mode::MotorEvent::StopMotor);
                     }
-                } else {
-                    self.orbit_trip_count = 0;
                 }
             }
 

@@ -39,6 +39,9 @@ pub struct RunSummary {
     c0: [u32; 7],
     first: Option<[u32; 4]>,
     hist: [[u32; 4]; 4],
+    orb_pk: Option<[i32; 5]>,
+    orb_trip: Option<[i32; 5]>,
+    orb_over_ms: i32,
 }
 
 impl RunSummary {
@@ -55,6 +58,9 @@ impl RunSummary {
             c0: [0; 7],
             first: None,
             hist: [[0; 4]; 4],
+            orb_pk: None,
+            orb_trip: None,
+            orb_over_ms: -1,
         }
     }
 
@@ -69,6 +75,7 @@ impl RunSummary {
         c: [u32; 7],
         dsy_snap: [u32; 4],
         dsy_hist: [[u32; 4]; 4],
+        orb: [i32; 5],
     ) {
         let dt = tick.wrapping_sub(self.last_tick);
         self.last_tick = tick;
@@ -90,6 +97,18 @@ impl RunSummary {
         if self.first.is_none() && c[0] != self.c0[0] {
             self.first = Some(dsy_snap);
             self.hist = dsy_hist;
+        }
+        // Orbit-trip margin: the session's closest sample to the line outside
+        // the hold-off, the sample on the tick of the first trip, and the
+        // latest ms-since-duty-move at which a locked sample was over it.
+        if orb[4] & 2 != 0 && orb[0] > 0 {
+            self.orb_over_ms = self.orb_over_ms.max(orb[3]);
+        }
+        if orb[4] & 1 != 0 && self.orb_pk.is_none_or(|p| orb[0] > p[0]) {
+            self.orb_pk = Some(orb);
+        }
+        if self.orb_trip.is_none() && c[5] != self.c0[5] {
+            self.orb_trip = Some(orb);
         }
         if running {
             self.run_ticks = self.run_ticks.wrapping_add(dt);
@@ -120,7 +139,7 @@ impl RunSummary {
             (self.ecom_min, 60_000_000 / self.ecom_min.max(1))
         };
         crate::dprintln!(
-            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={} comms={} first={} hist={}",
+            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={} comms={} first={} hist={} orb_pk={} orb_trip={} orb_over_ms={}",
             self.starts,
             self.run_ticks / 20,
             self.zc_pk,
@@ -135,6 +154,9 @@ impl RunSummary {
             c[6].wrapping_sub(self.c0[6]),
             First(self.first),
             Hist(self.hist),
+            Orb(self.orb_pk),
+            Orb(self.orb_trip),
+            self.orb_over_ms,
         );
         self.active = false;
     }
@@ -171,5 +193,17 @@ impl core::fmt::Display for Hist {
             )?;
         }
         Ok(())
+    }
+}
+
+/// `margin/current/duty/ms_since_transient` (mA, mA, duty, ms), `-` if none.
+struct Orb(Option<[i32; 5]>);
+
+impl core::fmt::Display for Orb {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            None => f.write_str("-"),
+            Some(o) => write!(f, "{}/{}/{}/{}", o[0], o[1], o[2], o[3]),
+        }
     }
 }
