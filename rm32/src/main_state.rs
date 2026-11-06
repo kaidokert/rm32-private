@@ -179,6 +179,11 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     /// not held off, bit 1 = locked].
     #[cfg(feature = "bench-diag")]
     pub orbit_obs: [i32; 5],
+    /// Desync-detector margin, latest settled check (bench): [diff as
+    /// per-mille of the trip threshold (average_interval / 2; > 1000 trips),
+    /// diff, average_interval, zero_crosses], all 0 before the first check.
+    #[cfg(feature = "bench-diag")]
+    pub dsy_obs: [u32; 4],
     pub(crate) last_armed: bool,
     /// Set on the tick when arming transition happens
     pub just_armed: bool,
@@ -260,6 +265,8 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             orbit_guard: crate::tuning::OrbitGuard::default(),
             #[cfg(feature = "bench-diag")]
             orbit_obs: [0; 5],
+            #[cfg(feature = "bench-diag")]
+            dsy_obs: [0; 4],
             last_armed: false,
             just_armed: false,
             needs_reset: false,
@@ -524,6 +531,16 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                     false
                 }
             };
+            #[cfg(feature = "bench-diag")]
+            if settled && self.timing.average_interval < P::DESYNC_MAX_INTERVAL {
+                let threshold = (self.timing.average_interval >> 1).max(1);
+                self.dsy_obs = [
+                    diff.saturating_mul(1000) / threshold,
+                    diff,
+                    self.timing.average_interval,
+                    zc,
+                ];
+            }
             if settled
                 && diff > (self.timing.average_interval >> 1)
                 && self.timing.average_interval < P::DESYNC_MAX_INTERVAL

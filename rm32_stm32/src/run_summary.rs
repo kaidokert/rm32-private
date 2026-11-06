@@ -17,6 +17,14 @@
 //!   desync branches (fast-rotor stay, demote on current / slow / from
 //!   polling) and orbit-current trips, all session deltas
 //! - `comms`: locked (closed-loop) commutations in the session
+//! - near misses, so a clean run still shows how close each trip path came
+//!   (read these before any A/B): `orb_pk=M/I/D/T` orbit trip, closest
+//!   sample outside the hold-off (current minus line mA, current mA, duty,
+//!   ms since the duty moved); `orb_trip=` the same at the first orbit trip;
+//!   `orb_over_ms=` latest ms-since-move with current over the line;
+//!   `dsy_pk=P/D/A/ZC` desync check, closest settled check (diff as
+//!   per-mille of its average/2 threshold, > 1000 fired; diff, average,
+//!   zero crosses)
 //! - `first=L/A/CI/ZC`: the desync detector's inputs at the session's
 //!   first desync (last_average_interval, average_interval,
 //!   commutation_interval, zero_crosses); `first=-` when none
@@ -42,6 +50,8 @@ pub struct RunSummary {
     orb_pk: Option<[i32; 5]>,
     orb_trip: Option<[i32; 5]>,
     orb_over_ms: i32,
+    dsy_pk: [u32; 4],
+    dsy_seen: [u32; 4],
 }
 
 impl RunSummary {
@@ -61,6 +71,8 @@ impl RunSummary {
             orb_pk: None,
             orb_trip: None,
             orb_over_ms: -1,
+            dsy_pk: [0; 4],
+            dsy_seen: [0; 4],
         }
     }
 
@@ -76,6 +88,7 @@ impl RunSummary {
         dsy_snap: [u32; 4],
         dsy_hist: [[u32; 4]; 4],
         orb: [i32; 5],
+        dsy: [u32; 4],
     ) {
         let dt = tick.wrapping_sub(self.last_tick);
         self.last_tick = tick;
@@ -85,6 +98,7 @@ impl RunSummary {
                 self.active = true;
                 self.c0 = c;
                 self.last_tick = tick;
+                self.dsy_seen = dsy;
             }
             self.starts += 1;
         }
@@ -109,6 +123,15 @@ impl RunSummary {
         }
         if self.orb_trip.is_none() && c[5] != self.c0[5] {
             self.orb_trip = Some(orb);
+        }
+        // Desync detector: the session's closest settled check to its trip
+        // threshold (per-mille; > 1000 fired). A new check is a changed
+        // sample; the one in place at session start is not this session's.
+        if dsy != self.dsy_seen {
+            self.dsy_seen = dsy;
+            if self.starts > 0 && dsy[0] > self.dsy_pk[0] {
+                self.dsy_pk = dsy;
+            }
         }
         if running {
             self.run_ticks = self.run_ticks.wrapping_add(dt);
@@ -139,7 +162,7 @@ impl RunSummary {
             (self.ecom_min, 60_000_000 / self.ecom_min.max(1))
         };
         crate::dprintln!(
-            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={} comms={} first={} hist={} orb_pk={} orb_trip={} orb_over_ms={}",
+            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={} comms={} first={} hist={} orb_pk={} orb_trip={} orb_over_ms={} dsy_pk={}/{}/{}/{}",
             self.starts,
             self.run_ticks / 20,
             self.zc_pk,
@@ -157,6 +180,10 @@ impl RunSummary {
             Orb(self.orb_pk),
             Orb(self.orb_trip),
             self.orb_over_ms,
+            self.dsy_pk[0],
+            self.dsy_pk[1],
+            self.dsy_pk[2],
+            self.dsy_pk[3],
         );
         self.active = false;
     }
