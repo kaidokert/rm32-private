@@ -22,6 +22,7 @@
 //!   sample outside the hold-off (current minus line mA, current mA, duty,
 //!   ms since the duty moved); `orb_trip=` the same at the first orbit trip;
 //!   `orb_over_ms=` latest ms-since-move with current over the line;
+//!   `orb_cnt_pk=` longest un-held over-line stretch (ms; > trip_ms fired);
 //!   `dsy_pk=P/D/A/ZC` desync check, closest settled check (diff as
 //!   per-mille of its average/2 threshold, > 1000 fired; diff, average,
 //!   zero crosses)
@@ -47,8 +48,9 @@ pub struct RunSummary {
     c0: [u32; 7],
     first: Option<[u32; 4]>,
     hist: [[u32; 4]; 4],
-    orb_pk: Option<[i32; 5]>,
-    orb_trip: Option<[i32; 5]>,
+    orb_pk: Option<[i32; 6]>,
+    orb_trip: Option<[i32; 6]>,
+    orb_cnt_pk: i32,
     orb_over_ms: i32,
     dsy_pk: [u32; 4],
     dsy_seen: [u32; 4],
@@ -71,6 +73,7 @@ impl RunSummary {
             orb_pk: None,
             orb_trip: None,
             orb_over_ms: -1,
+            orb_cnt_pk: 0,
             dsy_pk: [0; 4],
             dsy_seen: [0; 4],
         }
@@ -87,7 +90,7 @@ impl RunSummary {
         c: [u32; 7],
         dsy_snap: [u32; 4],
         dsy_hist: [[u32; 4]; 4],
-        orb: [i32; 5],
+        orb: [i32; 6],
         dsy: [u32; 4],
     ) {
         let dt = tick.wrapping_sub(self.last_tick);
@@ -108,7 +111,9 @@ impl RunSummary {
         }
         // Main polls far faster than desyncs repeat (~11 ms apart in a
         // choke), so the snapshot seen with the first count is the first.
-        if self.first.is_none() && c[0] != self.c0[0] {
+        // Only a desync-check event fills dsy_snap; an orbit trip also counts
+        // into desync_events, so latch when desyncs outnumber orbit trips.
+        if self.first.is_none() && c[0].wrapping_sub(self.c0[0]) > c[5].wrapping_sub(self.c0[5]) {
             self.first = Some(dsy_snap);
             self.hist = dsy_hist;
         }
@@ -118,7 +123,10 @@ impl RunSummary {
         if orb[4] & 2 != 0 && orb[0] > 0 {
             self.orb_over_ms = self.orb_over_ms.max(orb[3]);
         }
-        if orb[4] & 1 != 0 && self.orb_pk.is_none_or(|p| orb[0] > p[0]) {
+        self.orb_cnt_pk = self.orb_cnt_pk.max(orb[5]);
+        // Driven samples only: a duty-0 coast (0 mA against the line's
+        // offset) would outrank every real margin.
+        if orb[4] & 1 != 0 && orb[2] > 0 && self.orb_pk.is_none_or(|p| orb[0] > p[0]) {
             self.orb_pk = Some(orb);
         }
         if self.orb_trip.is_none() && c[5] != self.c0[5] {
@@ -162,7 +170,7 @@ impl RunSummary {
             (self.ecom_min, 60_000_000 / self.ecom_min.max(1))
         };
         crate::dprintln!(
-            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={} comms={} first={} hist={} orb_pk={} orb_trip={} orb_over_ms={} dsy_pk={}/{}/{}/{}",
+            "[run] starts={} ms={} zc_pk={} ecom_min={} erpm_pk={} dsy={} fast={} cur={} slow={} old={} orbit={} comms={} first={} hist={} orb_pk={} orb_trip={} orb_over_ms={} orb_cnt_pk={} dsy_pk={}/{}/{}/{}",
             self.starts,
             self.run_ticks / 20,
             self.zc_pk,
@@ -180,6 +188,7 @@ impl RunSummary {
             Orb(self.orb_pk),
             Orb(self.orb_trip),
             self.orb_over_ms,
+            self.orb_cnt_pk,
             self.dsy_pk[0],
             self.dsy_pk[1],
             self.dsy_pk[2],
@@ -224,7 +233,7 @@ impl core::fmt::Display for Hist {
 }
 
 /// `margin/current/duty/ms_since_transient` (mA, mA, duty, ms), `-` if none.
-struct Orb(Option<[i32; 5]>);
+struct Orb(Option<[i32; 6]>);
 
 impl core::fmt::Display for Orb {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

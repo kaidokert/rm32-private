@@ -147,6 +147,11 @@ pub(crate) struct OrbitStep {
     /// Milliseconds since the duty last moved past `transient_duty`.
     #[cfg_attr(not(feature = "bench-diag"), allow(dead_code))]
     pub since_move_ms: u16,
+    /// Consecutive locked, un-held ms over the line including this tick
+    /// (`trip_ms` + 1 on the tripping tick, 0 when not over): the trip
+    /// timer's near miss (bench diagnostics).
+    #[cfg_attr(not(feature = "bench-diag"), allow(dead_code))]
+    pub over_ms: u16,
 }
 
 impl OrbitGuard {
@@ -173,8 +178,10 @@ impl OrbitGuard {
         };
         let held = moved || self.since_move_ms < c.transient_hold_ms;
         let mut trip = false;
+        let mut over_ms = 0;
         if locked && !held && over_line {
             self.trip_count += 1;
+            over_ms = self.trip_count;
             if self.trip_count > c.trip_ms {
                 self.trip_count = 0;
                 trip = true;
@@ -186,6 +193,7 @@ impl OrbitGuard {
             trip,
             held,
             since_move_ms: self.since_move_ms,
+            over_ms,
         }
     }
 }
@@ -208,10 +216,22 @@ mod tests {
     /// current falls to the 100 % running draw. `phase` offsets the slam
     /// against the guard's 100 ms snapshot cycle. Returns the trip tick.
     fn slam(guard: &mut OrbitGuard, c: &OrbitTripConfig, phase: u16) -> Option<u32> {
+        slam_on(guard, c, phase, SLAM_VBAT_CV, 12_800, 140)
+    }
+
+    /// `slam` on a given rail with a given accel current and plateau (ms).
+    fn slam_on(
+        guard: &mut OrbitGuard,
+        c: &OrbitTripConfig,
+        phase: u16,
+        vbat_cv: u16,
+        accel_ma: i32,
+        plateau_ms: i32,
+    ) -> Option<u32> {
         let mut t = 0u32;
         let mut step = |duty: u16, current_ma: i32| {
             t += 1;
-            let line = orbit_line::<QualifiedRigTuning>(duty, SLAM_VBAT_CV).unwrap();
+            let line = orbit_line::<QualifiedRigTuning>(duty, vbat_cv).unwrap();
             guard
                 .tick(c, true, duty, current_ma > line)
                 .trip
@@ -223,15 +243,15 @@ mod tests {
             }
         }
         for i in 0..50u16 {
-            if let Some(t) = step(200 + i * 36, 12_800) {
+            if let Some(t) = step(200 + i * 36, accel_ma) {
                 return Some(t);
             }
         }
         for i in 0..1000i32 {
-            let current_ma = if i < 140 {
-                12_800
+            let current_ma = if i < plateau_ms {
+                accel_ma
             } else {
-                (12_800 - (i - 140) * 50).max(7_000)
+                (accel_ma - (i - plateau_ms) * 50).max(7_000)
             };
             if let Some(t) = step(1998, current_ma) {
                 return Some(t);
@@ -263,6 +283,48 @@ mod tests {
             .filter(|&p| slam(&mut OrbitGuard::default(), &no_hold, p).is_some())
             .count();
         assert!(trips > 0, "no snapshot phase tripped without the hold");
+    }
+
+    /// refactor_log item 26 (2026-10-26, battery slams 15 -> 100 %): ~12.7 A
+    /// against a ~11.0 A line at 10.6 V, and the replay of the recorded runs
+    /// (`orbit_replay.py`, never committed) tripped on 26-34 of the 100
+    /// snapshot phases; 10 of 30 bench slams tripped. A 20 ms plateau on this
+    /// profile reproduces that fraction with no hold, and must never trip with
+    /// the rig's hold.
+    #[test]
+    fn battery_slam_replay_trips_a_third_without_hold_never_with() {
+        let phases = |c: &OrbitTripConfig| {
+            (0..100)
+                .filter(|&p| slam_on(&mut OrbitGuard::default(), c, p, 1060, 12_700, 20).is_some())
+                .count()
+        };
+        let no_hold = OrbitTripConfig {
+            transient_hold_ms: 0,
+            ..RIG
+        };
+        let old = phases(&no_hold);
+        assert!((20..=40).contains(&old), "no-hold trips on {old} phases");
+        assert_eq!(phases(&RIG), 0);
+    }
+
+    /// The trip timer's watermark: `over_ms` counts the consecutive stretch,
+    /// reaches `trip_ms` on a near miss and `trip_ms + 1` on the trip.
+    #[test]
+    fn over_ms_reports_the_trip_timer() {
+        let mut g = OrbitGuard::default();
+        for _ in 0..1000 {
+            assert_eq!(g.tick(&RIG, true, 1000, false).over_ms, 0);
+        }
+        for n in 1..=RIG.trip_ms {
+            assert_eq!(g.tick(&RIG, true, 1000, true).over_ms, n);
+        }
+        assert_eq!(g.tick(&RIG, true, 1000, false).over_ms, 0);
+        for _ in 0..RIG.trip_ms {
+            g.tick(&RIG, true, 1000, true);
+        }
+        let s = g.tick(&RIG, true, 1000, true);
+        assert!(s.trip);
+        assert_eq!(s.over_ms, RIG.trip_ms + 1);
     }
 
     /// A real orbit at steady duty still trips after `trip_ms` + 1 ticks.

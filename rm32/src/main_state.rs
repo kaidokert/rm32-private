@@ -178,7 +178,7 @@ pub struct MainState<P: Timing, LED: OutputPin = NoLed> {
     /// current (mA), duty, ms since the duty last moved, bit 0 = locked and
     /// not held off, bit 1 = locked].
     #[cfg(feature = "bench-diag")]
-    pub orbit_obs: [i32; 5],
+    pub orbit_obs: [i32; 6],
     /// Desync-detector margin, latest settled check (bench): [diff as
     /// per-mille of the trip threshold (average_interval / 2; > 1000 trips),
     /// diff, average_interval, zero_crosses], all 0 before the first check.
@@ -264,7 +264,7 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
             desync_rearm_zc: 10,
             orbit_guard: crate::tuning::OrbitGuard::default(),
             #[cfg(feature = "bench-diag")]
-            orbit_obs: [0; 5],
+            orbit_obs: [0; 6],
             #[cfg(feature = "bench-diag")]
             dsy_obs: [0; 4],
             last_armed: false,
@@ -712,6 +712,7 @@ impl<P: Timing, LED: OutputPin> MainState<P, LED> {
                         shared.duty_cycle() as i32,
                         step.since_move_ms as i32,
                         (locked && !step.held) as i32 | ((locked as i32) << 1),
+                        step.over_ms as i32,
                     ];
                 }
                 if step.trip {
