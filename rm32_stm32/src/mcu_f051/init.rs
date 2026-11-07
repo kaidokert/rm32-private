@@ -122,7 +122,7 @@ pub fn init(
         com_timer,
         phase,
     };
-    // SAFETY: every IRQ is left at level 0, so no ISR preempts another; see `single_writer`.
+    // SAFETY: priorities set above (TIM14 and ADC_COMP at level 0); see `single_writer`.
     let writer = unsafe { crate::init::single_writer() };
     InitResult {
         hal,

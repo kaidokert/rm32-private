@@ -748,14 +748,11 @@ impl<P: Port> Harness<P> {
                         &mut self.hal.interval,
                         &mut self.hal.com_timer,
                     );
-                    // SAFETY: the harness is single-threaded; nothing runs
-                    // between the plain stores' reads and writes.
-                    let writer = unsafe { rm32::shared_comm::SingleWriter::new() };
                     isr_logic::commutation_timer_expired::<P, _, _, _, _, _>(
                         &mut self.commutation,
                         &mut self.bemf,
                         &self.shared,
-                        &writer,
+                        &rm32::shared_comm::AtomicWriter,
                         &mut self.hal.com_timer,
                         &mut self.hal.comp,
                         &mut self.hal.bridge,

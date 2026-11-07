@@ -1554,6 +1554,114 @@ mod tests {
         assert_eq!(comp.enable_calls, 0);
     }
 
+    /// Verify `commutation_timer_expired` produces identical changeover and demotion state under `SingleWriter` and `AtomicWriter`.
+    #[test]
+    fn isr_commutation_timer_single_writer_matches_atomic_writer_on_shared_state() {
+        let single = unsafe { crate::shared_comm::SingleWriter::new() };
+        let shared_atomic =
+            crate::shared_state::SharedState::new::<crate::platform::TestPlatform>();
+        let shared_single =
+            crate::shared_state::SharedState::new::<crate::platform::TestPlatform>();
+        shared_atomic.set_motor_mode(crate::motor_mode::MotorMode::OldRoutine);
+        shared_single.set_motor_mode(crate::motor_mode::MotorMode::OldRoutine);
+        shared_atomic.set_zero_crosses(19);
+        shared_single.set_zero_crosses(19);
+        shared_atomic.set_commutation_interval(1000);
+        shared_single.set_commutation_interval(1000);
+
+        let mut comm_atomic = crate::commutation::Commutation::new();
+        let mut comm_single = crate::commutation::Commutation::new();
+        let mut bemf_atomic = crate::control::state::BemfState::default();
+        let mut bemf_single = crate::control::state::BemfState::default();
+        let mut com_atomic = MockComTimer::new();
+        let mut com_single = MockComTimer::new();
+        let mut comp_atomic = MockComp {
+            level: false,
+            mask_called: false,
+            enable_calls: 0,
+            last_phase: None,
+        };
+        let mut comp_single = MockComp {
+            level: false,
+            mask_called: false,
+            enable_calls: 0,
+            last_phase: None,
+        };
+        let mut phase_atomic = MockBridge::default();
+        let mut phase_single = MockBridge::default();
+
+        // Step 1: polling -> interrupt changeover via BemfLocked.
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
+            &mut comm_atomic,
+            &mut bemf_atomic,
+            &shared_atomic,
+            &crate::shared_comm::AtomicWriter,
+            &mut com_atomic,
+            &mut comp_atomic,
+            &mut phase_atomic,
+            crate::hal::PwmMode::Diode,
+            false,
+            true,
+        );
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
+            &mut comm_single,
+            &mut bemf_single,
+            &shared_single,
+            &single,
+            &mut com_single,
+            &mut comp_single,
+            &mut phase_single,
+            crate::hal::PwmMode::Diode,
+            false,
+            true,
+        );
+        assert_eq!(
+            shared_single.motor_mode(),
+            crate::motor_mode::MotorMode::Running
+        );
+        assert_eq!(shared_single.zero_crosses(), 20);
+        // Public seeds gate_avg at changeover (its BEMF gate stays shut at 0);
+        // devel opens the gate at 0 as AM32 does (stm32l4xx_it.c:280), and
+        // the tick sets gate_avg, so it is not asserted here (open delta).
+        assert_eq!(comp_single.enable_calls, 1);
+        assert_eq!(shared_single.motor_mode(), shared_atomic.motor_mode());
+        assert_eq!(shared_single.zero_crosses(), shared_atomic.zero_crosses());
+        assert_eq!(shared_single.gate_avg(), shared_atomic.gate_avg());
+        assert_eq!(comp_single.enable_calls, comp_atomic.enable_calls);
+
+        // Step 2: slow history demotes interrupt mode back to polling.
+        seed_slow_commutation_history(&mut comm_atomic);
+        seed_slow_commutation_history(&mut comm_single);
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
+            &mut comm_atomic,
+            &mut bemf_atomic,
+            &shared_atomic,
+            &crate::shared_comm::AtomicWriter,
+            &mut com_atomic,
+            &mut comp_atomic,
+            &mut phase_atomic,
+            crate::hal::PwmMode::Diode,
+            false,
+            true,
+        );
+        isr_logic::commutation_timer_expired::<crate::platform::TestPlatform, _, _, _, _, _>(
+            &mut comm_single,
+            &mut bemf_single,
+            &shared_single,
+            &single,
+            &mut com_single,
+            &mut comp_single,
+            &mut phase_single,
+            crate::hal::PwmMode::Diode,
+            false,
+            true,
+        );
+        assert!(shared_single.old_routine());
+        assert_eq!(shared_single.motor_mode(), shared_atomic.motor_mode());
+        assert_eq!(shared_single.zero_crosses(), shared_atomic.zero_crosses());
+        assert_eq!(comp_single.enable_calls, comp_atomic.enable_calls);
+    }
+
     #[test]
     fn isr_bemf_zero_cross_detected() {
         let comm = crate::commutation::Commutation::new(); // rising=true
